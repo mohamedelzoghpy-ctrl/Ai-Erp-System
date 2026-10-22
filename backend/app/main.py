@@ -3,21 +3,37 @@
     uvicorn app.main:app --reload
 """
 
+from contextlib import asynccontextmanager
+
 from fastapi import Depends, FastAPI
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from . import models  # noqa: F401  (importing registers the tables on Base.metadata)
 from .database import Base, engine, get_db
+from .routers import masterdata, orders, products
 
-# Create all tables automatically at startup if they don't exist yet.
-Base.metadata.create_all(bind=engine)
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    # Create all tables automatically at startup if they don't exist yet.
+    Base.metadata.create_all(bind=engine)
+    yield
+
 
 app = FastAPI(
     title="AI ERP System",
     description="ERP: inventory, purchasing, customers, suppliers and sales.",
-    version="0.1.0",
+    version="0.2.0",
+    lifespan=lifespan,
 )
+
+app.include_router(masterdata.warehouses)
+app.include_router(masterdata.suppliers)
+app.include_router(masterdata.customers)
+app.include_router(products.router)
+app.include_router(orders.purchases)
+app.include_router(orders.sales)
 
 
 @app.get("/", tags=["system"])
