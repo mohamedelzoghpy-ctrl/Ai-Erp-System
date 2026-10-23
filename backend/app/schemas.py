@@ -228,3 +228,64 @@ class UserOut(ORMModel):
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"
+
+
+# ---------- Reports ----------
+class LowStockItem(ORMModel):
+    id: int
+    sku: str
+    name: str
+    quantity: int
+    reorder_level: int
+    shortfall: int
+    warehouse_id: Optional[int]
+    supplier_id: Optional[int]
+
+
+class InventoryValuationRow(BaseModel):
+    warehouse_id: Optional[int]
+    warehouse_name: Optional[str]
+    products: int
+    units: int
+    cost_value: Decimal
+    sale_value: Decimal
+
+
+class SalesByDay(BaseModel):
+    day: str
+    orders: int
+    total: Decimal
+
+
+class TopProduct(BaseModel):
+    product_id: int
+    sku: str
+    name: str
+    quantity_sold: int
+    revenue: Decimal
+
+
+class SalesSummary(BaseModel):
+    date_from: datetime
+    date_to: datetime
+    orders: int
+    total: Decimal
+    by_day: List[SalesByDay]
+    top_products: List[TopProduct]
+
+
+class Dashboard(BaseModel):
+    period_days: int
+    products: int
+    low_stock_products: int
+    warehouses: int
+    suppliers: int
+    customers: int
+    inventory_cost_value: Decimal
+    inventory_sale_value: Decimal
+    sales_orders_confirmed: int
+    sales_total: Decimal
+    purchase_orders_received: int
+    purchases_total: Decimal
+    draft_sales_orders: int
+    draft_purchase_orders: int
