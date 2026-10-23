@@ -81,7 +81,40 @@ async function request<T>(method: string, path: string, body?: unknown, form?: U
   return data as T;
 }
 
+/** Downloads a file from an authenticated endpoint (a plain link cannot send the Bearer token). */
+async function download(path: string, fallbackName: string): Promise<void> {
+  const headers: Record<string, string> = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+  let res: Response;
+  try {
+    res = await fetch(BASE + path, { headers });
+  } catch {
+    throw new ApiError(0, "تعذّر الاتصال بالخادم، تحقق من الشبكة");
+  }
+  if (!res.ok) {
+    if (res.status === 401 && onUnauthorized) onUnauthorized();
+    let detail: unknown = null;
+    try {
+      detail = ((await res.json()) as { detail?: unknown }).detail;
+    } catch {
+      detail = null; // error body was not JSON
+    }
+    throw new ApiError(res.status, messageFromDetail(res.status, detail));
+  }
+  const blob = await res.blob();
+  const match = /filename="?([^";]+)"?/i.exec(res.headers.get("Content-Disposition") ?? "");
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = match ? match[1] : fallbackName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
 export const api = {
+  download,
   get: <T>(path: string) => request<T>("GET", path),
   post: <T>(path: string, body?: unknown) => request<T>("POST", path, body ?? {}),
   patch: <T>(path: string, body: unknown) => request<T>("PATCH", path, body),

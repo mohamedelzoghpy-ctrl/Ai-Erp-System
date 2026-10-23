@@ -95,11 +95,26 @@ export interface InventoryValuationRow {
   sale_value: string;
 }
 
+export interface DayTotal {
+  day: string;
+  orders: number;
+  total: string;
+}
+
 export interface SalesSummary {
   orders: number;
   total: string;
-  by_day: { day: string; orders: number; total: string }[];
+  by_day: DayTotal[];
   top_products: { product_id: number; sku: string; name: string; quantity_sold: number; revenue: string }[];
+  by_customer: { customer_id: number; customer_name: string; orders: number; total: string }[];
+}
+
+export interface PurchasesSummary {
+  orders: number;
+  total: string;
+  by_day: DayTotal[];
+  top_products: { product_id: number; sku: string; name: string; quantity_bought: number; spend: string }[];
+  by_supplier: { supplier_id: number; supplier_name: string; orders: number; total: string }[];
 }
 
 export interface Dashboard {

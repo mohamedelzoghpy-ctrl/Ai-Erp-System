@@ -265,6 +265,13 @@ class TopProduct(BaseModel):
     revenue: Decimal
 
 
+class SalesByCustomer(BaseModel):
+    customer_id: int
+    customer_name: str
+    orders: int
+    total: Decimal
+
+
 class SalesSummary(BaseModel):
     date_from: datetime
     date_to: datetime
@@ -272,6 +279,32 @@ class SalesSummary(BaseModel):
     total: Decimal
     by_day: List[SalesByDay]
     top_products: List[TopProduct]
+    by_customer: List[SalesByCustomer] = []
+
+
+class PurchaseTopProduct(BaseModel):
+    product_id: int
+    sku: str
+    name: str
+    quantity_bought: int
+    spend: Decimal
+
+
+class PurchaseBySupplier(BaseModel):
+    supplier_id: int
+    supplier_name: str
+    orders: int
+    total: Decimal
+
+
+class PurchasesSummary(BaseModel):
+    date_from: datetime
+    date_to: datetime
+    orders: int
+    total: Decimal
+    by_day: List[SalesByDay]  # same shape: day, orders, total
+    top_products: List[PurchaseTopProduct]
+    by_supplier: List[PurchaseBySupplier]
 
 
 class Dashboard(BaseModel):

@@ -20,6 +20,8 @@ interface KindConfig {
   commit: { path: string; label: string; confirmText: string };
   /** status after commit */
   doneStatus: OrderStatus;
+  /** fallback file name prefix for downloads */
+  docPrefix: string;
 }
 
 const CONFIG: Record<Kind, KindConfig> = {
@@ -34,6 +36,7 @@ const CONFIG: Record<Kind, KindConfig> = {
     newLabel: "+ أمر شراء جديد",
     commit: { path: "receive", label: "استلام البضاعة", confirmText: "تأكيد استلام البضاعة؟ ستزيد كميات المخزون ويُحدَّث سعر التكلفة." },
     doneStatus: "received",
+    docPrefix: "purchase-order",
   },
   sales: {
     title: "أوامر البيع",
@@ -46,6 +49,7 @@ const CONFIG: Record<Kind, KindConfig> = {
     newLabel: "+ أمر بيع جديد",
     commit: { path: "confirm", label: "تأكيد البيع", confirmText: "تأكيد أمر البيع؟ ستُخصم الكميات من المخزون." },
     doneStatus: "confirmed",
+    docPrefix: "invoice",
   },
 };
 
@@ -407,6 +411,15 @@ function OrderDetail({
       <div className="total-row">
         <span>الإجمالي</span>
         <span>{money(order.total_amount)}</span>
+      </div>
+
+      <div className="form-actions" style={{ marginBottom: 4 }}>
+        <button className="btn" disabled={busy} onClick={() => void run(() => api.download(`${cfg.path}/${order.id}/pdf`, `${cfg.docPrefix}-${order.id}.pdf`))}>
+          ⬇ تنزيل PDF
+        </button>
+        <button className="btn" disabled={busy} onClick={() => void run(() => api.download(`${cfg.path}/${order.id}/xlsx`, `${cfg.docPrefix}-${order.id}.xlsx`))}>
+          ⬇ تنزيل Excel
+        </button>
       </div>
 
       {isDraft ? (

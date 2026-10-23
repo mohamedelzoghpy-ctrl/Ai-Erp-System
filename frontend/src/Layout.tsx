@@ -3,7 +3,7 @@ import { useAuth } from "./auth";
 import { ROLE_LABEL } from "./format";
 
 export default function Layout() {
-  const { user, logout, isAdmin } = useAuth();
+  const { user, logout, isAdmin, isManager } = useAuth();
   const link = ({ isActive }: { isActive: boolean }) => (isActive ? "active" : undefined);
 
   return (
@@ -35,6 +35,14 @@ export default function Layout() {
           <NavLink to="/sales-orders" className={link}>
             أوامر البيع
           </NavLink>
+          {isManager && (
+            <>
+              <div className="section">التقارير</div>
+              <NavLink to="/reports" className={link}>
+                التقارير المفصلة
+              </NavLink>
+            </>
+          )}
           {isAdmin && (
             <>
               <div className="section">الإدارة</div>

@@ -1,18 +1,20 @@
 """Read-only reports. All figures are computed in SQL.
 
 Only *confirmed* sales and *received* purchases count towards totals; drafts and cancelled
-orders never do. Dates are interpreted as UTC.
+orders never do. An order is dated by when it was confirmed / received (its `updated_at`, which
+is stamped by that transition and never changes afterwards), not by when the draft was created.
+Dates are interpreted as UTC. Each report is also available as an Excel download (`.../xlsx`).
 """
 
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from .. import models, schemas
+from .. import exports, models, schemas
 from ..database import get_db
 from ..deps import get_current_user, require_manager
 
@@ -37,9 +39,24 @@ def _period(date_from: Optional[date], date_to: Optional[date], default_days: in
     return start, end
 
 
-@router.get("/low-stock", response_model=List[schemas.LowStockItem])
-def low_stock(db: Session = Depends(get_db), _: models.User = Depends(get_current_user)):
-    """Active products at or below their reorder level, most urgent first."""
+def _xlsx_response(content: bytes, filename: str) -> Response:
+    return Response(
+        content=content,
+        media_type=exports.XLSX_MIME,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"', "Cache-Control": "no-store"},
+    )
+
+
+def _range_label(summary) -> str:
+    return f"الفترة: {summary.date_from.date()} إلى {summary.date_to.date()}"
+
+
+def _file_range(summary) -> str:
+    return f"{summary.date_from.date()}_{summary.date_to.date()}"
+
+
+# ---------------------------------------------------------------- low stock
+def _low_stock_rows(db: Session) -> List[schemas.LowStockItem]:
     products = (
         db.query(models.Product)
         .filter(models.Product.is_active.is_(True), models.Product.quantity <= models.Product.reorder_level)
@@ -61,9 +78,39 @@ def low_stock(db: Session = Depends(get_db), _: models.User = Depends(get_curren
     return sorted(rows, key=lambda r: (-r.shortfall, r.id))
 
 
-@router.get("/inventory-valuation", response_model=List[schemas.InventoryValuationRow])
-def inventory_valuation(db: Session = Depends(get_db), _: models.User = Depends(require_manager)):
-    """Stock value per warehouse at cost price and at sale price (active products only)."""
+@router.get("/low-stock", response_model=List[schemas.LowStockItem])
+def low_stock(db: Session = Depends(get_db), _: models.User = Depends(get_current_user)):
+    """Active products at or below their reorder level, most urgent first."""
+    return _low_stock_rows(db)
+
+
+@router.get("/low-stock/xlsx")
+def low_stock_xlsx(db: Session = Depends(get_db), _: models.User = Depends(get_current_user)):
+    rows = _low_stock_rows(db)
+    wh = {w.id: w.name for w in db.query(models.Warehouse).all()}
+    sup = {s.id: s.name for s in db.query(models.Supplier).all()}
+    table = (
+        "نقص المخزون",
+        ["الكود", "المنتج", "المخزن", "المورد", "المتاح", "حد إعادة الطلب", "العجز"],
+        [
+            [
+                ("text", r.sku),
+                ("text", r.name),
+                ("text", wh.get(r.warehouse_id, "—")),
+                ("text", sup.get(r.supplier_id, "—")),
+                ("int", r.quantity),
+                ("int", r.reorder_level),
+                ("int", r.shortfall),
+            ]
+            for r in rows
+        ],
+    )
+    content = exports.build_tables_xlsx("تقرير نقص المخزون", exports.fmt_dt(datetime.now(timezone.utc)), [table])
+    return _xlsx_response(content, "report-low-stock.xlsx")
+
+
+# ---------------------------------------------------------------- inventory valuation
+def _valuation_rows(db: Session) -> List[schemas.InventoryValuationRow]:
     P, W = models.Product, models.Warehouse
     rows = (
         db.query(
@@ -93,22 +140,69 @@ def inventory_valuation(db: Session = Depends(get_db), _: models.User = Depends(
     ]
 
 
-@router.get("/sales-summary", response_model=schemas.SalesSummary)
-def sales_summary(
-    date_from: Optional[date] = None,
-    date_to: Optional[date] = None,
-    top: int = Query(5, ge=1, le=50),
-    db: Session = Depends(get_db),
-    _: models.User = Depends(require_manager),
-):
-    """Confirmed sales in a period (default: last 30 days): totals, per-day series, top products."""
+@router.get("/inventory-valuation", response_model=List[schemas.InventoryValuationRow])
+def inventory_valuation(db: Session = Depends(get_db), _: models.User = Depends(require_manager)):
+    """Stock value per warehouse at cost price and at sale price (active products only)."""
+    return _valuation_rows(db)
+
+
+@router.get("/inventory-valuation/xlsx")
+def inventory_valuation_xlsx(db: Session = Depends(get_db), _: models.User = Depends(require_manager)):
+    rows = _valuation_rows(db)
+    P = models.Product
+    products = (
+        db.query(P, models.Warehouse.name)
+        .outerjoin(models.Warehouse, models.Warehouse.id == P.warehouse_id)
+        .filter(P.is_active.is_(True))
+        .order_by(P.name)
+        .all()
+    )
+    tables = [
+        (
+            "حسب المخزن",
+            ["المخزن", "عدد المنتجات", "الوحدات", "القيمة بالتكلفة", "القيمة بسعر البيع"],
+            [
+                [
+                    ("text", r.warehouse_name or "بدون مخزن"),
+                    ("int", r.products),
+                    ("int", r.units),
+                    ("money", r.cost_value),
+                    ("money", r.sale_value),
+                ]
+                for r in rows
+            ],
+        ),
+        (
+            "حسب المنتج",
+            ["الكود", "المنتج", "المخزن", "الكمية", "التكلفة", "سعر البيع", "القيمة بالتكلفة", "القيمة بسعر البيع"],
+            [
+                [
+                    ("text", p.sku),
+                    ("text", p.name),
+                    ("text", wname or "—"),
+                    ("int", p.quantity),
+                    ("money", p.cost_price),
+                    ("money", p.sale_price),
+                    ("money", p.cost_price * p.quantity),
+                    ("money", p.sale_price * p.quantity),
+                ]
+                for p, wname in products
+            ],
+        ),
+    ]
+    content = exports.build_tables_xlsx("تقرير قيمة المخزون", exports.fmt_dt(datetime.now(timezone.utc)), tables)
+    return _xlsx_response(content, "report-inventory-valuation.xlsx")
+
+
+# ---------------------------------------------------------------- sales
+def _sales_summary(db: Session, date_from, date_to, top: int) -> schemas.SalesSummary:
     start, end = _period(date_from, date_to)
-    SO, SI, P = models.SalesOrder, models.SalesOrderItem, models.Product
-    in_period = (SO.status == "confirmed", SO.created_at >= start, SO.created_at < end)
+    SO, SI, P, C = models.SalesOrder, models.SalesOrderItem, models.Product, models.Customer
+    in_period = (SO.status == "confirmed", SO.updated_at >= start, SO.updated_at < end)
 
     orders, total = db.query(func.count(SO.id), func.coalesce(func.sum(SO.total_amount), 0)).filter(*in_period).one()
 
-    day = func.date(SO.created_at)
+    day = func.date(SO.updated_at)
     by_day = (
         db.query(day, func.count(SO.id), func.coalesce(func.sum(SO.total_amount), 0))
         .filter(*in_period)
@@ -128,6 +222,17 @@ def sales_summary(
         .limit(top)
         .all()
     )
+
+    cust_total = func.sum(SO.total_amount)
+    cust_rows = (
+        db.query(C.id, C.name, func.count(SO.id), cust_total)
+        .join(SO, SO.customer_id == C.id)
+        .filter(*in_period)
+        .group_by(C.id, C.name)
+        .order_by(cust_total.desc(), C.id)
+        .limit(top)
+        .all()
+    )
     return schemas.SalesSummary(
         date_from=start,
         date_to=end - timedelta(microseconds=1),
@@ -138,9 +243,148 @@ def sales_summary(
             schemas.TopProduct(product_id=pid, sku=sku, name=name, quantity_sold=int(q), revenue=_money(r))
             for pid, sku, name, q, r in top_rows
         ],
+        by_customer=[
+            schemas.SalesByCustomer(customer_id=cid, customer_name=cname, orders=n, total=_money(t))
+            for cid, cname, n, t in cust_rows
+        ],
     )
 
 
+@router.get("/sales-summary", response_model=schemas.SalesSummary)
+def sales_summary(
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    top: int = Query(5, ge=1, le=50),
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_manager),
+):
+    """Confirmed sales in a period (default: last 30 days): totals, per-day series, top products and customers."""
+    return _sales_summary(db, date_from, date_to, top)
+
+
+@router.get("/sales-summary/xlsx")
+def sales_summary_xlsx(
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    top: int = Query(50, ge=1, le=50),
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_manager),
+):
+    s = _sales_summary(db, date_from, date_to, top)
+    tables = [
+        ("الملخص", ["البند", "القيمة"], [[("text", "عدد الأوامر المؤكدة"), ("int", s.orders)], [("text", "إجمالي المبيعات"), ("money", s.total)]]),
+        ("المبيعات اليومية", ["اليوم", "عدد الأوامر", "الإجمالي"], [[("text", d.day), ("int", d.orders), ("money", d.total)] for d in s.by_day]),
+        (
+            "المنتجات",
+            ["الكود", "المنتج", "الكمية المباعة", "الإيراد"],
+            [[("text", p.sku), ("text", p.name), ("int", p.quantity_sold), ("money", p.revenue)] for p in s.top_products],
+        ),
+        (
+            "العملاء",
+            ["العميل", "عدد الأوامر", "الإجمالي"],
+            [[("text", c.customer_name), ("int", c.orders), ("money", c.total)] for c in s.by_customer],
+        ),
+    ]
+    content = exports.build_tables_xlsx("تقرير المبيعات", _range_label(s), tables)
+    return _xlsx_response(content, f"report-sales-{_file_range(s)}.xlsx")
+
+
+# ---------------------------------------------------------------- purchases
+def _purchases_summary(db: Session, date_from, date_to, top: int) -> schemas.PurchasesSummary:
+    start, end = _period(date_from, date_to)
+    PO, PI, P, S = models.PurchaseOrder, models.PurchaseOrderItem, models.Product, models.Supplier
+    in_period = (PO.status == "received", PO.updated_at >= start, PO.updated_at < end)
+
+    orders, total = db.query(func.count(PO.id), func.coalesce(func.sum(PO.total_amount), 0)).filter(*in_period).one()
+
+    day = func.date(PO.updated_at)
+    by_day = (
+        db.query(day, func.count(PO.id), func.coalesce(func.sum(PO.total_amount), 0))
+        .filter(*in_period)
+        .group_by(day)
+        .order_by(day)
+        .all()
+    )
+
+    spend = func.sum(PI.quantity * PI.unit_cost)
+    top_rows = (
+        db.query(P.id, P.sku, P.name, func.sum(PI.quantity), spend)
+        .join(PI, PI.product_id == P.id)
+        .join(PO, PO.id == PI.order_id)
+        .filter(*in_period)
+        .group_by(P.id, P.sku, P.name)
+        .order_by(spend.desc(), P.id)
+        .limit(top)
+        .all()
+    )
+
+    sup_total = func.sum(PO.total_amount)
+    sup_rows = (
+        db.query(S.id, S.name, func.count(PO.id), sup_total)
+        .join(PO, PO.supplier_id == S.id)
+        .filter(*in_period)
+        .group_by(S.id, S.name)
+        .order_by(sup_total.desc(), S.id)
+        .limit(top)
+        .all()
+    )
+    return schemas.PurchasesSummary(
+        date_from=start,
+        date_to=end - timedelta(microseconds=1),
+        orders=orders,
+        total=_money(total),
+        by_day=[schemas.SalesByDay(day=str(d), orders=n, total=_money(t)) for d, n, t in by_day],
+        top_products=[
+            schemas.PurchaseTopProduct(product_id=pid, sku=sku, name=name, quantity_bought=int(q), spend=_money(sp))
+            for pid, sku, name, q, sp in top_rows
+        ],
+        by_supplier=[
+            schemas.PurchaseBySupplier(supplier_id=sid, supplier_name=sname, orders=n, total=_money(t))
+            for sid, sname, n, t in sup_rows
+        ],
+    )
+
+
+@router.get("/purchases-summary", response_model=schemas.PurchasesSummary)
+def purchases_summary(
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    top: int = Query(5, ge=1, le=50),
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_manager),
+):
+    """Received purchases in a period (default: last 30 days): totals, per-day series, top products and suppliers."""
+    return _purchases_summary(db, date_from, date_to, top)
+
+
+@router.get("/purchases-summary/xlsx")
+def purchases_summary_xlsx(
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    top: int = Query(50, ge=1, le=50),
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_manager),
+):
+    s = _purchases_summary(db, date_from, date_to, top)
+    tables = [
+        ("الملخص", ["البند", "القيمة"], [[("text", "عدد الأوامر المستلمة"), ("int", s.orders)], [("text", "إجمالي المشتريات"), ("money", s.total)]]),
+        ("المشتريات اليومية", ["اليوم", "عدد الأوامر", "الإجمالي"], [[("text", d.day), ("int", d.orders), ("money", d.total)] for d in s.by_day]),
+        (
+            "المنتجات",
+            ["الكود", "المنتج", "الكمية المشتراة", "الإنفاق"],
+            [[("text", p.sku), ("text", p.name), ("int", p.quantity_bought), ("money", p.spend)] for p in s.top_products],
+        ),
+        (
+            "الموردون",
+            ["المورد", "عدد الأوامر", "الإجمالي"],
+            [[("text", x.supplier_name), ("int", x.orders), ("money", x.total)] for x in s.by_supplier],
+        ),
+    ]
+    content = exports.build_tables_xlsx("تقرير المشتريات", _range_label(s), tables)
+    return _xlsx_response(content, f"report-purchases-{_file_range(s)}.xlsx")
+
+
+# ---------------------------------------------------------------- dashboard
 @router.get("/dashboard", response_model=schemas.Dashboard)
 def dashboard(
     days: int = Query(30, ge=1, le=366),
@@ -167,10 +411,9 @@ def dashboard(
     )
     s_orders, s_total = (
         db.query(func.count(SO.id), func.coalesce(func.sum(SO.total_amount), 0))
-        .filter(SO.status == "confirmed", SO.created_at >= start, SO.created_at < end)
+        .filter(SO.status == "confirmed", SO.updated_at >= start, SO.updated_at < end)
         .one()
     )
-    # A purchase counts when it was received; updated_at is stamped at the receive transition.
     p_orders, p_total = (
         db.query(func.count(PO.id), func.coalesce(func.sum(PO.total_amount), 0))
         .filter(PO.status == "received", PO.updated_at >= start, PO.updated_at < end)

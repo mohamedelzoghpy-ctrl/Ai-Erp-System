@@ -9,10 +9,10 @@ Stock is only touched on the transition, inside one transaction, with row locks.
 from decimal import Decimal
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
-from .. import models, schemas
+from .. import exports, models, schemas
 from ..database import get_db
 
 purchases = APIRouter(prefix="/purchase-orders", tags=["purchases"])
@@ -218,3 +218,75 @@ def cancel_sales_order(order_id: int, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(order)
     return order
+
+
+# ======================= Document export (PDF / Excel) =======================
+def _document(kind: str, order) -> dict:
+    """Plain-dict snapshot of an order for the PDF/Excel builders."""
+    if kind == "sales":
+        party, number, price_label = order.customer, f"SO-{order.id}", "سعر الوحدة"
+        party_label, price_attr = "العميل", "unit_price"
+    else:
+        party, number, price_label = order.supplier, f"PO-{order.id}", "تكلفة الوحدة"
+        party_label, price_attr = "المورد", "unit_cost"
+    items = []
+    for it in order.items:
+        price = getattr(it, price_attr)
+        items.append(
+            {
+                "name": it.product.name,
+                "sku": it.product.sku,
+                "unit": it.product.unit,
+                "quantity": it.quantity,
+                "price": price,
+                "total": price * it.quantity,
+            }
+        )
+    return {
+        "kind": kind,
+        "number": number,
+        "date": order.created_at,
+        "status": order.status,
+        "party_label": party_label,
+        "party": {"name": party.name, "phone": party.phone, "email": party.email, "address": party.address},
+        "warehouse": order.warehouse.name if order.warehouse else None,
+        "price_label": price_label,
+        "items": items,
+        "total": order.total_amount,
+        "notes": order.notes,
+    }
+
+
+def _download(content: bytes, media_type: str, filename: str) -> Response:
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"', "Cache-Control": "no-store"},
+    )
+
+
+def _export(kind: str, fmt: str, order, stem: str) -> Response:
+    doc = _document(kind, order)
+    if fmt == "pdf":
+        return _download(exports.build_document_pdf(doc), exports.PDF_MIME, f"{stem}-{doc['number']}.pdf")
+    return _download(exports.build_document_xlsx(doc), exports.XLSX_MIME, f"{stem}-{doc['number']}.xlsx")
+
+
+@purchases.get("/{order_id}/pdf")
+def purchase_order_pdf(order_id: int, db: Session = Depends(get_db)):
+    return _export("purchase", "pdf", _order_or_404(db, models.PurchaseOrder, order_id, "Purchase order"), "purchase-order")
+
+
+@purchases.get("/{order_id}/xlsx")
+def purchase_order_xlsx(order_id: int, db: Session = Depends(get_db)):
+    return _export("purchase", "xlsx", _order_or_404(db, models.PurchaseOrder, order_id, "Purchase order"), "purchase-order")
+
+
+@sales.get("/{order_id}/pdf")
+def sales_order_invoice_pdf(order_id: int, db: Session = Depends(get_db)):
+    return _export("sales", "pdf", _order_or_404(db, models.SalesOrder, order_id, "Sales order"), "invoice")
+
+
+@sales.get("/{order_id}/xlsx")
+def sales_order_invoice_xlsx(order_id: int, db: Session = Depends(get_db)):
+    return _export("sales", "xlsx", _order_or_404(db, models.SalesOrder, order_id, "Sales order"), "invoice")

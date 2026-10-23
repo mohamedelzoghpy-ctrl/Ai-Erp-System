@@ -6,3 +6,8 @@ pydantic
 PyJWT
 python-multipart
 alembic
+reportlab
+arabic-reshaper
+python-bidi
+openpyxl
+tzdata

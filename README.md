@@ -38,5 +38,6 @@ Set `VITE_BACKEND_URL` if the API runs elsewhere.
 - Warehouses, suppliers, customers, products with stock levels and reorder alerts
 - Purchase orders (stock in on receipt) and sales orders (stock out on confirmation, never oversells)
 - Stock movement history and manual adjustments
-- Dashboard and reports: sales, purchases, inventory valuation, low stock
+- Dashboard and detailed reports with a custom date range: sales, purchases, inventory valuation, low stock
+- Export invoices and purchase orders as PDF or Excel; export every report to Excel
 - Roles: staff / manager / admin; user management for admins
