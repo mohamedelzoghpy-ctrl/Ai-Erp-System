@@ -7,6 +7,7 @@ import os
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -28,9 +29,21 @@ async def lifespan(_: FastAPI):
 app = FastAPI(
     title="AI ERP System",
     description="ERP: inventory, purchasing, customers, suppliers and sales.",
-    version="0.4.0",
+    version="0.5.0",
     lifespan=lifespan,
 )
+
+# Browser origins allowed to call the API, e.g. CORS_ORIGINS="http://localhost:5173,https://erp.example.com".
+# Unset = no cross-origin access (same-origin / server-to-server only).
+_origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
+if _origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 app.include_router(auth.router)  # login / setup are public; user admin is protected inside
 

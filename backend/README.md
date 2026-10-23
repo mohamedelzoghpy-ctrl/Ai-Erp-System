@@ -19,6 +19,18 @@ uvicorn app.main:app --reload
 Open http://localhost:8000/docs. First run: call `POST /auth/setup` to create the first admin
 (works only while there are no users), then click **Authorize** and log in.
 
+## Run with Docker (PostgreSQL + backend)
+
+From the repository root:
+
+```bash
+cp .env.example .env        # then edit POSTGRES_PASSWORD and SECRET_KEY
+docker compose up --build
+```
+
+The backend container applies Alembic migrations on start, then serves on http://localhost:8000
+(docs at `/docs`). Data lives in the `pgdata` volume, so it survives restarts.
+
 ## Environment variables
 
 | Variable | Default | Purpose |
@@ -26,6 +38,7 @@ Open http://localhost:8000/docs. First run: call `POST /auth/setup` to create th
 | `DATABASE_URL` | `postgresql+psycopg2://postgres:postgres@localhost:5432/erp_db` | Database connection |
 | `SECRET_KEY` | random per start | JWT signing key — **set it in production** |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | `480` | Token lifetime |
+| `CORS_ORIGINS` | empty (no cross-origin) | Comma-separated browser origins allowed to call the API |
 | `AUTO_CREATE_TABLES` | `true` | Create missing tables at startup. Set `false` when using Alembic |
 
 ## Database migrations (Alembic)
