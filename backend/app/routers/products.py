@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from .. import models, schemas
 from ..database import get_db
+from ..deps import require_manager
 
 router = APIRouter(prefix="/products", tags=["products & inventory"])
 
@@ -92,7 +93,9 @@ def update_product(product_id: int, payload: schemas.ProductUpdate, db: Session 
 
 
 @router.delete("/{product_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_product(product_id: int, db: Session = Depends(get_db)):
+def delete_product(
+    product_id: int, db: Session = Depends(get_db), _: models.User = Depends(require_manager)
+):
     product = _product_or_404(db, product_id)
     db.delete(product)
     try:

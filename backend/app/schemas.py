@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from decimal import Decimal
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -193,3 +193,38 @@ class SalesOrderOut(ORMModel):
     total_amount: Decimal
     created_at: datetime
     items: List[SalesItemOut]
+
+
+# ---------- Auth / users ----------
+Role = Literal["admin", "manager", "staff"]
+
+
+class SetupAdmin(BaseModel):
+    username: str = Field(min_length=3, max_length=60)
+    password: str = Field(min_length=8, max_length=128)
+    full_name: Optional[str] = None
+
+
+class UserCreate(SetupAdmin):
+    role: Role = "staff"
+
+
+class UserUpdate(BaseModel):
+    full_name: Optional[str] = None
+    role: Optional[Role] = None
+    is_active: Optional[bool] = None
+    password: Optional[str] = Field(default=None, min_length=8, max_length=128)
+
+
+class UserOut(ORMModel):
+    id: int
+    username: str
+    full_name: Optional[str]
+    role: str
+    is_active: bool
+    created_at: datetime
+
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str = "bearer"

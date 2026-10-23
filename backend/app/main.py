@@ -11,7 +11,8 @@ from sqlalchemy.orm import Session
 
 from . import models  # noqa: F401  (importing registers the tables on Base.metadata)
 from .database import Base, engine, get_db
-from .routers import masterdata, orders, products
+from .deps import get_current_user
+from .routers import auth, masterdata, orders, products
 
 
 @asynccontextmanager
@@ -24,16 +25,20 @@ async def lifespan(_: FastAPI):
 app = FastAPI(
     title="AI ERP System",
     description="ERP: inventory, purchasing, customers, suppliers and sales.",
-    version="0.2.0",
+    version="0.3.0",
     lifespan=lifespan,
 )
 
-app.include_router(masterdata.warehouses)
-app.include_router(masterdata.suppliers)
-app.include_router(masterdata.customers)
-app.include_router(products.router)
-app.include_router(orders.purchases)
-app.include_router(orders.sales)
+app.include_router(auth.router)  # login / setup are public; user admin is protected inside
+
+# Every business route requires a logged-in user.
+_protected = [Depends(get_current_user)]
+app.include_router(masterdata.warehouses, dependencies=_protected)
+app.include_router(masterdata.suppliers, dependencies=_protected)
+app.include_router(masterdata.customers, dependencies=_protected)
+app.include_router(products.router, dependencies=_protected)
+app.include_router(orders.purchases, dependencies=_protected)
+app.include_router(orders.sales, dependencies=_protected)
 
 
 @app.get("/", tags=["system"])

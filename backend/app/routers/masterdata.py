@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from .. import models, schemas
 from ..database import get_db
+from ..deps import require_manager
 
 warehouses = APIRouter(prefix="/warehouses", tags=["warehouses"])
 suppliers = APIRouter(prefix="/suppliers", tags=["suppliers"])
@@ -56,7 +57,7 @@ def _crud(router: APIRouter, model, label: str, create_s, update_s, out_s):
         return obj
 
     @router.delete("/{obj_id}", status_code=status.HTTP_204_NO_CONTENT)
-    def delete(obj_id: int, db: Session = Depends(get_db)):
+    def delete(obj_id: int, db: Session = Depends(get_db), _: models.User = Depends(require_manager)):
         obj = _get_or_404(db, model, obj_id, label)
         db.delete(obj)
         try:
