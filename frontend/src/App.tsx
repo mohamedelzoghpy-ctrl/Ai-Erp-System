@@ -9,6 +9,7 @@ import { PurchaseOrders, SalesOrders } from "./pages/Orders";
 import Payments from "./pages/Accounts";
 import AuditLog from "./pages/AuditLog";
 import Pos from "./pages/Pos";
+import Returns from "./pages/Returns";
 import Reports from "./pages/Reports";
 import Users from "./pages/Users";
 import { Loading } from "./ui";
@@ -30,6 +31,7 @@ export default function App() {
         <Route path="purchase-orders" element={<PurchaseOrders />} />
         <Route path="sales-orders" element={<SalesOrders />} />
         <Route path="pos" element={<Pos />} />
+        <Route path="returns" element={<Returns />} />
         <Route path="payments" element={<Payments />} />
         {isManager && <Route path="reports" element={<Reports />} />}
         {isManager && <Route path="audit" element={<AuditLog />} />}

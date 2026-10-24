@@ -497,8 +497,12 @@ def dashboard(
         .filter(PO.status == "received", PO.updated_at >= start, PO.updated_at < end)
         .one()
     )
+    s_ret = db.query(func.coalesce(func.sum(models.SalesReturn.total_amount), 0)).filter(models.SalesReturn.created_at >= start, models.SalesReturn.created_at < end).scalar()
+    p_ret = db.query(func.coalesce(func.sum(models.PurchaseReturn.total_amount), 0)).filter(models.PurchaseReturn.created_at >= start, models.PurchaseReturn.created_at < end).scalar()
     return schemas.Dashboard(
         period_days=days,
+        sales_returns_total=_money(s_ret),
+        purchase_returns_total=_money(p_ret),
         products=db.query(func.count(P.id)).filter(P.is_active.is_(True)).scalar() or 0,
         low_stock_products=low,
         warehouses=count(models.Warehouse),

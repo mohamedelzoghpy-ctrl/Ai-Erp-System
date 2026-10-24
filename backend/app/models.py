@@ -134,6 +134,11 @@ class PurchaseOrderItem(Base):
 
     order = relationship("PurchaseOrder", back_populates="items")
     product = relationship("Product")
+    return_items = relationship("PurchaseReturnItem", back_populates="order_item")
+
+    @property
+    def returned_quantity(self):
+        return sum(r.quantity for r in self.return_items)
 
     @property
     def product_name(self):
@@ -176,6 +181,11 @@ class SalesOrderItem(Base):
 
     order = relationship("SalesOrder", back_populates="items")
     product = relationship("Product")
+    return_items = relationship("SalesReturnItem", back_populates="order_item")
+
+    @property
+    def returned_quantity(self):
+        return sum(r.quantity for r in self.return_items)
 
     @property
     def product_name(self):
@@ -191,7 +201,7 @@ class StockMovement(Base):
     product_id = Column(Integer, ForeignKey("products.id"), nullable=False, index=True)
     warehouse_id = Column(Integer, ForeignKey("warehouses.id"), nullable=True, index=True)
     change = Column(Integer, nullable=False)  # positive = in, negative = out
-    reason = Column(String(30), nullable=False)  # purchase_receipt | sale | adjustment
+    reason = Column(String(30), nullable=False)  # purchase_receipt | sale | adjustment | sales_return | purchase_return
     reference = Column(String(60), nullable=True)  # e.g. "PO-12", "SO-7"
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
@@ -258,3 +268,105 @@ class AuditLog(Base):
     entity = Column(String(30), nullable=False, index=True)
     entity_id = Column(Integer, nullable=True)
     summary = Column(Text, nullable=True)
+
+
+class SalesReturn(Base):
+    """Goods a customer sends back: stock goes up, the customer's balance goes down by (total - refund)."""
+
+    __tablename__ = "sales_returns"
+    __table_args__ = (CheckConstraint("refund_amount >= 0 AND refund_amount <= total_amount", name="ck_sales_return_refund"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    order_id = Column(Integer, ForeignKey("sales_orders.id"), nullable=False, index=True)
+    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False, index=True)
+    warehouse_id = Column(Integer, ForeignKey("warehouses.id"), nullable=False)
+    total_amount = Column(Numeric(14, 2), nullable=False)
+    refund_amount = Column(Numeric(14, 2), nullable=False, default=0, server_default="0")  # cash given back now
+    method = Column(String(20), nullable=False, default="cash", server_default="cash")
+    notes = Column(Text, nullable=True)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    order = relationship("SalesOrder")
+    customer = relationship("Customer")
+    items = relationship("SalesReturnItem", back_populates="ret", cascade="all, delete-orphan")
+
+    kind = "sales"
+
+    @property
+    def party_id(self):
+        return self.customer_id
+
+    @property
+    def party_name(self):
+        return self.customer.name if self.customer else None
+
+
+class SalesReturnItem(Base):
+    __tablename__ = "sales_return_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    return_id = Column(Integer, ForeignKey("sales_returns.id", ondelete="CASCADE"), nullable=False, index=True)
+    order_item_id = Column(Integer, ForeignKey("sales_order_items.id"), nullable=False, index=True)
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
+    quantity = Column(Integer, nullable=False)
+    unit_price = Column(Numeric(12, 2), nullable=False)
+
+    ret = relationship("SalesReturn", back_populates="items")
+    order_item = relationship("SalesOrderItem", back_populates="return_items")
+    product = relationship("Product")
+
+    @property
+    def product_name(self):
+        return self.product.name if self.product else None
+
+
+class PurchaseReturn(Base):
+    """Goods sent back to a supplier: stock goes down, what we owe the supplier goes down by (total - refund)."""
+
+    __tablename__ = "purchase_returns"
+    __table_args__ = (CheckConstraint("refund_amount >= 0 AND refund_amount <= total_amount", name="ck_purchase_return_refund"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    order_id = Column(Integer, ForeignKey("purchase_orders.id"), nullable=False, index=True)
+    supplier_id = Column(Integer, ForeignKey("suppliers.id"), nullable=False, index=True)
+    warehouse_id = Column(Integer, ForeignKey("warehouses.id"), nullable=False)
+    total_amount = Column(Numeric(14, 2), nullable=False)
+    refund_amount = Column(Numeric(14, 2), nullable=False, default=0, server_default="0")  # cash received back now
+    method = Column(String(20), nullable=False, default="cash", server_default="cash")
+    notes = Column(Text, nullable=True)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    order = relationship("PurchaseOrder")
+    supplier = relationship("Supplier")
+    items = relationship("PurchaseReturnItem", back_populates="ret", cascade="all, delete-orphan")
+
+    kind = "purchase"
+
+    @property
+    def party_id(self):
+        return self.supplier_id
+
+    @property
+    def party_name(self):
+        return self.supplier.name if self.supplier else None
+
+
+class PurchaseReturnItem(Base):
+    __tablename__ = "purchase_return_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    return_id = Column(Integer, ForeignKey("purchase_returns.id", ondelete="CASCADE"), nullable=False, index=True)
+    order_item_id = Column(Integer, ForeignKey("purchase_order_items.id"), nullable=False, index=True)
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
+    quantity = Column(Integer, nullable=False)
+    unit_price = Column(Numeric(12, 2), nullable=False)  # the order line's unit cost
+
+    ret = relationship("PurchaseReturn", back_populates="items")
+    order_item = relationship("PurchaseOrderItem", back_populates="return_items")
+    product = relationship("Product")
+
+    @property
+    def product_name(self):
+        return self.product.name if self.product else None

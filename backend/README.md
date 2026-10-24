@@ -129,3 +129,14 @@ if stock is short, nothing is saved (409). Without `customer_id` the sale goes t
 full; with a customer, `amount_paid` may be lower (credit sale, `0` = fully on account) but never above the total.
 The web app's "نقطة البيع" screen uses it (barcode/SKU + Enter, cart, change calculation, invoice PDF). Prices can only be edited by
 managers/admins in the UI; note that the API itself accepts a `unit_price` from any user, as `/sales-orders` always did.
+
+## Returns
+
+`POST /sales-returns` and `POST /purchase-returns` (any logged-in user) record goods coming back from a customer / going back to a supplier,
+always against a confirmed sale / received purchase order: `{order_id, items: [{order_item_id, quantity}], refund_amount, method, notes}`.
+- Quantity per line is capped at sold/received minus already returned (checked under a row lock, so simultaneous returns can't exceed it).
+- Sales returns add stock; purchase returns remove it and fail with 409 if the stock is no longer there.
+- The party's balance drops by `total - refund_amount` (`refund_amount` is cash exchanged at the time). Statements, invoice settlement and
+  aging all include returns; the dashboard shows the period's returns next to sales.
+- Returns are final: no edit or void. `GET /sales-returns`, `/purchase-returns` (filters `order_id`, `party_id`; paginated) list them.
+- Sales/purchase summary reports are not reduced by returns; they are shown separately on the dashboard.

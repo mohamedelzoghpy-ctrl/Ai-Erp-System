@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { api } from "../api";
+import { ReturnDialog } from "./Returns";
 import { dateTime, money, num } from "../format";
 import { useAction, useFetch, usePagedList } from "../hooks";
 import type { Order, OrderStatus, Party, Product, Warehouse } from "../types";
@@ -22,6 +23,9 @@ interface KindConfig {
   doneStatus: OrderStatus;
   /** fallback file name prefix for downloads */
   docPrefix: string;
+  returnPath: string;
+  returnWord: string;
+  refundLabel: string;
 }
 
 const CONFIG: Record<Kind, KindConfig> = {
@@ -37,6 +41,9 @@ const CONFIG: Record<Kind, KindConfig> = {
     commit: { path: "receive", label: "استلام البضاعة", confirmText: "تأكيد استلام البضاعة؟ ستزيد كميات المخزون ويُحدَّث سعر التكلفة." },
     doneStatus: "received",
     docPrefix: "purchase-order",
+    returnPath: "/purchase-returns",
+    returnWord: "مرتجع للمورد",
+    refundLabel: "المبلغ المستلم نقداً من المورد الآن",
   },
   sales: {
     title: "أوامر البيع",
@@ -50,6 +57,9 @@ const CONFIG: Record<Kind, KindConfig> = {
     commit: { path: "confirm", label: "تأكيد البيع", confirmText: "تأكيد أمر البيع؟ ستُخصم الكميات من المخزون." },
     doneStatus: "confirmed",
     docPrefix: "invoice",
+    returnPath: "/sales-returns",
+    returnWord: "مرتجع من العميل",
+    refundLabel: "المبلغ المردود نقداً للعميل الآن",
   },
 };
 
@@ -337,6 +347,7 @@ function OrderDetail({
 }) {
   const { busy, error, run } = useAction();
   const isDraft = order.status === "draft";
+  const [returning, setReturning] = useState(false);
 
   const transition = (path: string, confirmText: string) => {
     if (!confirm(confirmText)) return;
@@ -431,9 +442,29 @@ function OrderDetail({
           </button>
         </div>
       ) : (
-        <p className="muted" style={{ marginBottom: 0 }}>
-          {order.status === "cancelled" ? "هذا الأمر ملغي." : "تم تنفيذ هذا الأمر وتحديث المخزون."}
-        </p>
+        <>
+          <p className="muted" style={{ marginBottom: 8 }}>
+            {order.status === "cancelled" ? "هذا الأمر ملغي." : "تم تنفيذ هذا الأمر وتحديث المخزون."}
+          </p>
+          {order.status === cfg.doneStatus && order.items.some((i) => i.quantity > (i.returned_quantity ?? 0)) && (
+            <div className="form-actions">
+              <button className="btn" onClick={() => setReturning(true)}>
+                ↩ تسجيل {cfg.returnWord}
+              </button>
+            </div>
+          )}
+        </>
+      )}
+      {returning && (
+        <ReturnDialog
+          cfg={cfg}
+          order={order}
+          onClose={() => setReturning(false)}
+          onDone={() => {
+            setReturning(false);
+            onChanged();
+          }}
+        />
       )}
     </Modal>
   );

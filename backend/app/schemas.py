@@ -146,6 +146,7 @@ class PurchaseItemIn(BaseModel):
 class PurchaseItemOut(PurchaseItemIn, ORMModel):
     id: int
     product_name: Optional[str] = None
+    returned_quantity: int = 0
 
 
 class PurchaseOrderCreate(BaseModel):
@@ -185,6 +186,7 @@ class SalesItemOut(ORMModel):
     quantity: int
     unit_price: Decimal
     product_name: Optional[str] = None
+    returned_quantity: int = 0
 
 
 class SalesOrderCreate(BaseModel):
@@ -337,6 +339,8 @@ class Dashboard(BaseModel):
     draft_sales_orders: int
     draft_purchase_orders: int
     receivables_total: Decimal = Decimal("0")
+    sales_returns_total: Decimal = Decimal("0")  # returns in the same period as sales_total
+    purchase_returns_total: Decimal = Decimal("0")
     payables_total: Decimal = Decimal("0")
 
 
@@ -380,7 +384,7 @@ Day = date  # alias: a field called `date` must not shadow its own type annotati
 
 class StatementLine(BaseModel):
     date: Day
-    type: Literal["sale", "purchase", "receipt", "payment"]
+    type: Literal["sale", "purchase", "receipt", "payment", "sale_return", "purchase_return"]
     ref: str
     description: str
     charge: Decimal  # increases the balance (sale to a customer / purchase from a supplier)
@@ -506,3 +510,41 @@ class PosReceipt(BaseModel):
     paid: Decimal
     balance_due: Decimal
     payment_id: Optional[int] = None
+
+
+# ---------- Returns ----------
+class ReturnItemIn(BaseModel):
+    order_item_id: int
+    quantity: int = Field(gt=0)
+
+
+class ReturnCreate(BaseModel):
+    order_id: int
+    items: List[ReturnItemIn] = Field(min_length=1)
+    refund_amount: Decimal = Field(default=Decimal("0"), ge=0, description="Cash exchanged now; the rest changes the balance.")
+    method: PaymentMethod = "cash"
+    notes: Optional[str] = None
+
+
+class ReturnItemOut(ORMModel):
+    id: int
+    order_item_id: int
+    product_id: int
+    product_name: Optional[str] = None
+    quantity: int
+    unit_price: Decimal
+
+
+class ReturnOut(ORMModel):
+    id: int
+    kind: str  # sales | purchase
+    order_id: int
+    party_id: int
+    party_name: Optional[str] = None
+    warehouse_id: int
+    total_amount: Decimal
+    refund_amount: Decimal
+    method: str
+    notes: Optional[str] = None
+    created_at: datetime
+    items: List[ReturnItemOut]

@@ -57,6 +57,7 @@ export default function Dashboard() {
               <Kpi label={`المشتريات (آخر ${d.period_days} يوماً)`} value={money(d.purchases_total)} sub={`${num(d.purchase_orders_received)} أمر مستلم`} />
               <Kpi label="قيمة المخزون (بالتكلفة)" value={money(d.inventory_cost_value)} sub={`بسعر البيع: ${money(d.inventory_sale_value)}`} />
               <Kpi label="منتجات نشطة" value={num(d.products)} sub={`${num(d.warehouses)} مخزن · ${num(d.suppliers)} مورد · ${num(d.customers)} عميل`} />
+              <Kpi label="المرتجعات" value={money(d.sales_returns_total)} sub={`مرتجع مشتريات: ${money(d.purchase_returns_total)}`} />
               <Kpi label="مستحقات على العملاء" value={money(d.receivables_total)} sub="إجمالي الذمم المدينة" warn={Number(d.receivables_total) > 0} />
               <Kpi label="مستحقات للموردين" value={money(d.payables_total)} sub="إجمالي الذمم الدائنة" />
               <Kpi label="تحت حد إعادة الطلب" value={num(d.low_stock_products)} warn={d.low_stock_products > 0} />

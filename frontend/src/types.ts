@@ -62,6 +62,7 @@ export interface OrderItem {
   id: number;
   product_id: number;
   product_name?: string | null;
+  returned_quantity?: number;
   quantity: number;
   unit_cost?: string; // purchase orders
   unit_price?: string; // sales orders
@@ -142,6 +143,8 @@ export interface Dashboard {
   draft_sales_orders: number;
   draft_purchase_orders: number;
   receivables_total: string;
+  sales_returns_total: string;
+  purchase_returns_total: string;
   payables_total: string;
 }
 
@@ -228,4 +231,28 @@ export interface AuditEntry {
   entity: string;
   entity_id: number | null;
   summary: string | null;
+}
+
+export interface ReturnItem {
+  id: number;
+  order_item_id: number;
+  product_id: number;
+  product_name: string | null;
+  quantity: number;
+  unit_price: string;
+}
+
+export interface ReturnDoc {
+  id: number;
+  kind: "sales" | "purchase";
+  order_id: number;
+  party_id: number;
+  party_name: string | null;
+  warehouse_id: number;
+  total_amount: string;
+  refund_amount: string;
+  method: PaymentMethod;
+  notes: string | null;
+  created_at: string;
+  items: ReturnItem[];
 }
