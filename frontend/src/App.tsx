@@ -7,6 +7,7 @@ import Products from "./pages/Products";
 import { Customers, Suppliers, Warehouses } from "./pages/MasterData";
 import { PurchaseOrders, SalesOrders } from "./pages/Orders";
 import Payments from "./pages/Accounts";
+import AuditLog from "./pages/AuditLog";
 import Reports from "./pages/Reports";
 import Users from "./pages/Users";
 import { Loading } from "./ui";
@@ -29,6 +30,7 @@ export default function App() {
         <Route path="sales-orders" element={<SalesOrders />} />
         <Route path="payments" element={<Payments />} />
         {isManager && <Route path="reports" element={<Reports />} />}
+        {isManager && <Route path="audit" element={<AuditLog />} />}
         {isAdmin && <Route path="users" element={<Users />} />}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

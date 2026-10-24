@@ -434,3 +434,13 @@ class AgingReport(BaseModel):
     total_d90_plus: Decimal
     total_total: Decimal
     rows: List[AgingRow]
+
+
+class AuditLogOut(ORMModel):
+    id: int
+    created_at: datetime
+    username: Optional[str]
+    action: str
+    entity: str
+    entity_id: Optional[int]
+    summary: Optional[str]

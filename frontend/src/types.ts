@@ -219,3 +219,13 @@ export interface AgingReport {
   total_total: string;
   rows: AgingRow[];
 }
+
+export interface AuditEntry {
+  id: number;
+  created_at: string;
+  username: string | null;
+  action: string;
+  entity: string;
+  entity_id: number | null;
+  summary: string | null;
+}

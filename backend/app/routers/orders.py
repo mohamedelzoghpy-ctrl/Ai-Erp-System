@@ -13,6 +13,8 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
 from ..accounts import attach_settlement
+from ..audit import audit
+from ..deps import get_current_user
 from ..pagination import paginate
 from .. import exports, models, schemas
 from ..database import get_db
@@ -53,7 +55,7 @@ def _require_draft(order, action: str):
 
 # ======================= Purchases =======================
 @purchases.post("", response_model=schemas.PurchaseOrderOut, status_code=status.HTTP_201_CREATED)
-def create_purchase_order(payload: schemas.PurchaseOrderCreate, db: Session = Depends(get_db)):
+def create_purchase_order(payload: schemas.PurchaseOrderCreate, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     _require(db, models.Supplier, payload.supplier_id, "Supplier")
     _require(db, models.Warehouse, payload.warehouse_id, "Warehouse")
     order = models.PurchaseOrder(
@@ -70,6 +72,7 @@ def create_purchase_order(payload: schemas.PurchaseOrderCreate, db: Session = De
         total += item.unit_cost * item.quantity
     order.total_amount = total
     db.add(order)
+    audit(db, user, 'create', 'purchase_order', order, f"{len(order.items)} بند · {order.total_amount}")
     db.commit()
     db.refresh(order)
     return order
@@ -102,7 +105,7 @@ def get_purchase_order(order_id: int, db: Session = Depends(get_db)):
 
 
 @purchases.post("/{order_id}/receive", response_model=schemas.PurchaseOrderOut)
-def receive_purchase_order(order_id: int, db: Session = Depends(get_db)):
+def receive_purchase_order(order_id: int, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     """Mark goods as received: adds stock, updates each product's cost price, logs movements."""
     order = _order_or_404(db, models.PurchaseOrder, order_id, "Purchase order")
     _require_draft(order, "receive")
@@ -120,16 +123,18 @@ def receive_purchase_order(order_id: int, db: Session = Depends(get_db)):
             )
         )
     order.status = "received"
+    audit(db, user, 'receive', 'purchase_order', order, f"إجمالي {order.total_amount}")
     db.commit()
     db.refresh(order)
     return order
 
 
 @purchases.post("/{order_id}/cancel", response_model=schemas.PurchaseOrderOut)
-def cancel_purchase_order(order_id: int, db: Session = Depends(get_db)):
+def cancel_purchase_order(order_id: int, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     order = _order_or_404(db, models.PurchaseOrder, order_id, "Purchase order")
     _require_draft(order, "cancel")
     order.status = "cancelled"
+    audit(db, user, 'cancel', 'purchase_order', order, None)
     db.commit()
     db.refresh(order)
     return order
@@ -137,7 +142,7 @@ def cancel_purchase_order(order_id: int, db: Session = Depends(get_db)):
 
 # ======================= Sales =======================
 @sales.post("", response_model=schemas.SalesOrderOut, status_code=status.HTTP_201_CREATED)
-def create_sales_order(payload: schemas.SalesOrderCreate, db: Session = Depends(get_db)):
+def create_sales_order(payload: schemas.SalesOrderCreate, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     _require(db, models.Customer, payload.customer_id, "Customer")
     _require(db, models.Warehouse, payload.warehouse_id, "Warehouse")
     order = models.SalesOrder(
@@ -153,6 +158,7 @@ def create_sales_order(payload: schemas.SalesOrderCreate, db: Session = Depends(
         total += price * item.quantity
     order.total_amount = total
     db.add(order)
+    audit(db, user, 'create', 'sales_order', order, f"{len(order.items)} بند · {order.total_amount}")
     db.commit()
     db.refresh(order)
     return order
@@ -185,7 +191,7 @@ def get_sales_order(order_id: int, db: Session = Depends(get_db)):
 
 
 @sales.post("/{order_id}/confirm", response_model=schemas.SalesOrderOut)
-def confirm_sales_order(order_id: int, db: Session = Depends(get_db)):
+def confirm_sales_order(order_id: int, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     """Confirm the sale: removes stock (all-or-nothing) and logs movements."""
     order = _order_or_404(db, models.SalesOrder, order_id, "Sales order")
     _require_draft(order, "confirm")
@@ -217,16 +223,18 @@ def confirm_sales_order(order_id: int, db: Session = Depends(get_db)):
             )
         )
     order.status = "confirmed"
+    audit(db, user, 'confirm', 'sales_order', order, f"إجمالي {order.total_amount}")
     db.commit()
     db.refresh(order)
     return order
 
 
 @sales.post("/{order_id}/cancel", response_model=schemas.SalesOrderOut)
-def cancel_sales_order(order_id: int, db: Session = Depends(get_db)):
+def cancel_sales_order(order_id: int, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     order = _order_or_404(db, models.SalesOrder, order_id, "Sales order")
     _require_draft(order, "cancel")
     order.status = "cancelled"
+    audit(db, user, 'cancel', 'sales_order', order, None)
     db.commit()
     db.refresh(order)
     return order

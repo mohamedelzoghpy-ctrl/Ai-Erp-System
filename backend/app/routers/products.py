@@ -7,6 +7,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..pagination import paginate
+from ..audit import audit
+from ..deps import get_current_user
 from .. import models, schemas
 from ..database import get_db
 from ..deps import require_manager
@@ -29,7 +31,7 @@ def _check_refs(db: Session, warehouse_id: Optional[int], supplier_id: Optional[
 
 
 @router.post("", response_model=schemas.ProductOut, status_code=status.HTTP_201_CREATED)
-def create_product(payload: schemas.ProductCreate, db: Session = Depends(get_db)):
+def create_product(payload: schemas.ProductCreate, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     _check_refs(db, payload.warehouse_id, payload.supplier_id)
     product = models.Product(**payload.model_dump())
     db.add(product)
@@ -45,6 +47,7 @@ def create_product(payload: schemas.ProductCreate, db: Session = Depends(get_db)
                     reference="opening balance",
                 )
             )
+        audit(db, user, "create", "product", product, f"{product.sku} · {product.name}")
         db.commit()
     except IntegrityError:
         db.rollback()
@@ -86,12 +89,13 @@ def get_product(product_id: int, db: Session = Depends(get_db)):
 
 
 @router.patch("/{product_id}", response_model=schemas.ProductOut)
-def update_product(product_id: int, payload: schemas.ProductUpdate, db: Session = Depends(get_db)):
+def update_product(product_id: int, payload: schemas.ProductUpdate, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     product = _product_or_404(db, product_id)
     data = payload.model_dump(exclude_unset=True)
     _check_refs(db, data.get("warehouse_id"), data.get("supplier_id"))
     for key, value in data.items():
         setattr(product, key, value)
+    audit(db, user, "update", "product", product, "، ".join(data) or None)
     db.commit()
     db.refresh(product)
     return product
@@ -99,9 +103,10 @@ def update_product(product_id: int, payload: schemas.ProductUpdate, db: Session 
 
 @router.delete("/{product_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_product(
-    product_id: int, db: Session = Depends(get_db), _: models.User = Depends(require_manager)
+    product_id: int, db: Session = Depends(get_db), user: models.User = Depends(require_manager)
 ):
     product = _product_or_404(db, product_id)
+    audit(db, user, "delete", "product", product.id, f"{product.sku} · {product.name}")
     db.delete(product)
     try:
         db.commit()
@@ -114,7 +119,7 @@ def delete_product(
 
 
 @router.post("/{product_id}/adjust-stock", response_model=schemas.ProductOut)
-def adjust_stock(product_id: int, payload: schemas.StockAdjustment, db: Session = Depends(get_db)):
+def adjust_stock(product_id: int, payload: schemas.StockAdjustment, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     """Manual correction (stock-take, damage, etc.). Never lets quantity go negative."""
     if payload.change == 0:
         raise HTTPException(422, "change must not be zero")
@@ -134,6 +139,7 @@ def adjust_stock(product_id: int, payload: schemas.StockAdjustment, db: Session 
             reference=payload.reference,
         )
     )
+    audit(db, user, "adjust_stock", "product", product, f"{payload.change:+d} → {product.quantity}" + (f" ({payload.reference})" if payload.reference else ""))
     db.commit()
     db.refresh(product)
     return product

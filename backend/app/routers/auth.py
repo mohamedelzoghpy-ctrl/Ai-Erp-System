@@ -1,6 +1,6 @@
 """Login, first-run setup and user management."""
 
-from typing import List
+from typing import List, Optional
 
 import os
 import threading
@@ -13,6 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
+from ..audit import audit
 from ..database import get_db
 from ..deps import get_current_user, require_admin
 from ..security import DUMMY_HASH, create_access_token, hash_password, verify_password
@@ -20,7 +21,7 @@ from ..security import DUMMY_HASH, create_access_token, hash_password, verify_pa
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-def _make_user(db: Session, payload: schemas.UserCreate, role: str) -> models.User:
+def _make_user(db: Session, payload: schemas.UserCreate, role: str, actor: Optional[models.User] = None) -> models.User:
     user = models.User(
         username=payload.username.strip().lower(),
         full_name=payload.full_name,
@@ -29,6 +30,7 @@ def _make_user(db: Session, payload: schemas.UserCreate, role: str) -> models.Us
     )
     db.add(user)
     try:
+        audit(db, actor, "create", "user", user, f"{user.username} ({role})")
         db.commit()
     except IntegrityError:
         db.rollback()
@@ -101,6 +103,8 @@ def login(request: Request, form: OAuth2PasswordRequestForm = Depends(), db: Ses
         )
     with _failures_lock:
         _failures.pop(key, None)
+    audit(db, user, "login", "user", user.id, None)
+    db.commit()
     return schemas.Token(access_token=create_access_token(user.id))
 
 
@@ -111,9 +115,9 @@ def me(user: models.User = Depends(get_current_user)):
 
 @router.post("/users", response_model=schemas.UserOut, status_code=status.HTTP_201_CREATED)
 def create_user(
-    payload: schemas.UserCreate, db: Session = Depends(get_db), _: models.User = Depends(require_admin)
+    payload: schemas.UserCreate, db: Session = Depends(get_db), admin: models.User = Depends(require_admin)
 ):
-    return _make_user(db, payload, role=payload.role)
+    return _make_user(db, payload, role=payload.role, actor=admin)
 
 
 @router.get("/users", response_model=List[schemas.UserOut])
@@ -135,10 +139,13 @@ def update_user(
     # An admin must not lock themselves out by demoting or deactivating their own account.
     if user.id == admin.id and (data.get("role", "admin") != "admin" or data.get("is_active") is False):
         raise HTTPException(status.HTTP_409_CONFLICT, "You cannot demote or deactivate your own account")
+    password_changed = "password" in data
     if "password" in data:
         user.hashed_password = hash_password(data.pop("password"))
+    changed = [k for k in data] + (['password'] if password_changed else [])
     for key, value in data.items():
         setattr(user, key, value)
+    audit(db, admin, "update", "user", user, f"{user.username}: " + "، ".join(changed))
     db.commit()
     db.refresh(user)
     return user

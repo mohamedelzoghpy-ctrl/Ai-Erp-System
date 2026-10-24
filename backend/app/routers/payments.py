@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from .. import accounts, exports, models, schemas
 from ..pagination import paginate
+from ..audit import audit
 from ..database import get_db
 from ..deps import get_current_user, require_manager
 
@@ -59,6 +60,7 @@ def create_payment(
         created_by=user.id,
     )
     db.add(p)
+    audit(db, user, "create", "payment", p, f"{'قبض' if p.customer_id else 'دفع'} {p.amount}")
     db.commit()
     db.refresh(p)
     return _out(p)
@@ -109,6 +111,7 @@ def void_payment(payment_id: int, db: Session = Depends(get_db), user: models.Us
     p.status = "voided"
     p.voided_by = user.id
     p.voided_at = datetime.now(timezone.utc)
+    audit(db, user, "void", "payment", p, f"{p.amount}")
     db.commit()
     db.refresh(p)
     return _out(p)

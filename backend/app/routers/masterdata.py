@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from .. import models, schemas
 from ..accounts import party_balances
+from ..audit import audit
 from ..pagination import paginate
 from ..database import get_db
 from ..deps import get_current_user, require_manager
@@ -26,8 +27,10 @@ def _get_or_404(db: Session, model, obj_id: int, label: str):
     return obj
 
 
-def _commit(db: Session, obj=None):
+def _commit(db: Session, obj=None, before=None):
     try:
+        if before:
+            before()  # may flush, so constraint errors surface here and are reported as 409
         db.commit()
     except IntegrityError:
         db.rollback()
@@ -53,6 +56,8 @@ def _ensure_manager_for_balance(user: models.User) -> None:
 
 
 def _crud(router: APIRouter, model, label: str, create_s, update_s, out_s, kind: Optional[str] = None):
+    entity = model.__tablename__.rstrip("s") if model.__tablename__ != "warehouses" else "warehouse"
+
     @router.post("", response_model=out_s, status_code=status.HTTP_201_CREATED)
     def create(payload: create_s, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):  # type: ignore[valid-type]
         data = payload.model_dump()
@@ -60,7 +65,7 @@ def _crud(router: APIRouter, model, label: str, create_s, update_s, out_s, kind:
             _ensure_manager_for_balance(user)
         obj = model(**data)
         db.add(obj)
-        _commit(db, obj)
+        _commit(db, obj, before=lambda: audit(db, user, "create", entity, obj, obj.name))
         _attach_balances(db, kind, obj)
         return obj
 
@@ -90,16 +95,18 @@ def _crud(router: APIRouter, model, label: str, create_s, update_s, out_s, kind:
         new_opening = data.pop("opening_balance", None)
         if new_opening is not None and Decimal(str(new_opening)) != Decimal(str(obj.opening_balance)):
             _ensure_manager_for_balance(user)
+            audit(db, user, "opening_balance", entity, obj, f"{obj.opening_balance} → {new_opening}")
             obj.opening_balance = new_opening
         for key, value in data.items():
             setattr(obj, key, value)
-        _commit(db, obj)
+        _commit(db, obj, before=lambda: audit(db, user, "update", entity, obj, "، ".join(data) or None))
         _attach_balances(db, kind, obj)
         return obj
 
     @router.delete("/{obj_id}", status_code=status.HTTP_204_NO_CONTENT)
-    def delete(obj_id: int, db: Session = Depends(get_db), _: models.User = Depends(require_manager)):
+    def delete(obj_id: int, db: Session = Depends(get_db), user: models.User = Depends(require_manager)):
         obj = _get_or_404(db, model, obj_id, label)
+        audit(db, user, "delete", entity, obj.id, obj.name)
         db.delete(obj)
         try:
             db.commit()

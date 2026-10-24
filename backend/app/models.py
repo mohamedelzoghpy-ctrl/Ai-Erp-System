@@ -243,3 +243,18 @@ class Payment(Base):
     @property
     def kind(self) -> str:
         return "receipt" if self.customer_id is not None else "payment"
+
+
+class AuditLog(Base):
+    """Who did what and when. Rows are only ever inserted, in the same transaction as the change they describe."""
+
+    __tablename__ = "audit_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    username = Column(String(60), nullable=True)  # snapshot, survives user changes
+    action = Column(String(30), nullable=False, index=True)
+    entity = Column(String(30), nullable=False, index=True)
+    entity_id = Column(Integer, nullable=True)
+    summary = Column(Text, nullable=True)

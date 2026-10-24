@@ -45,6 +45,9 @@ export default function Layout() {
               <NavLink to="/reports" className={link}>
                 التقارير المفصلة
               </NavLink>
+              <NavLink to="/audit" className={link}>
+                سجل النشاط
+              </NavLink>
             </>
           )}
           {isAdmin && (

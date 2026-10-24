@@ -114,3 +114,10 @@ opening balance, then confirmed sales (or received purchases) in the order they 
 
 `GET /reports/receivables/aging` and `/reports/payables/aging` (+ `/xlsx`, manager/admin) split what is still unpaid by invoice age
 (0–30, 31–60, 61–90, 90+ days since commit) plus the unpaid opening balance, using the same oldest-first settlement as invoice status.
+
+## Audit log
+
+Every change that matters (orders created/confirmed/received/cancelled, payments recorded/voided, stock adjustments, opening-balance
+changes, creates/updates/deletes of products, parties and users, and logins) writes a row to `audit_logs` in the same transaction as
+the change, so a rolled-back change leaves no entry. `GET /audit-logs` (manager/admin; filters `entity`, `action`, `username`,
+`date_from`, `date_to`; paginated) is read-only. Failed login attempts are limited but not logged.
