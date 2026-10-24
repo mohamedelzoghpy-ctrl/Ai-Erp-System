@@ -119,6 +119,7 @@ export default function Products() {
           initial={editing === "new" ? null : editing}
           warehouses={warehouses.data ?? []}
           suppliers={suppliers.data ?? []}
+          isManager={isManager}
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null);
@@ -145,12 +146,14 @@ function ProductForm({
   initial,
   warehouses,
   suppliers,
+  isManager,
   onClose,
   onSaved,
 }: {
   initial: Product | null;
   warehouses: Warehouse[];
   suppliers: Party[];
+  isManager: boolean;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -176,8 +179,7 @@ function ProductForm({
       name: f.name.trim(),
       description: f.description.trim() || null,
       unit: f.unit.trim() || "قطعة",
-      cost_price: f.cost_price || "0",
-      sale_price: f.sale_price || "0",
+      ...(isManager ? { cost_price: f.cost_price || "0", sale_price: f.sale_price || "0" } : {}),
       reorder_level: Number(f.reorder_level) || 0,
       is_active: f.is_active,
       warehouse_id: f.warehouse_id ? Number(f.warehouse_id) : null,
@@ -202,10 +204,10 @@ function ProductForm({
             <input value={f.name} onChange={(e) => set("name", e.target.value)} required autoFocus={!!initial} />
           </Field>
           <Field label="سعر التكلفة">
-            <input type="number" min="0" step="0.01" value={f.cost_price} onChange={(e) => set("cost_price", e.target.value)} />
+            <input type="number" min="0" step="0.01" value={f.cost_price} onChange={(e) => set("cost_price", e.target.value)} readOnly={!isManager} />
           </Field>
           <Field label="سعر البيع">
-            <input type="number" min="0" step="0.01" value={f.sale_price} onChange={(e) => set("sale_price", e.target.value)} />
+            <input type="number" min="0" step="0.01" value={f.sale_price} onChange={(e) => set("sale_price", e.target.value)} readOnly={!isManager} />
           </Field>
           <Field label="الوحدة">
             <input value={f.unit} onChange={(e) => set("unit", e.target.value)} />
