@@ -165,6 +165,9 @@ class PurchaseOrderOut(ORMModel):
     total_amount: Decimal
     created_at: datetime
     items: List[PurchaseItemOut]
+    paid_amount: Optional[Decimal] = None
+    balance_due: Optional[Decimal] = None
+    payment_status: Optional[str] = None  # paid | partial | unpaid (None while draft/cancelled)
 
 
 # ---------- Sales orders ----------
@@ -201,6 +204,9 @@ class SalesOrderOut(ORMModel):
     total_amount: Decimal
     created_at: datetime
     items: List[SalesItemOut]
+    paid_amount: Optional[Decimal] = None
+    balance_due: Optional[Decimal] = None
+    payment_status: Optional[str] = None
 
 
 # ---------- Auth / users ----------

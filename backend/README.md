@@ -103,3 +103,9 @@ Reports date an order by when it was confirmed (sales) or received (purchases), 
 
 List endpoints (`/products`, `/customers`, `/suppliers`, `/purchase-orders`, `/sales-orders`, `/payments`) take `skip` and `limit`
 (max 500) and return the number of matches in the `X-Total-Count` response header. `/customers` and `/suppliers` also accept `search`.
+
+## Invoice settlement
+
+Payments are recorded per customer/supplier, not per invoice. Orders returned by the API carry `paid_amount`, `balance_due` and
+`payment_status` (`paid` / `partial` / `unpaid`; `null` for drafts and cancelled orders), computed FIFO: payments first cover the
+opening balance, then confirmed sales (or received purchases) in the order they were committed. Voiding a payment re-computes it.

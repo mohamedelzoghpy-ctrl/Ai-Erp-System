@@ -67,8 +67,13 @@ export interface OrderItem {
   unit_price?: string; // sales orders
 }
 
+export type PaymentStatus = "paid" | "partial" | "unpaid";
+
 export interface Order {
   id: number;
+  paid_amount?: string | null;
+  balance_due?: string | null;
+  payment_status?: PaymentStatus | null;
   party_name?: string | null;
   supplier_id?: number; // purchase orders
   customer_id?: number; // sales orders

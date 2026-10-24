@@ -41,6 +41,7 @@ Set `VITE_BACKEND_URL` if the API runs elsewhere.
 - Dashboard and detailed reports with a custom date range: sales, purchases, inventory valuation, low stock
 - Export invoices and purchase orders as PDF or Excel; export every report to Excel
 - Accounts: customer receipts and supplier payments, opening balances, account statements (PDF/Excel), receivables and payables reports
+- Paid / partial / unpaid status on every invoice (payments applied oldest-first)
 - Server-side pagination (50 per page) and search on products, customers, suppliers, orders and payments
 - Roles: staff / manager / admin; user management for admins
 

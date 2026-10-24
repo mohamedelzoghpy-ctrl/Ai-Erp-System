@@ -132,3 +132,50 @@ def build_statement(
         total_payments=total_payments,
         closing=running,
     )
+
+
+# ----------------------------------------------------------------------------- invoice settlement
+def order_settlements(db: Session, kind: str, party_id: int) -> Dict[int, Tuple[Decimal, Decimal]]:
+    """{order_id: (paid, remaining)} for the party's committed orders.
+
+    Payments are not tied to a specific invoice. They are applied oldest-first (FIFO): first to the opening
+    balance, then to confirmed sales / received purchases in the order they were committed. Because it is
+    derived, voiding a payment or changing an opening balance re-computes everything consistently.
+    """
+    if kind == "customer":
+        party, order, order_party, done = models.Customer, models.SalesOrder, models.SalesOrder.customer_id, "confirmed"
+        pay_party = models.Payment.customer_id
+    else:
+        party, order, order_party, done = models.Supplier, models.PurchaseOrder, models.PurchaseOrder.supplier_id, "received"
+        pay_party = models.Payment.supplier_id
+    p = db.get(party, party_id)
+    if p is None:
+        return {}
+    paid = db.query(func.coalesce(func.sum(models.Payment.amount), 0)).filter(pay_party == party_id, models.Payment.status == "posted").scalar()
+    pool = max(_dec(paid) - _dec(p.opening_balance), ZERO)
+    out: Dict[int, Tuple[Decimal, Decimal]] = {}
+    for oid, total in (
+        db.query(order.id, order.total_amount).filter(order_party == party_id, order.status == done).order_by(order.updated_at, order.id).all()
+    ):
+        total = _dec(total)
+        applied = min(pool, total)
+        pool -= applied
+        out[oid] = (applied, total - applied)
+    return out
+
+
+def attach_settlement(db: Session, kind: str, orders) -> None:
+    """Sets paid_amount / balance_due / payment_status on each order (None for draft or cancelled ones)."""
+    items = orders if isinstance(orders, list) else [orders]
+    cache: Dict[int, Dict[int, Tuple[Decimal, Decimal]]] = {}
+    for o in items:
+        pid = o.customer_id if kind == "customer" else o.supplier_id
+        if pid not in cache:
+            cache[pid] = order_settlements(db, kind, pid)
+        entry = cache[pid].get(o.id)
+        if entry is None:
+            o.paid_amount = o.balance_due = o.payment_status = None
+            continue
+        paid, rest = entry
+        o.paid_amount, o.balance_due = paid, rest
+        o.payment_status = "paid" if rest == 0 else ("partial" if paid > 0 else "unpaid")

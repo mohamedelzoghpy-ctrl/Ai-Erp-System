@@ -33,6 +33,15 @@ export function StatusBadge({ status }: { status: OrderStatus }) {
   return <span className={`badge badge-${status}`}>{STATUS_LABEL[status]}</span>;
 }
 
+const PAY_LABEL = { paid: "مسددة", partial: "سداد جزئي", unpaid: "غير مسددة" } as const;
+
+/** Settlement state of a committed invoice / purchase order (nothing for drafts and cancelled orders). */
+export function PaymentBadge({ status }: { status?: "paid" | "partial" | "unpaid" | null }) {
+  if (!status) return <span className="muted">—</span>;
+  const cls = status === "paid" ? "badge-confirmed" : status === "partial" ? "badge-draft" : "badge-off";
+  return <span className={`badge ${cls}`}>{PAY_LABEL[status]}</span>;
+}
+
 export function Modal({
   title,
   onClose,

@@ -12,6 +12,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
+from ..accounts import attach_settlement
 from ..pagination import paginate
 from .. import exports, models, schemas
 from ..database import get_db
@@ -88,12 +89,16 @@ def list_purchase_orders(
         query = query.filter(models.PurchaseOrder.status == status_filter)
     if supplier_id is not None:
         query = query.filter(models.PurchaseOrder.supplier_id == supplier_id)
-    return paginate(query, response, skip, limit, models.PurchaseOrder.id.desc())
+    rows = paginate(query, response, skip, limit, models.PurchaseOrder.id.desc())
+    attach_settlement(db, "supplier", rows)
+    return rows
 
 
 @purchases.get("/{order_id}", response_model=schemas.PurchaseOrderOut)
 def get_purchase_order(order_id: int, db: Session = Depends(get_db)):
-    return _order_or_404(db, models.PurchaseOrder, order_id, "Purchase order")
+    order = _order_or_404(db, models.PurchaseOrder, order_id, "Purchase order")
+    attach_settlement(db, "supplier", order)
+    return order
 
 
 @purchases.post("/{order_id}/receive", response_model=schemas.PurchaseOrderOut)
@@ -167,12 +172,16 @@ def list_sales_orders(
         query = query.filter(models.SalesOrder.status == status_filter)
     if customer_id is not None:
         query = query.filter(models.SalesOrder.customer_id == customer_id)
-    return paginate(query, response, skip, limit, models.SalesOrder.id.desc())
+    rows = paginate(query, response, skip, limit, models.SalesOrder.id.desc())
+    attach_settlement(db, "customer", rows)
+    return rows
 
 
 @sales.get("/{order_id}", response_model=schemas.SalesOrderOut)
 def get_sales_order(order_id: int, db: Session = Depends(get_db)):
-    return _order_or_404(db, models.SalesOrder, order_id, "Sales order")
+    order = _order_or_404(db, models.SalesOrder, order_id, "Sales order")
+    attach_settlement(db, "customer", order)
+    return order
 
 
 @sales.post("/{order_id}/confirm", response_model=schemas.SalesOrderOut)

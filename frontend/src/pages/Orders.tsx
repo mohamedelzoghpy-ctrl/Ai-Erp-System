@@ -3,7 +3,7 @@ import { api } from "../api";
 import { dateTime, money, num } from "../format";
 import { useAction, useFetch, usePagedList } from "../hooks";
 import type { Order, OrderStatus, Party, Product, Warehouse } from "../types";
-import { Alert, Empty, Field, Loading, Lookup, Modal, PageHeader, Pager, StatusBadge } from "../ui";
+import { Alert, Empty, Field, Loading, Lookup, Modal, PageHeader, Pager, PaymentBadge, StatusBadge } from "../ui";
 
 type Kind = "purchase" | "sales";
 
@@ -105,6 +105,7 @@ function OrdersScreen({ kind }: { kind: Kind }) {
                 <th>المخزن</th>
                 <th>الحالة</th>
                 <th className="num">الإجمالي</th>
+                <th>السداد</th>
                 <th />
               </tr>
             </thead>
@@ -119,6 +120,9 @@ function OrdersScreen({ kind }: { kind: Kind }) {
                     <StatusBadge status={o.status} />
                   </td>
                   <td className="num">{money(o.total_amount)}</td>
+                  <td>
+                    <PaymentBadge status={o.payment_status} />
+                  </td>
                   <td className="actions">
                     <button className="btn btn-sm" onClick={() => setViewId(o.id)}>
                       عرض
@@ -399,6 +403,14 @@ function OrderDetail({
         <span>الإجمالي</span>
         <span>{money(order.total_amount)}</span>
       </div>
+      {order.payment_status && (
+        <p style={{ marginTop: 0 }}>
+          السداد: <PaymentBadge status={order.payment_status} /> · المسدد: <b>{money(order.paid_amount)}</b> · المتبقي: <b>{money(order.balance_due)}</b>
+          <span className="muted" style={{ display: "block", fontSize: 12 }}>
+            تُوزَّع المدفوعات تلقائياً على الأقدم أولاً (رصيد أول المدة ثم الفواتير بترتيب تأكيدها).
+          </span>
+        </p>
+      )}
 
       <div className="form-actions" style={{ marginBottom: 4 }}>
         <button className="btn" disabled={busy} onClick={() => void run(() => api.download(`${cfg.path}/${order.id}/pdf`, `${cfg.docPrefix}-${order.id}.pdf`))}>
