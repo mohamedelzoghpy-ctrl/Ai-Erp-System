@@ -1,0 +1,25 @@
+{
+	# Let's Encrypt contact address (optional but recommended)
+	email {$ACME_EMAIL}
+}
+
+# DOMAIN must point (DNS A/AAAA record) at this server, with ports 80 and 443 open.
+# Caddy obtains and renews the certificate automatically and redirects HTTP -> HTTPS.
+{$DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "same-origin"
+		-Server
+	}
+
+	# Statement/invoice uploads are not supported, so keep request bodies small.
+	request_body {
+		max_size 5MB
+	}
+
+	reverse_proxy frontend:80
+}

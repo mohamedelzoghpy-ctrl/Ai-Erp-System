@@ -1,14 +1,16 @@
-"""CRUD for warehouses, suppliers and customers."""
+"""CRUD for warehouses, suppliers and customers (parties also expose their current balance)."""
 
-from typing import List
+from decimal import Decimal
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
+from ..accounts import party_balances
 from ..database import get_db
-from ..deps import require_manager
+from ..deps import get_current_user, require_manager
 
 warehouses = APIRouter(prefix="/warehouses", tags=["warehouses"])
 suppliers = APIRouter(prefix="/suppliers", tags=["suppliers"])
@@ -32,28 +34,58 @@ def _commit(db: Session, obj=None):
         db.refresh(obj)
 
 
-def _crud(router: APIRouter, model, label: str, create_s, update_s, out_s):
+def _attach_balances(db: Session, kind: Optional[str], objs) -> None:
+    """Parties carry a computed `balance`; warehouses (kind None) have none."""
+    if kind is None:
+        return
+    items = objs if isinstance(objs, list) else [objs]
+    balances = party_balances(db, kind, [o.id for o in items])
+    for o in items:
+        o.balance = balances.get(o.id, Decimal("0"))
+
+
+def _ensure_manager_for_balance(user: models.User) -> None:
+    """Opening balances change what a party owes, so only managers/admins may set them."""
+    if user.role not in ("admin", "manager"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only a manager or admin can set an opening balance")
+
+
+def _crud(router: APIRouter, model, label: str, create_s, update_s, out_s, kind: Optional[str] = None):
     @router.post("", response_model=out_s, status_code=status.HTTP_201_CREATED)
-    def create(payload: create_s, db: Session = Depends(get_db)):  # type: ignore[valid-type]
-        obj = model(**payload.model_dump())
+    def create(payload: create_s, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):  # type: ignore[valid-type]
+        data = payload.model_dump()
+        if Decimal(str(data.get("opening_balance") or 0)) != 0:
+            _ensure_manager_for_balance(user)
+        obj = model(**data)
         db.add(obj)
         _commit(db, obj)
+        _attach_balances(db, kind, obj)
         return obj
 
     @router.get("", response_model=List[out_s])
     def list_all(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-        return db.query(model).order_by(model.id).offset(skip).limit(min(limit, 500)).all()
+        rows = db.query(model).order_by(model.id).offset(skip).limit(min(limit, 500)).all()
+        _attach_balances(db, kind, rows)
+        return rows
 
     @router.get("/{obj_id}", response_model=out_s)
     def read(obj_id: int, db: Session = Depends(get_db)):
-        return _get_or_404(db, model, obj_id, label)
+        obj = _get_or_404(db, model, obj_id, label)
+        _attach_balances(db, kind, obj)
+        return obj
 
     @router.patch("/{obj_id}", response_model=out_s)
-    def update(obj_id: int, payload: update_s, db: Session = Depends(get_db)):  # type: ignore[valid-type]
+    def update(obj_id: int, payload: update_s, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):  # type: ignore[valid-type]
         obj = _get_or_404(db, model, obj_id, label)
-        for key, value in payload.model_dump(exclude_unset=True).items():
+        data = payload.model_dump(exclude_unset=True)
+        new_opening = data.pop("opening_balance", None)
+        if new_opening is not None and Decimal(str(new_opening)) != Decimal(str(obj.opening_balance)):
+            _ensure_manager_for_balance(user)
+            obj.opening_balance = new_opening
+        for key, value in data.items():
             setattr(obj, key, value)
         _commit(db, obj)
+        _attach_balances(db, kind, obj)
         return obj
 
     @router.delete("/{obj_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -66,10 +98,10 @@ def _crud(router: APIRouter, model, label: str, create_s, update_s, out_s):
             db.rollback()
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
-                f"{label} is referenced by existing orders; deactivate it instead (is_active=false)",
+                f"{label} is referenced by existing orders or payments; deactivate it instead (is_active=false)",
             )
 
 
 _crud(warehouses, models.Warehouse, "Warehouse", schemas.WarehouseCreate, schemas.WarehouseUpdate, schemas.WarehouseOut)
-_crud(suppliers, models.Supplier, "Supplier", schemas.SupplierCreate, schemas.SupplierUpdate, schemas.SupplierOut)
-_crud(customers, models.Customer, "Customer", schemas.CustomerCreate, schemas.CustomerUpdate, schemas.CustomerOut)
+_crud(suppliers, models.Supplier, "Supplier", schemas.SupplierCreate, schemas.SupplierUpdate, schemas.SupplierOut, kind="supplier")
+_crud(customers, models.Customer, "Customer", schemas.CustomerCreate, schemas.CustomerUpdate, schemas.CustomerOut, kind="customer")

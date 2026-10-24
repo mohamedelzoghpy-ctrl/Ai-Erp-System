@@ -3,7 +3,9 @@ import { api } from "../api";
 import { useAuth } from "../auth";
 import { useAction, useFetch } from "../hooks";
 import type { Party, Warehouse } from "../types";
+import { balanceNote, money } from "../format";
 import { Alert, Empty, Field, Loading, Modal, PageHeader } from "../ui";
+import { PaymentDialog, StatementDialog } from "./Accounts";
 
 /** Shared shape of the three master-data screens. */
 interface Column<T> {
@@ -147,11 +149,13 @@ function WarehouseForm({ initial, onClose, onSaved }: { initial: Warehouse | nul
 }
 
 // ------------------------------------------------- Suppliers & customers
-function PartyScreen({ title, singular, path }: { title: string; singular: string; path: string }) {
+function PartyScreen({ title, singular, path, kind }: { title: string; singular: string; path: string; kind: "customer" | "supplier" }) {
   const { isManager } = useAuth();
   const { list, action } = useCrud<Party>(path);
   const [editing, setEditing] = useState<Party | "new" | null>(null);
   const [search, setSearch] = useState("");
+  const [paying, setPaying] = useState<Party | null>(null);
+  const [statement, setStatement] = useState<Party | null>(null);
 
   const rows = (list.data ?? []).filter((p) => {
     const q = search.trim().toLowerCase();
@@ -163,6 +167,14 @@ function PartyScreen({ title, singular, path }: { title: string; singular: strin
     { header: "المسؤول", cell: (p) => p.contact_person || "—" },
     { header: "الهاتف", cell: (p) => <span dir="ltr">{p.phone || "—"}</span> },
     { header: "البريد", cell: (p) => <span dir="ltr">{p.email || "—"}</span> },
+    {
+      header: "الرصيد",
+      cell: (p) => (
+        <span title={balanceNote(kind, p.balance)} style={Number(p.balance) > 0 ? { color: "var(--danger, #b42318)", fontWeight: 600 } : undefined}>
+          {money(p.balance)}
+        </span>
+      ),
+    },
     { header: "الحالة", cell: (p) => <ActiveBadge active={p.is_active} /> },
   ];
 
@@ -203,6 +215,12 @@ function PartyScreen({ title, singular, path }: { title: string; singular: strin
                     <td key={c.header}>{c.cell(p)}</td>
                   ))}
                   <td className="actions">
+                    <button className="btn btn-sm" onClick={() => setPaying(p)}>
+                      {kind === "customer" ? "قبض" : "دفع"}
+                    </button>
+                    <button className="btn btn-sm" onClick={() => setStatement(p)}>
+                      كشف حساب
+                    </button>
                     <button className="btn btn-sm" onClick={() => setEditing(p)}>
                       تعديل
                     </button>
@@ -220,8 +238,23 @@ function PartyScreen({ title, singular, path }: { title: string; singular: strin
           <Empty>{search ? "لا نتائج مطابقة" : `لا يوجد ${singular} بعد.`}</Empty>
         )}
       </div>
+      {paying && (
+        <PaymentDialog
+          kind={kind}
+          partyId={paying.id}
+          partyName={paying.name}
+          balance={paying.balance}
+          onClose={() => setPaying(null)}
+          onSaved={() => {
+            setPaying(null);
+            list.reload();
+          }}
+        />
+      )}
+      {statement && <StatementDialog kind={kind} partyId={statement.id} partyName={statement.name} onClose={() => setStatement(null)} />}
       {editing && (
         <PartyForm
+          canSetOpening={isManager}
           singular={singular}
           path={path}
           initial={editing === "new" ? null : editing}
@@ -237,12 +270,14 @@ function PartyScreen({ title, singular, path }: { title: string; singular: strin
 }
 
 function PartyForm({
+  canSetOpening,
   singular,
   path,
   initial,
   onClose,
   onSaved,
 }: {
+  canSetOpening: boolean;
   singular: string;
   path: string;
   initial: Party | null;
@@ -255,6 +290,7 @@ function PartyForm({
     phone: initial?.phone ?? "",
     email: initial?.email ?? "",
     address: initial?.address ?? "",
+    opening_balance: initial?.opening_balance ?? "0",
     is_active: initial?.is_active ?? true,
   });
   const { busy, error, run } = useAction();
@@ -269,6 +305,8 @@ function PartyForm({
       email: f.email.trim() || null,
       address: f.address.trim() || null,
       is_active: f.is_active,
+      // Only managers/admins may set it; omitting it keeps the server value (staff would get a 403 otherwise).
+      ...(canSetOpening ? { opening_balance: f.opening_balance || "0" } : {}),
     };
     void run(async () => {
       if (initial) await api.patch(`${path}/${initial.id}`, body);
@@ -298,6 +336,11 @@ function PartyForm({
         <Field label="العنوان">
           <textarea rows={2} value={f.address} onChange={(e) => set("address", e.target.value)} />
         </Field>
+        {canSetOpening && (
+          <Field label="رصيد أول المدة" hint={`موجب = مستحق ${singular === "عميل" ? "على العميل" : "للمورد"} · سالب = رصيد دائن`}>
+            <input dir="ltr" type="number" step="0.01" value={f.opening_balance} onChange={(e) => set("opening_balance", e.target.value)} />
+          </Field>
+        )}
         <label className="check">
           <input type="checkbox" checked={f.is_active} onChange={(e) => set("is_active", e.target.checked)} /> نشط
         </label>
@@ -314,5 +357,5 @@ function PartyForm({
   );
 }
 
-export const Suppliers = () => <PartyScreen title="الموردون" singular="مورد" path="/suppliers" />;
-export const Customers = () => <PartyScreen title="العملاء" singular="عميل" path="/customers" />;
+export const Suppliers = () => <PartyScreen title="الموردون" singular="مورد" path="/suppliers" kind="supplier" />;
+export const Customers = () => <PartyScreen title="العملاء" singular="عميل" path="/customers" kind="customer" />;

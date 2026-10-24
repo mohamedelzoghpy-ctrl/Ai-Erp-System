@@ -27,6 +27,8 @@ export interface Party {
   email: string | null;
   address: string | null;
   is_active: boolean;
+  opening_balance: string;
+  balance: string; // >0: owed (customer owes us / we owe supplier); <0: credit
 }
 
 export interface Product {
@@ -132,4 +134,58 @@ export interface Dashboard {
   purchases_total: string;
   draft_sales_orders: number;
   draft_purchase_orders: number;
+  receivables_total: string;
+  payables_total: string;
+}
+
+export type PaymentMethod = "cash" | "bank" | "wallet" | "cheque";
+
+export interface Payment {
+  id: number;
+  kind: "receipt" | "payment";
+  customer_id: number | null;
+  supplier_id: number | null;
+  party_name: string | null;
+  amount: string;
+  method: PaymentMethod;
+  reference: string | null;
+  notes: string | null;
+  paid_on: string;
+  status: "posted" | "voided";
+  created_at: string;
+}
+
+export interface StatementLine {
+  date: string;
+  type: "sale" | "purchase" | "receipt" | "payment";
+  ref: string;
+  description: string;
+  charge: string;
+  payment: string;
+  balance: string;
+}
+
+export interface Statement {
+  kind: "customer" | "supplier";
+  party_id: number;
+  party_name: string;
+  date_from: string | null;
+  date_to: string | null;
+  opening: string;
+  lines: StatementLine[];
+  total_charges: string;
+  total_payments: string;
+  closing: string;
+}
+
+export interface BalanceRow {
+  party_id: number;
+  name: string;
+  phone: string | null;
+  balance: string;
+}
+
+export interface BalancesReport {
+  total: string;
+  rows: BalanceRow[];
 }

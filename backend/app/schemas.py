@@ -1,10 +1,10 @@
 """Pydantic (v2) schemas for request validation and responses."""
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class ORMModel(BaseModel):
@@ -43,6 +43,7 @@ class PartyBase(BaseModel):
     email: Optional[str] = None
     address: Optional[str] = None
     is_active: bool = True
+    opening_balance: Decimal = Decimal("0")
 
 
 class PartyUpdate(BaseModel):
@@ -52,6 +53,7 @@ class PartyUpdate(BaseModel):
     email: Optional[str] = None
     address: Optional[str] = None
     is_active: Optional[bool] = None
+    opening_balance: Optional[Decimal] = None
 
 
 class SupplierCreate(PartyBase):
@@ -65,6 +67,7 @@ class SupplierUpdate(PartyUpdate):
 class SupplierOut(PartyBase, ORMModel):
     id: int
     created_at: datetime
+    balance: Decimal = Decimal("0")  # what we owe the supplier
 
 
 class CustomerCreate(PartyBase):
@@ -78,6 +81,7 @@ class CustomerUpdate(PartyUpdate):
 class CustomerOut(PartyBase, ORMModel):
     id: int
     created_at: datetime
+    balance: Decimal = Decimal("0")  # what the customer owes us
 
 
 # ---------- Products ----------
@@ -322,3 +326,78 @@ class Dashboard(BaseModel):
     purchases_total: Decimal
     draft_sales_orders: int
     draft_purchase_orders: int
+    receivables_total: Decimal = Decimal("0")
+    payables_total: Decimal = Decimal("0")
+
+
+# ---------- Payments & statements ----------
+PaymentMethod = Literal["cash", "bank", "wallet", "cheque"]
+
+
+class PaymentCreate(BaseModel):
+    customer_id: Optional[int] = None  # money received from this customer
+    supplier_id: Optional[int] = None  # money paid to this supplier
+    amount: Decimal = Field(gt=0, max_digits=14, decimal_places=2)
+    method: PaymentMethod = "cash"
+    reference: Optional[str] = Field(default=None, max_length=100)
+    notes: Optional[str] = None
+    paid_on: Optional[date] = None  # defaults to today
+
+    @model_validator(mode="after")
+    def _exactly_one_party(self):
+        if (self.customer_id is None) == (self.supplier_id is None):
+            raise ValueError("Provide exactly one of customer_id or supplier_id")
+        return self
+
+
+class PaymentOut(ORMModel):
+    id: int
+    kind: Literal["receipt", "payment"]
+    customer_id: Optional[int]
+    supplier_id: Optional[int]
+    party_name: Optional[str] = None
+    amount: Decimal
+    method: str
+    reference: Optional[str]
+    notes: Optional[str]
+    paid_on: date
+    status: str
+    created_at: datetime
+
+
+Day = date  # alias: a field called `date` must not shadow its own type annotation
+
+
+class StatementLine(BaseModel):
+    date: Day
+    type: Literal["sale", "purchase", "receipt", "payment"]
+    ref: str
+    description: str
+    charge: Decimal  # increases the balance (sale to a customer / purchase from a supplier)
+    payment: Decimal  # decreases the balance (money received / paid)
+    balance: Decimal  # running balance after this line
+
+
+class Statement(BaseModel):
+    kind: Literal["customer", "supplier"]
+    party_id: int
+    party_name: str
+    date_from: Optional[date]
+    date_to: Optional[date]
+    opening: Decimal
+    lines: List[StatementLine]
+    total_charges: Decimal
+    total_payments: Decimal
+    closing: Decimal
+
+
+class BalanceRow(BaseModel):
+    party_id: int
+    name: str
+    phone: Optional[str]
+    balance: Decimal
+
+
+class BalancesReport(BaseModel):
+    total: Decimal
+    rows: List[BalanceRow]

@@ -1,6 +1,18 @@
-"""SQLAlchemy models for the ERP: warehouses, suppliers, and products."""
+"""SQLAlchemy models for the ERP: inventory, orders, parties, payments and users."""
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, Numeric, String, Text, func
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    Column,
+    Date,
+    DateTime,
+    ForeignKey,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    func,
+)
 from sqlalchemy.orm import relationship
 
 from .database import Base
@@ -32,6 +44,8 @@ class Supplier(Base):
     email = Column(String(150), nullable=True)
     address = Column(Text, nullable=True)
     is_active = Column(Boolean, nullable=False, default=True, server_default="true")
+    # What the party owed / was owed before this system was used (negative = credit in their favour).
+    opening_balance = Column(Numeric(14, 2), nullable=False, default=0, server_default="0")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
@@ -74,6 +88,8 @@ class Customer(Base):
     email = Column(String(150), nullable=True)
     address = Column(Text, nullable=True)
     is_active = Column(Boolean, nullable=False, default=True, server_default="true")
+    # What the party owed / was owed before this system was used (negative = credit in their favour).
+    opening_balance = Column(Numeric(14, 2), nullable=False, default=0, server_default="0")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
@@ -176,3 +192,38 @@ class User(Base):
     role = Column(String(20), nullable=False, default="staff", server_default="staff")  # admin | manager | staff
     is_active = Column(Boolean, nullable=False, default=True, server_default="true")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class Payment(Base):
+    """Money received from a customer (receipt) or paid to a supplier (payment).
+
+    Exactly one of customer_id / supplier_id is set. Payments are never edited or deleted:
+    a mistake is corrected by voiding the payment (status 'voided'), which removes it from balances.
+    """
+
+    __tablename__ = "payments"
+    __table_args__ = (
+        CheckConstraint("(customer_id IS NOT NULL) <> (supplier_id IS NOT NULL)", name="ck_payment_one_party"),
+        CheckConstraint("amount > 0", name="ck_payment_amount_positive"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
+    supplier_id = Column(Integer, ForeignKey("suppliers.id"), nullable=True, index=True)
+    amount = Column(Numeric(14, 2), nullable=False)
+    method = Column(String(20), nullable=False, default="cash", server_default="cash")  # cash | bank | wallet | cheque
+    reference = Column(String(100), nullable=True)
+    notes = Column(Text, nullable=True)
+    paid_on = Column(Date, nullable=False, server_default=func.current_date())
+    status = Column(String(10), nullable=False, default="posted", server_default="posted", index=True)  # posted | voided
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    voided_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    voided_at = Column(DateTime(timezone=True), nullable=True)
+
+    customer = relationship("Customer")
+    supplier = relationship("Supplier")
+
+    @property
+    def kind(self) -> str:
+        return "receipt" if self.customer_id is not None else "payment"

@@ -2,7 +2,12 @@
 
 from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException, status
+import os
+import threading
+import time
+from collections import defaultdict, deque
+
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -40,17 +45,62 @@ def first_run_setup(payload: schemas.SetupAdmin, db: Session = Depends(get_db)):
     return _make_user(db, payload, role="admin")
 
 
+# --- brute-force protection: too many failed logins per (client IP, username) -> 429 for a while.
+# In-memory, so it is per worker process (the container runs a single worker); behind a proxy set
+# FORWARDED_ALLOW_IPS so request.client.host is the real client address.
+LOGIN_MAX_FAILURES = int(os.getenv("LOGIN_MAX_FAILURES", "10"))
+LOGIN_WINDOW_SECONDS = int(os.getenv("LOGIN_WINDOW_SECONDS", "900"))
+_failures: "defaultdict[str, deque]" = defaultdict(deque)
+_failures_lock = threading.Lock()
+
+
+def _recent_failures(key: str, now: float) -> deque:
+    q = _failures[key]
+    while q and now - q[0] > LOGIN_WINDOW_SECONDS:
+        q.popleft()
+    if not q:
+        _failures.pop(key, None)
+    return q
+
+
+def _check_login_allowed(key: str) -> None:
+    if LOGIN_MAX_FAILURES <= 0:
+        return
+    now = time.monotonic()
+    with _failures_lock:
+        q = _recent_failures(key, now)
+        if len(q) >= LOGIN_MAX_FAILURES:
+            retry = max(1, int(LOGIN_WINDOW_SECONDS - (now - q[0])))
+            raise HTTPException(
+                status.HTTP_429_TOO_MANY_REQUESTS,
+                "Too many failed login attempts, try again later",
+                headers={"Retry-After": str(retry)},
+            )
+
+
+def _record_login_failure(key: str) -> None:
+    with _failures_lock:
+        if len(_failures) > 10000:  # bound memory under a spray attack
+            _failures.clear()
+        _failures[key].append(time.monotonic())
+
+
 @router.post("/login", response_model=schemas.Token)
-def login(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+def login(request: Request, form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    key = f"{request.client.host if request.client else '?'}|{form.username.strip().lower()}"
+    _check_login_allowed(key)
     user = db.query(models.User).filter(models.User.username == form.username.strip().lower()).one_or_none()
     # Always run one hash verification so response time doesn't reveal whether the user exists.
     valid = verify_password(form.password, user.hashed_password if user else DUMMY_HASH)
     if user is None or not valid or not user.is_active:
+        _record_login_failure(key)
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED,
             "Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    with _failures_lock:
+        _failures.pop(key, None)
     return schemas.Token(access_token=create_access_token(user.id))
 
 

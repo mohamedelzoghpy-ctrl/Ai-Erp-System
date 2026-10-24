@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from . import models  # noqa: F401  (importing registers the tables on Base.metadata)
 from .database import Base, engine, get_db
 from .deps import get_current_user
-from .routers import auth, masterdata, orders, products, reports
+from .routers import auth, masterdata, orders, payments, products, reports
 
 
 @asynccontextmanager
@@ -26,11 +26,17 @@ async def lifespan(_: FastAPI):
     yield
 
 
+_docs = os.getenv("ENABLE_DOCS", "true").lower() not in ("0", "false", "no")
+
 app = FastAPI(
     title="AI ERP System",
     description="ERP: inventory, purchasing, customers, suppliers and sales.",
-    version="0.5.0",
+    version="0.6.0",
     lifespan=lifespan,
+    # Interactive docs are handy in development; set ENABLE_DOCS=false in production.
+    docs_url="/docs" if _docs else None,
+    redoc_url="/redoc" if _docs else None,
+    openapi_url="/openapi.json" if _docs else None,
 )
 
 # Browser origins allowed to call the API, e.g. CORS_ORIGINS="http://localhost:5173,https://erp.example.com".
@@ -55,6 +61,9 @@ app.include_router(masterdata.customers, dependencies=_protected)
 app.include_router(products.router, dependencies=_protected)
 app.include_router(orders.purchases, dependencies=_protected)
 app.include_router(orders.sales, dependencies=_protected)
+app.include_router(payments.payments, dependencies=_protected)
+app.include_router(payments.customer_accounts, dependencies=_protected)
+app.include_router(payments.supplier_accounts, dependencies=_protected)
 app.include_router(reports.router)  # protected per endpoint (financial reports need manager/admin)
 
 

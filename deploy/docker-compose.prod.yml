@@ -1,0 +1,68 @@
+# Production stack: Caddy (automatic HTTPS) -> frontend (nginx, SPA + /api proxy) -> backend -> db.
+# Only Caddy publishes ports; the database and API are reachable inside the Docker network only.
+#
+#   cp deploy/.env.prod.example .env   (fill in)  &&   docker compose -f deploy/docker-compose.prod.yml --env-file .env up -d --build
+name: erp
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: erp
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: erp_db
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U erp -d erp_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build: ../backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg2://erp:${POSTGRES_PASSWORD}@db:5432/erp_db
+      SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in .env}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-480}
+      CORS_ORIGINS: ""            # same-origin through the proxy, so no cross-origin access is needed
+      ENABLE_DOCS: "false"
+      # Reached only through the proxy chain (Caddy -> nginx -> here); the API port is not published.
+      FORWARDED_ALLOW_IPS: "*"
+      COMPANY_NAME: ${COMPANY_NAME:-AI ERP System}
+      COMPANY_PHONE: ${COMPANY_PHONE:-}
+      COMPANY_ADDRESS: ${COMPANY_ADDRESS:-}
+      CURRENCY_LABEL: ${CURRENCY_LABEL:-ج.م}
+      EXPORT_TIMEZONE: ${EXPORT_TIMEZONE:-Africa/Cairo}
+
+  frontend:
+    build: ../frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - frontend
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN in .env (e.g. erp.example.com)}
+      ACME_EMAIL: ${ACME_EMAIL:-}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:

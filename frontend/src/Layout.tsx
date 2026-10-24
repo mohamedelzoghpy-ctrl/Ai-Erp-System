@@ -35,6 +35,10 @@ export default function Layout() {
           <NavLink to="/sales-orders" className={link}>
             أوامر البيع
           </NavLink>
+          <div className="section">الحسابات</div>
+          <NavLink to="/payments" className={link}>
+            المقبوضات والمدفوعات
+          </NavLink>
           {isManager && (
             <>
               <div className="section">التقارير</div>

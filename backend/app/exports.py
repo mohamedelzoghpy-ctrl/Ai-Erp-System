@@ -480,3 +480,174 @@ def build_tables_xlsx(title: str, subtitle: str, tables: Iterable[Table]) -> byt
     out = io.BytesIO()
     wb.save(out)
     return out.getvalue()
+
+
+# ----------------------------------------------------------------------------- account statements
+STATEMENT_LABELS = {
+    # kind -> (document title, charge column, payment column, "owed" caption, party label)
+    "customer": ("كشف حساب عميل", "مبيعات", "مقبوضات", "مستحق على العميل", "العميل"),
+    "supplier": ("كشف حساب مورد", "مشتريات", "مدفوعات", "مستحق للمورد", "المورد"),
+}
+
+
+def _balance_caption(kind: str, balance: Any) -> str:
+    value = Decimal(str(balance or 0))
+    owed = STATEMENT_LABELS[kind][3]
+    if value > 0:
+        return owed
+    if value < 0:
+        return "رصيد دائن (دفع زائد)"
+    return "الحساب مُسوّى"
+
+
+def _period_label(stmt: Dict[str, Any]) -> str:
+    if stmt.get("date_from") and stmt.get("date_to"):
+        return f"الفترة: من {stmt['date_from']} إلى {stmt['date_to']}"
+    if stmt.get("date_from"):
+        return f"الفترة: من {stmt['date_from']}"
+    if stmt.get("date_to"):
+        return f"الفترة: حتى {stmt['date_to']}"
+    return "الفترة: كل الحركات"
+
+
+def build_statement_pdf(stmt: Dict[str, Any]) -> bytes:
+    """stmt = schemas.Statement.model_dump(): kind, party_name, date_from/to, opening, lines[], totals, closing.
+    Optional extra keys: party{phone,address}."""
+    title, charge_label, pay_label, _, party_label = STATEMENT_LABELS[stmt["kind"]]
+    pdf = _Pdf(f"{title} - {stmt['party_name']}")
+    c = pdf.c
+
+    pdf.text(RIGHT, pdf.y - 16, COMPANY_NAME, font="Amiri-Bold", size=19)
+    sub_y = pdf.y - 34
+    for line in (COMPANY_ADDRESS, COMPANY_PHONE):
+        if line:
+            pdf.text(RIGHT, sub_y, line, size=9.5, color=MUTED)
+            sub_y -= 13
+    pdf.text(LEFT, pdf.y - 16, title, font="Amiri-Bold", size=19, align="l", color=ACCENT)
+    pdf.y = min(sub_y, pdf.y - 30) - 6
+    pdf.rule(pdf.y)
+    pdf.y -= 22
+
+    top = pdf.y
+    pdf.text(RIGHT, top, f"{party_label}:", font="Amiri-Bold", size=11, color=MUTED)
+    name_lines = pdf.wrap(stmt["party_name"], "Amiri-Bold", 13, 330)
+    for i, ln in enumerate(name_lines):
+        pdf.text(RIGHT - 52, top - i * 16, ln, font="Amiri-Bold", size=13)
+    ry = top - 17 - (len(name_lines) - 1) * 16
+    pdf.text(RIGHT, ry, _period_label(stmt), size=10.5, color=MUTED)
+    ry -= 15
+    pdf.y = ry - 6
+
+    cols: List[Tuple[str, float, str]] = [
+        ("التاريخ", 70, "c"),
+        ("المرجع", 62, "c"),
+        ("البيان", 153, "r"),
+        (charge_label, 76, "c"),
+        (pay_label, 76, "c"),
+        ("الرصيد", 78, "c"),
+    ]
+    assert abs(sum(w for _, w, _ in cols) - CONTENT_W) < 1, "column widths must fill the page"
+    pad = 5
+
+    def spans() -> List[Tuple[float, float]]:
+        out, x = [], RIGHT
+        for _, w, _ in cols:
+            out.append((x - w, x))
+            x -= w
+        return out
+
+    def header() -> None:
+        h = 24
+        c.setFillColor(HEAD_BG)
+        c.rect(LEFT, pdf.y - h, CONTENT_W, h, stroke=0, fill=1)
+        for (name, _, _), (x0, x1) in zip(cols, spans()):
+            pdf.text((x0 + x1) / 2, pdf.y - 16, name, font="Amiri-Bold", size=10.5, align="c", color=MUTED)
+        pdf.y -= h
+
+    def row(cells: List[str], bold: bool = False, desc_lines: Optional[List[str]] = None) -> None:
+        font, size, lead = ("Amiri-Bold" if bold else "Amiri"), 10.5, 14
+        lines = desc_lines or [cells[2]]
+        row_h = max(26, len(lines) * lead + 10)
+        pdf.ensure(row_h + 4, on_new_page=header)
+        base = pdf.y - 17
+        for ci, ((_, _, align), (x0, x1)) in enumerate(zip(cols, spans())):
+            if ci == 2:
+                for li, ln in enumerate(lines):
+                    pdf.text(x1 - pad, base - li * lead, ln, font=font, size=size)
+            elif cells[ci]:
+                pdf.text((x0 + x1) / 2, base, cells[ci], font=font, size=size, align="c")
+        pdf.y -= row_h
+        pdf.rule(pdf.y)
+
+    header()
+    row(["", "", "رصيد افتتاحي", "", "", fmt_money(stmt["opening"])], bold=True)
+    desc_w = cols[2][1] - 2 * pad
+    for ln in stmt["lines"]:
+        charge = Decimal(str(ln["charge"] or 0))
+        payment = Decimal(str(ln["payment"] or 0))
+        row(
+            [
+                str(ln["date"]),
+                ln["ref"],
+                ln["description"],
+                fmt_money(charge) if charge else "",
+                fmt_money(payment) if payment else "",
+                fmt_money(ln["balance"]),
+            ],
+            desc_lines=pdf.wrap(ln["description"], "Amiri", 10.5, desc_w),
+        )
+    if not stmt["lines"]:
+        pdf.ensure(30)
+        pdf.text(PAGE_W / 2, pdf.y - 20, "لا توجد حركات في هذه الفترة", size=10.5, align="c", color=MUTED)
+        pdf.y -= 34
+
+    # ---- totals box
+    pdf.ensure(100)
+    pdf.y -= 10
+    box_w, box_h = 260, 78
+    c.setFillColor(HEAD_BG)
+    c.roundRect(LEFT, pdf.y - box_h, box_w, box_h, 5, stroke=0, fill=1)
+    y = pdf.y - 18
+    for label, value, bold, color in (
+        (f"إجمالي {charge_label}", fmt_money(stmt["total_charges"]), False, INK),
+        (f"إجمالي {pay_label}", fmt_money(stmt["total_payments"]), False, INK),
+        ("الرصيد الختامي", f"{fmt_money(stmt['closing'])} {CURRENCY}", True, ACCENT),
+    ):
+        font = "Amiri-Bold" if bold else "Amiri"
+        pdf.text(LEFT + box_w - 10, y, label, font=font, size=11.5 if bold else 10.5)
+        pdf.text(LEFT + 10, y, value, font=font, size=12.5 if bold else 10.5, align="l", color=color)
+        y -= 21
+    pdf.text(LEFT + box_w + 12, pdf.y - 18, _balance_caption(stmt["kind"], stmt["closing"]), font="Amiri-Bold", size=11, align="l", color=MUTED)
+    pdf.y -= box_h + 10
+    return pdf.finish()
+
+
+def build_statement_xlsx(stmt: Dict[str, Any]) -> bytes:
+    title, charge_label, pay_label, _, party_label = STATEMENT_LABELS[stmt["kind"]]
+    rows: List[List[Tuple[str, Any]]] = [
+        [("text", ""), ("text", ""), ("text", "رصيد افتتاحي"), ("text", ""), ("text", ""), ("money", stmt["opening"])]
+    ]
+    for ln in stmt["lines"]:
+        charge, payment = Decimal(str(ln["charge"] or 0)), Decimal(str(ln["payment"] or 0))
+        rows.append(
+            [
+                ("text", str(ln["date"])),
+                ("text", ln["ref"]),
+                ("text", ln["description"]),
+                ("money", charge) if charge else ("text", ""),
+                ("money", payment) if payment else ("text", ""),
+                ("money", ln["balance"]),
+            ]
+        )
+    rows.append(
+        [
+            ("text", ""),
+            ("text", ""),
+            ("text", f"الإجمالي — {_balance_caption(stmt['kind'], stmt['closing'])}"),
+            ("money", stmt["total_charges"]),
+            ("money", stmt["total_payments"]),
+            ("money", stmt["closing"]),
+        ]
+    )
+    table = ("كشف الحساب", ["التاريخ", "المرجع", "البيان", charge_label, pay_label, "الرصيد"], rows)
+    return build_tables_xlsx(f"{title}: {stmt['party_name']}", _period_label(stmt), [table])

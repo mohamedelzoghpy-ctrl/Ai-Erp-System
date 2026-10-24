@@ -40,4 +40,10 @@ Set `VITE_BACKEND_URL` if the API runs elsewhere.
 - Stock movement history and manual adjustments
 - Dashboard and detailed reports with a custom date range: sales, purchases, inventory valuation, low stock
 - Export invoices and purchase orders as PDF or Excel; export every report to Excel
+- Accounts: customer receipts and supplier payments, opening balances, account statements (PDF/Excel), receivables and payables reports
 - Roles: staff / manager / admin; user management for admins
+
+## Production deployment
+
+`deploy/` contains a production stack (Caddy with automatic HTTPS, database and API not exposed), backup and restore scripts,
+and a checklist. See [deploy/DEPLOYMENT.md](deploy/DEPLOYMENT.md).

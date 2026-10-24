@@ -2,15 +2,17 @@ import { useState } from "react";
 import { api, qs } from "../api";
 import { dayLabel, money, num } from "../format";
 import { useAction, useFetch } from "../hooks";
-import type { DayTotal, InventoryValuationRow, LowStockItem, PurchasesSummary, SalesSummary } from "../types";
+import type { BalancesReport, DayTotal, InventoryValuationRow, LowStockItem, PurchasesSummary, SalesSummary } from "../types";
 import { Alert, Empty, Loading, PageHeader } from "../ui";
 
-type Tab = "sales" | "purchases" | "inventory";
+type Tab = "sales" | "purchases" | "inventory" | "receivables" | "payables";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "sales", label: "المبيعات" },
   { id: "purchases", label: "المشتريات" },
   { id: "inventory", label: "المخزون" },
+  { id: "receivables", label: "مستحقات العملاء" },
+  { id: "payables", label: "مستحقات الموردين" },
 ];
 
 /** YYYY-MM-DD in the browser's local calendar (what the user sees), not UTC. */
@@ -45,7 +47,7 @@ export default function Reports() {
   };
 
   const exportFile = (path: string, name: string) => void download.run(() => api.download(path, name));
-  const usesRange = tab !== "inventory";
+  const usesRange = tab === "sales" || tab === "purchases";
 
   return (
     <>
@@ -92,6 +94,7 @@ export default function Reports() {
       {tab === "sales" && rangeValid && <SalesTab range={range} from={from} to={to} onExport={exportFile} busy={download.busy} />}
       {tab === "purchases" && rangeValid && <PurchasesTab range={range} from={from} to={to} onExport={exportFile} busy={download.busy} />}
       {tab === "inventory" && <InventoryTab onExport={exportFile} busy={download.busy} />}
+      {(tab === "receivables" || tab === "payables") && <BalancesTab kind={tab} onExport={exportFile} busy={download.busy} />}
     </>
   );
 }
@@ -305,6 +308,38 @@ function InventoryTab({ onExport, busy }: { onExport: (path: string, name: strin
           rows={(low.data ?? []).map((p) => [`${p.name} (${p.sku})`, num(p.quantity), num(p.reorder_level), num(p.shortfall)])}
         />
       </div>
+    </>
+  );
+}
+
+function BalancesTab({ kind, onExport, busy }: { kind: "receivables" | "payables"; onExport: (path: string, name: string) => void; busy: boolean }) {
+  const isRec = kind === "receivables";
+  const data = useFetch(() => api.get<BalancesReport>(`/reports/${kind}`), `bal-${kind}`);
+  const r = data.data;
+  return (
+    <>
+      <div className="page-actions" style={{ marginBottom: 14 }}>
+        <ExportButton busy={busy} onClick={() => onExport(`/reports/${kind}/xlsx`, `report-${kind}.xlsx`)}>
+          تصدير Excel
+        </ExportButton>
+      </div>
+      <Alert>{data.error}</Alert>
+      {data.loading && !r ? (
+        <Loading />
+      ) : (
+        r && (
+          <>
+            <div className="kpis">
+              <Kpi label={isRec ? "إجمالي المستحق على العملاء" : "إجمالي المستحق للموردين"} value={money(r.total)} sub={`${num(r.rows.filter((x) => Number(x.balance) > 0).length)} ${isRec ? "عميل" : "مورد"} عليهم رصيد`} />
+            </div>
+            <RankTable
+              title={isRec ? "أرصدة العملاء (الأعلى أولاً)" : "أرصدة الموردين (الأعلى أولاً)"}
+              headers={[isRec ? "العميل" : "المورد", "الهاتف", "الرصيد"]}
+              rows={r.rows.map((x) => [x.name, x.phone ?? "—", money(x.balance)])}
+            />
+          </>
+        )
+      )}
     </>
   );
 }

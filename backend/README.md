@@ -43,6 +43,9 @@ The backend container applies Alembic migrations on start, then serves on http:/
 | `COMPANY_PHONE`, `COMPANY_ADDRESS` | empty | Printed under the company name on PDFs |
 | `CURRENCY_LABEL` | `ج.م` | Currency shown next to totals |
 | `EXPORT_TIMEZONE` | `Africa/Cairo` | Timezone of dates printed in exports |
+| `ENABLE_DOCS` | `true` | Serve `/docs` and `/openapi.json`; set `false` in production |
+| `LOGIN_MAX_FAILURES`, `LOGIN_WINDOW_SECONDS` | `10`, `900` | Failed logins per client IP + username before HTTP 429 (`0` disables). In-memory, per worker process |
+| `FORWARDED_ALLOW_IPS` | `127.0.0.1` | Proxy addresses trusted for `X-Forwarded-For` (so the limiter sees real client IPs) |
 | `AUTO_CREATE_TABLES` | `true` | Create missing tables at startup. Set `false` when using Alembic |
 
 ## Database migrations (Alembic)
@@ -83,3 +86,15 @@ PDFs are RTL Arabic, drawn with the bundled Amiri font (SIL OFL, `app/assets/fon
 files is always stored as text, so a product named `=HYPERLINK(...)` cannot run as a formula.
 
 Reports date an order by when it was confirmed (sales) or received (purchases), not when the draft was created.
+
+## Accounts (receivables / payables)
+
+- Each customer and supplier has an **opening balance** (manager/admin only) and a computed **balance**:
+  customer = opening + confirmed sales − receipts; supplier = opening + received purchases − payments.
+  Positive means money owed; negative is a credit.
+- `POST /payments` records a receipt (`customer_id`) or a supplier payment (`supplier_id`); payments are never edited,
+  only voided (`POST /payments/{id}/void`, manager/admin) and voided ones stop counting.
+- `GET /customers/{id}/statement` and `/suppliers/{id}/statement` (+ `/pdf`, `/xlsx`, optional `date_from`/`date_to`).
+- `GET /reports/receivables` and `/reports/payables` (+ `/xlsx`, manager/admin); the dashboard shows both totals.
+- Upgrading a database created by `AUTO_CREATE_TABLES=true`: run `alembic stamp 0001` then `alembic upgrade head`
+  (the `opening_balance` columns are added by migration `0002`; `create_all` never alters existing tables).

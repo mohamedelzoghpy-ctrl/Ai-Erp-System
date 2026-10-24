@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from .. import exports, models, schemas
+from .. import accounts, exports, models, schemas
 from ..database import get_db
 from ..deps import get_current_user, require_manager
 
@@ -384,6 +384,54 @@ def purchases_summary_xlsx(
     return _xlsx_response(content, f"report-purchases-{_file_range(s)}.xlsx")
 
 
+# ---------------------------------------------------------------- receivables / payables
+def _balances_report(db: Session, kind: str) -> schemas.BalancesReport:
+    """Parties with a non-zero balance, largest first. `total` counts only money still owed (positive
+    balances); credits (negative balances) are listed but not netted against it."""
+    party = models.Customer if kind == "customer" else models.Supplier
+    balances = accounts.party_balances(db, kind)
+    info = {p.id: p for p in db.query(party).filter(party.id.in_(list(balances) or [0])).all()}
+    rows = [
+        schemas.BalanceRow(party_id=pid, name=info[pid].name, phone=info[pid].phone, balance=bal)
+        for pid, bal in balances.items()
+        if bal != 0 and pid in info
+    ]
+    rows.sort(key=lambda r: (-r.balance, r.party_id))
+    return schemas.BalancesReport(total=sum((r.balance for r in rows if r.balance > 0), ZERO), rows=rows)
+
+
+def _balances_xlsx(report: schemas.BalancesReport, title: str, party_label: str, filename: str) -> Response:
+    table = (
+        title,
+        [party_label, "الهاتف", "الرصيد"],
+        [[("text", r.name), ("text", r.phone or ""), ("money", r.balance)] for r in report.rows]
+        + [[("text", "إجمالي المستحق"), ("text", ""), ("money", report.total)]],
+    )
+    return _xlsx_response(exports.build_tables_xlsx(title, exports.fmt_dt(datetime.now(timezone.utc)), [table]), filename)
+
+
+@router.get("/receivables", response_model=schemas.BalancesReport)
+def receivables(db: Session = Depends(get_db), _: models.User = Depends(require_manager)):
+    """What customers owe us (opening balance + confirmed sales - receipts)."""
+    return _balances_report(db, "customer")
+
+
+@router.get("/receivables/xlsx")
+def receivables_xlsx(db: Session = Depends(get_db), _: models.User = Depends(require_manager)):
+    return _balances_xlsx(_balances_report(db, "customer"), "الذمم المدينة (مستحقات العملاء)", "العميل", "report-receivables.xlsx")
+
+
+@router.get("/payables", response_model=schemas.BalancesReport)
+def payables(db: Session = Depends(get_db), _: models.User = Depends(require_manager)):
+    """What we owe suppliers (opening balance + received purchases - payments)."""
+    return _balances_report(db, "supplier")
+
+
+@router.get("/payables/xlsx")
+def payables_xlsx(db: Session = Depends(get_db), _: models.User = Depends(require_manager)):
+    return _balances_xlsx(_balances_report(db, "supplier"), "الذمم الدائنة (مستحقات الموردين)", "المورد", "report-payables.xlsx")
+
+
 # ---------------------------------------------------------------- dashboard
 @router.get("/dashboard", response_model=schemas.Dashboard)
 def dashboard(
@@ -434,4 +482,6 @@ def dashboard(
         purchases_total=_money(p_total),
         draft_sales_orders=db.query(func.count(SO.id)).filter(SO.status == "draft").scalar() or 0,
         draft_purchase_orders=db.query(func.count(PO.id)).filter(PO.status == "draft").scalar() or 0,
+        receivables_total=_balances_report(db, "customer").total,
+        payables_total=_balances_report(db, "supplier").total,
     )

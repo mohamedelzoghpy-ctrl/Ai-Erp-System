@@ -1,4 +1,4 @@
-import type { OrderStatus, Role } from "./types";
+import type { OrderStatus, PaymentMethod, Role } from "./types";
 
 const LOCALE = "ar-EG-u-nu-latn"; // Arabic text, Latin digits
 
@@ -38,3 +38,23 @@ export const REASON_LABEL: Record<string, string> = {
   sale: "بيع",
   adjustment: "تسوية",
 };
+
+export const METHOD_LABEL: Record<PaymentMethod, string> = {
+  cash: "نقداً",
+  bank: "تحويل بنكي",
+  wallet: "محفظة إلكترونية",
+  cheque: "شيك",
+};
+
+/** Plain calendar date (YYYY-MM-DD) shown without any timezone shift. */
+export function dateOnly(day: string): string {
+  return new Date(day + "T12:00:00Z").toLocaleDateString(LOCALE, { year: "numeric", month: "short", day: "numeric" });
+}
+
+/** Describes a balance: who owes whom, so a negative number is never ambiguous. */
+export function balanceNote(kind: "customer" | "supplier", value: string | number): string {
+  const n = Number(value);
+  if (n === 0) return "مسدّد";
+  if (kind === "customer") return n > 0 ? "مستحق على العميل" : "رصيد دائن للعميل";
+  return n > 0 ? "مستحق للمورد" : "رصيد مدين لدى المورد";
+}
