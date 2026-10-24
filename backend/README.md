@@ -17,7 +17,7 @@ uvicorn app.main:app --reload
 ```
 
 Open http://localhost:8000/docs. First run: call `POST /auth/setup` to create the first admin
-(works only while there are no users), then click **Authorize** and log in.
+(works only while there are no users; PostgreSQL serializes simultaneous setup requests), then click **Authorize** and log in.
 
 ## Run with Docker (PostgreSQL + backend)
 
@@ -127,8 +127,7 @@ the change, so a rolled-back change leaves no entry. `GET /audit-logs` (manager/
 `POST /pos/checkout` (any logged-in user) creates a sales order, takes the stock and records the payment in one transaction:
 if stock is short, nothing is saved (409). Without `customer_id` the sale goes to the shared "عميل نقدي" customer and must be paid in
 full; with a customer, `amount_paid` may be lower (credit sale, `0` = fully on account) but never above the total.
-The web app's "نقطة البيع" screen uses it (barcode/SKU + Enter, cart, change calculation, invoice PDF). Prices can only be edited by
-managers/admins in the UI; note that the API itself accepts a `unit_price` from any user, as `/sales-orders` always did.
+The web app's "نقطة البيع" screen uses it (barcode/SKU + Enter, cart, change calculation, invoice PDF). Custom sale prices can only be set by managers/admins at the API level; staff requests use each product's current sale price.
 
 ## Returns
 

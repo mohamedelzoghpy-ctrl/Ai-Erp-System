@@ -16,8 +16,11 @@ from ..deps import require_manager
 router = APIRouter(prefix="/products", tags=["products & inventory"])
 
 
-def _product_or_404(db: Session, product_id: int) -> models.Product:
-    product = db.get(models.Product, product_id)
+def _product_or_404(db: Session, product_id: int, *, lock: bool = False) -> models.Product:
+    query = db.query(models.Product).filter(models.Product.id == product_id)
+    if lock:
+        query = query.with_for_update()
+    product = query.one_or_none()
     if product is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Product {product_id} not found")
     return product
@@ -32,6 +35,8 @@ def _check_refs(db: Session, warehouse_id: Optional[int], supplier_id: Optional[
 
 @router.post("", response_model=schemas.ProductOut, status_code=status.HTTP_201_CREATED)
 def create_product(payload: schemas.ProductCreate, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    if user.role not in {"admin", "manager"} and (payload.cost_price != 0 or payload.sale_price != 0):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only managers and admins may set product prices")
     _check_refs(db, payload.warehouse_id, payload.supplier_id)
     product = models.Product(**payload.model_dump())
     db.add(product)
@@ -92,6 +97,11 @@ def get_product(product_id: int, db: Session = Depends(get_db)):
 def update_product(product_id: int, payload: schemas.ProductUpdate, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     product = _product_or_404(db, product_id)
     data = payload.model_dump(exclude_unset=True)
+    if user.role not in {"admin", "manager"} and any(
+        key in data and data[key] != getattr(product, key)
+        for key in ("cost_price", "sale_price")
+    ):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only managers and admins may change product prices")
     _check_refs(db, data.get("warehouse_id"), data.get("supplier_id"))
     for key, value in data.items():
         setattr(product, key, value)
@@ -123,7 +133,7 @@ def adjust_stock(product_id: int, payload: schemas.StockAdjustment, db: Session 
     """Manual correction (stock-take, damage, etc.). Never lets quantity go negative."""
     if payload.change == 0:
         raise HTTPException(422, "change must not be zero")
-    product = _product_or_404(db, product_id)
+    product = _product_or_404(db, product_id, lock=True)
     if product.quantity + payload.change < 0:
         raise HTTPException(
             status.HTTP_409_CONFLICT,

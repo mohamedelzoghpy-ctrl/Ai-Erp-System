@@ -30,8 +30,11 @@ def _require(db: Session, model, obj_id: int, label: str):
     return obj
 
 
-def _order_or_404(db: Session, model, order_id: int, label: str):
-    order = db.get(model, order_id)
+def _order_or_404(db: Session, model, order_id: int, label: str, *, lock: bool = False):
+    query = db.query(model).filter(model.id == order_id)
+    if lock:
+        query = query.with_for_update()
+    order = query.one_or_none()
     if order is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"{label} {order_id} not found")
     return order
@@ -56,14 +59,20 @@ def _require_draft(order, action: str):
 # ======================= Purchases =======================
 @purchases.post("", response_model=schemas.PurchaseOrderOut, status_code=status.HTTP_201_CREATED)
 def create_purchase_order(payload: schemas.PurchaseOrderCreate, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
-    _require(db, models.Supplier, payload.supplier_id, "Supplier")
-    _require(db, models.Warehouse, payload.warehouse_id, "Warehouse")
+    supplier = _require(db, models.Supplier, payload.supplier_id, "Supplier")
+    warehouse = _require(db, models.Warehouse, payload.warehouse_id, "Warehouse")
+    if not supplier.is_active:
+        raise HTTPException(422, "Supplier is inactive")
+    if not warehouse.is_active:
+        raise HTTPException(422, "Warehouse is inactive")
     order = models.PurchaseOrder(
         supplier_id=payload.supplier_id, warehouse_id=payload.warehouse_id, notes=payload.notes
     )
     total = Decimal("0")
     for item in payload.items:
-        _require(db, models.Product, item.product_id, "Product")
+        product = _require(db, models.Product, item.product_id, "Product")
+        if not product.is_active:
+            raise HTTPException(422, f"Product '{product.name}' is inactive")
         order.items.append(
             models.PurchaseOrderItem(
                 product_id=item.product_id, quantity=item.quantity, unit_cost=item.unit_cost
@@ -107,7 +116,7 @@ def get_purchase_order(order_id: int, db: Session = Depends(get_db)):
 @purchases.post("/{order_id}/receive", response_model=schemas.PurchaseOrderOut)
 def receive_purchase_order(order_id: int, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     """Mark goods as received: adds stock, updates each product's cost price, logs movements."""
-    order = _order_or_404(db, models.PurchaseOrder, order_id, "Purchase order")
+    order = _order_or_404(db, models.PurchaseOrder, order_id, "Purchase order", lock=True)
     _require_draft(order, "receive")
     for item in order.items:
         product = _locked_product(db, item.product_id)
@@ -131,7 +140,7 @@ def receive_purchase_order(order_id: int, db: Session = Depends(get_db), user: m
 
 @purchases.post("/{order_id}/cancel", response_model=schemas.PurchaseOrderOut)
 def cancel_purchase_order(order_id: int, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
-    order = _order_or_404(db, models.PurchaseOrder, order_id, "Purchase order")
+    order = _order_or_404(db, models.PurchaseOrder, order_id, "Purchase order", lock=True)
     _require_draft(order, "cancel")
     order.status = "cancelled"
     audit(db, user, 'cancel', 'purchase_order', order, None)
@@ -174,14 +183,22 @@ def apply_sale_stock(db: Session, order) -> None:
 
 @sales.post("", response_model=schemas.SalesOrderOut, status_code=status.HTTP_201_CREATED)
 def create_sales_order(payload: schemas.SalesOrderCreate, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
-    _require(db, models.Customer, payload.customer_id, "Customer")
-    _require(db, models.Warehouse, payload.warehouse_id, "Warehouse")
+    customer = _require(db, models.Customer, payload.customer_id, "Customer")
+    warehouse = _require(db, models.Warehouse, payload.warehouse_id, "Warehouse")
+    if not customer.is_active:
+        raise HTTPException(422, "Customer is inactive")
+    if not warehouse.is_active:
+        raise HTTPException(422, "Warehouse is inactive")
     order = models.SalesOrder(
         customer_id=payload.customer_id, warehouse_id=payload.warehouse_id, notes=payload.notes
     )
     total = Decimal("0")
     for item in payload.items:
         product = _require(db, models.Product, item.product_id, "Product")
+        if not product.is_active:
+            raise HTTPException(422, f"Product '{product.name}' is inactive")
+        if item.unit_price is not None and user.role not in {"admin", "manager"}:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Only managers and admins may override sale prices")
         price = item.unit_price if item.unit_price is not None else product.sale_price
         order.items.append(
             models.SalesOrderItem(product_id=product.id, quantity=item.quantity, unit_price=price)
@@ -224,7 +241,7 @@ def get_sales_order(order_id: int, db: Session = Depends(get_db)):
 @sales.post("/{order_id}/confirm", response_model=schemas.SalesOrderOut)
 def confirm_sales_order(order_id: int, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     """Confirm the sale: removes stock (all-or-nothing) and logs movements."""
-    order = _order_or_404(db, models.SalesOrder, order_id, "Sales order")
+    order = _order_or_404(db, models.SalesOrder, order_id, "Sales order", lock=True)
     _require_draft(order, "confirm")
     apply_sale_stock(db, order)
     order.status = "confirmed"
@@ -236,7 +253,7 @@ def confirm_sales_order(order_id: int, db: Session = Depends(get_db), user: mode
 
 @sales.post("/{order_id}/cancel", response_model=schemas.SalesOrderOut)
 def cancel_sales_order(order_id: int, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
-    order = _order_or_404(db, models.SalesOrder, order_id, "Sales order")
+    order = _order_or_404(db, models.SalesOrder, order_id, "Sales order", lock=True)
     _require_draft(order, "cancel")
     order.status = "cancelled"
     audit(db, user, 'cancel', 'sales_order', order, None)

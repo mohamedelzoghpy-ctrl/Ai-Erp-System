@@ -28,7 +28,9 @@ def _walk_in(db: Session) -> models.Customer:
 
 @router.post("/checkout", response_model=schemas.PosReceipt, status_code=status.HTTP_201_CREATED)
 def checkout(payload: schemas.PosCheckout, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
-    _require(db, models.Warehouse, payload.warehouse_id, "Warehouse")
+    warehouse = _require(db, models.Warehouse, payload.warehouse_id, "Warehouse")
+    if not warehouse.is_active:
+        raise HTTPException(422, "Warehouse is inactive")
     if payload.customer_id is not None:
         customer = _require(db, models.Customer, payload.customer_id, "Customer")
         if not customer.is_active:
@@ -42,6 +44,8 @@ def checkout(payload: schemas.PosCheckout, db: Session = Depends(get_db), user: 
         product = _require(db, models.Product, item.product_id, "Product")
         if not product.is_active:
             raise HTTPException(422, f"Product '{product.name}' is inactive")
+        if item.unit_price is not None and user.role not in {"admin", "manager"}:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Only managers and admins may override sale prices")
         price = item.unit_price if item.unit_price is not None else product.sale_price
         order.items.append(models.SalesOrderItem(product_id=product.id, quantity=item.quantity, unit_price=price))
         total += price * item.quantity

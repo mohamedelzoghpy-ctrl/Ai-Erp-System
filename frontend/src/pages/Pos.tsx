@@ -91,7 +91,7 @@ export default function Pos() {
       const r = await api.post<Receipt>("/pos/checkout", {
         warehouse_id: Number(warehouse),
         customer_id: customer?.id ?? null,
-        items: cart.map((l) => ({ product_id: l.product.id, quantity: l.quantity, unit_price: l.price })),
+        items: cart.map((l) => ({ product_id: l.product.id, quantity: l.quantity, ...(isManager ? { unit_price: l.price } : {}) })),
         amount_paid: customer ? String(paid) : undefined,
         method,
       });

@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { useAuth } from "../auth";
 import { api } from "../api";
 import { ReturnDialog } from "./Returns";
 import { dateTime, money, num } from "../format";
@@ -77,6 +78,7 @@ function warehouseName(list: Warehouse[] | null, id: number): string {
 
 function OrdersScreen({ kind }: { kind: Kind }) {
   const cfg = CONFIG[kind];
+  const { isManager } = useAuth();
   const [status, setStatus] = useState("");
   const [creating, setCreating] = useState(false);
   const [viewId, setViewId] = useState<number | null>(null);
@@ -151,6 +153,7 @@ function OrdersScreen({ kind }: { kind: Kind }) {
       {creating && (
         <OrderForm
           cfg={cfg}
+          isManager={isManager}
           warehouses={(warehouses.data ?? []).filter((w) => w.is_active)}
           onClose={() => setCreating(false)}
           onSaved={(id) => {
@@ -190,11 +193,13 @@ const newLine = (): Line => ({ key: lineKey++, product: null, quantity: "1", pri
 
 function OrderForm({
   cfg,
+  isManager,
   warehouses,
   onClose,
   onSaved,
 }: {
   cfg: KindConfig;
+  isManager: boolean;
   warehouses: Warehouse[];
   onClose: () => void;
   onSaved: (id: number) => void;
@@ -223,7 +228,7 @@ function OrderForm({
         [cfg.partyField]: party!.id,
         warehouse_id: Number(warehouse),
         notes: notes.trim() || null,
-        items: filled.map((l) => ({ product_id: l.product!.id, quantity: Number(l.quantity), [cfg.priceField]: l.price })),
+        items: filled.map((l) => ({ product_id: l.product!.id, quantity: Number(l.quantity), ...(cfg.priceField !== "unit_price" || isManager ? { [cfg.priceField]: l.price } : {}) })),
       });
       onSaved(created.id);
     });
@@ -281,7 +286,7 @@ function OrderForm({
                     <input type="number" min="1" step="1" value={l.quantity} onChange={(e) => patch(l.key, { quantity: e.target.value })} aria-label="الكمية" />
                   </td>
                   <td>
-                    <input type="number" min="0" step="0.01" value={l.price} onChange={(e) => patch(l.key, { price: e.target.value })} aria-label={cfg.priceLabel} />
+                    <input type="number" min="0" step="0.01" value={l.price} onChange={(e) => patch(l.key, { price: e.target.value })} aria-label={cfg.priceLabel} readOnly={cfg.priceField === "unit_price" && !isManager} />
                   </td>
                   <td className="num">{money(lineTotal(l))}</td>
                   <td>

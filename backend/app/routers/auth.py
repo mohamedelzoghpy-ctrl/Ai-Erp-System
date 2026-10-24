@@ -9,6 +9,7 @@ from collections import defaultdict, deque
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
+from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -42,6 +43,10 @@ def _make_user(db: Session, payload: schemas.UserCreate, role: str, actor: Optio
 @router.post("/setup", response_model=schemas.UserOut, status_code=status.HTTP_201_CREATED)
 def first_run_setup(payload: schemas.SetupAdmin, db: Session = Depends(get_db)):
     """Creates the first admin. Only works while there are no users at all."""
+    # Serialize setup requests in PostgreSQL: the users table has no row to lock yet,
+    # so locking existing admin rows would leave concurrent first requests unprotected.
+    if db.get_bind().dialect.name == "postgresql":
+        db.execute(text("LOCK TABLE users IN EXCLUSIVE MODE"))
     if db.query(models.User).first() is not None:
         raise HTTPException(status.HTTP_409_CONFLICT, "Setup already completed")
     return _make_user(db, payload, role="admin")
@@ -139,6 +144,20 @@ def update_user(
     # An admin must not lock themselves out by demoting or deactivating their own account.
     if user.id == admin.id and (data.get("role", "admin") != "admin" or data.get("is_active") is False):
         raise HTTPException(status.HTTP_409_CONFLICT, "You cannot demote or deactivate your own account")
+    if (
+        user.role == "admin"
+        and user.is_active
+        and (data.get("role", "admin") != "admin" or data.get("is_active") is False)
+    ):
+        active_admins = (
+            db.query(models.User)
+            .filter(models.User.role == "admin", models.User.is_active.is_(True))
+            .with_for_update()
+            .all()
+        )
+        if len(active_admins) <= 1:
+            raise HTTPException(status.HTTP_409_CONFLICT, "At least one active admin account must remain")
+
     password_changed = "password" in data
     if "password" in data:
         user.hashed_password = hash_password(data.pop("password"))
