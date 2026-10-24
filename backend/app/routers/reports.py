@@ -432,6 +432,36 @@ def payables_xlsx(db: Session = Depends(get_db), _: models.User = Depends(requir
     return _balances_xlsx(_balances_report(db, "supplier"), "الذمم الدائنة (مستحقات الموردين)", "المورد", "report-payables.xlsx")
 
 
+def _aging_xlsx(report: schemas.AgingReport, title: str, party_label: str, filename: str) -> Response:
+    head = [party_label, "الهاتف", "أول المدة", "0-30 يوماً", "31-60 يوماً", "61-90 يوماً", "أكثر من 90", "الإجمالي"]
+    body = [
+        [("text", r.name), ("text", r.phone or ""), ("money", r.opening), ("money", r.current), ("money", r.d31_60), ("money", r.d61_90), ("money", r.d90_plus), ("money", r.total)]
+        for r in report.rows
+    ]
+    foot = [("text", "الإجمالي"), ("text", ""), ("money", report.total_opening), ("money", report.total_current), ("money", report.total_d31_60), ("money", report.total_d61_90), ("money", report.total_d90_plus), ("money", report.total_total)]
+    return _xlsx_response(exports.build_tables_xlsx(f"{title} — حتى {report.as_of}", exports.fmt_dt(datetime.now(timezone.utc)), [(title, head, body + [foot])]), filename)
+
+
+@router.get("/receivables/aging", response_model=schemas.AgingReport)
+def receivables_aging(db: Session = Depends(get_db), _: models.User = Depends(require_manager)):
+    return accounts.build_aging(db, "customer")
+
+
+@router.get("/receivables/aging/xlsx")
+def receivables_aging_xlsx(db: Session = Depends(get_db), _: models.User = Depends(require_manager)):
+    return _aging_xlsx(accounts.build_aging(db, "customer"), "أعمار ديون العملاء", "العميل", "report-receivables-aging.xlsx")
+
+
+@router.get("/payables/aging", response_model=schemas.AgingReport)
+def payables_aging(db: Session = Depends(get_db), _: models.User = Depends(require_manager)):
+    return accounts.build_aging(db, "supplier")
+
+
+@router.get("/payables/aging/xlsx")
+def payables_aging_xlsx(db: Session = Depends(get_db), _: models.User = Depends(require_manager)):
+    return _aging_xlsx(accounts.build_aging(db, "supplier"), "أعمار ديون الموردين", "المورد", "report-payables-aging.xlsx")
+
+
 # ---------------------------------------------------------------- dashboard
 @router.get("/dashboard", response_model=schemas.Dashboard)
 def dashboard(

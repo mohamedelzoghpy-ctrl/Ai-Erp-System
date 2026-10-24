@@ -179,3 +179,48 @@ def attach_settlement(db: Session, kind: str, orders) -> None:
         paid, rest = entry
         o.paid_amount, o.balance_due = paid, rest
         o.payment_status = "paid" if rest == 0 else ("partial" if paid > 0 else "unpaid")
+
+
+# ----------------------------------------------------------------------------- aging
+BUCKETS = ("current", "d31_60", "d61_90", "d90_plus")
+
+
+def _bucket(days: int) -> str:
+    return "current" if days <= 30 else "d31_60" if days <= 60 else "d61_90" if days <= 90 else "d90_plus"
+
+
+def build_aging(db: Session, kind: str, as_of: Optional[date] = None) -> schemas.AgingReport:
+    """Unpaid amounts by age of the invoice (days since it was committed), using the same FIFO settlement as
+    invoice status: payments clear the opening balance first, then the oldest invoices. Credits are ignored."""
+    as_of = as_of or datetime.now(LOCAL_TZ).date()
+    if kind == "customer":
+        party, order, order_party, done = models.Customer, models.SalesOrder, models.SalesOrder.customer_id, "confirmed"
+        pay_party = models.Payment.customer_id
+    else:
+        party, order, order_party, done = models.Supplier, models.PurchaseOrder, models.PurchaseOrder.supplier_id, "received"
+        pay_party = models.Payment.supplier_id
+    paid = dict(
+        db.query(pay_party, func.sum(models.Payment.amount)).filter(models.Payment.status == "posted", pay_party.isnot(None)).group_by(pay_party).all()
+    )
+    by_party: Dict[int, List] = {}
+    for pid, total, stamp in db.query(order_party, order.total_amount, order.updated_at).filter(order.status == done).order_by(order.updated_at, order.id).all():
+        by_party.setdefault(pid, []).append((_dec(total), _local_day(stamp)))
+    rows: List[schemas.AgingRow] = []
+    for p in db.query(party).order_by(party.id).all():
+        pool = _dec(paid.get(p.id))
+        opening = max(_dec(p.opening_balance), ZERO)
+        cleared = min(pool, _dec(p.opening_balance)) if _dec(p.opening_balance) > 0 else ZERO
+        pool = max(pool - _dec(p.opening_balance), ZERO)
+        b = {k: ZERO for k in BUCKETS}
+        for total, day in by_party.get(p.id, []):
+            applied = min(pool, total)
+            pool -= applied
+            if total - applied > 0:
+                b[_bucket(max((as_of - day).days, 0))] += total - applied
+        open_left = opening - cleared
+        total_due = open_left + sum(b.values(), ZERO)
+        if total_due > 0:
+            rows.append(schemas.AgingRow(party_id=p.id, name=p.name, phone=p.phone, opening=open_left, total=total_due, **b))
+    rows.sort(key=lambda r: (-r.total, r.party_id))
+    tot = {k: sum((getattr(r, k) for r in rows), ZERO) for k in ("opening", *BUCKETS, "total")}
+    return schemas.AgingReport(as_of=as_of, rows=rows, **{f"total_{k}": v for k, v in tot.items()})

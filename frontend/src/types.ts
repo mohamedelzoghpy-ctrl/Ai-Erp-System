@@ -196,3 +196,26 @@ export interface BalancesReport {
   total: string;
   rows: BalanceRow[];
 }
+
+export interface AgingRow {
+  party_id: number;
+  name: string;
+  phone: string | null;
+  opening: string;
+  current: string;
+  d31_60: string;
+  d61_90: string;
+  d90_plus: string;
+  total: string;
+}
+
+export interface AgingReport {
+  as_of: string;
+  total_opening: string;
+  total_current: string;
+  total_d31_60: string;
+  total_d61_90: string;
+  total_d90_plus: string;
+  total_total: string;
+  rows: AgingRow[];
+}

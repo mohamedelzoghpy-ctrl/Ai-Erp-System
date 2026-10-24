@@ -109,3 +109,8 @@ List endpoints (`/products`, `/customers`, `/suppliers`, `/purchase-orders`, `/s
 Payments are recorded per customer/supplier, not per invoice. Orders returned by the API carry `paid_amount`, `balance_due` and
 `payment_status` (`paid` / `partial` / `unpaid`; `null` for drafts and cancelled orders), computed FIFO: payments first cover the
 opening balance, then confirmed sales (or received purchases) in the order they were committed. Voiding a payment re-computes it.
+
+## Aging reports
+
+`GET /reports/receivables/aging` and `/reports/payables/aging` (+ `/xlsx`, manager/admin) split what is still unpaid by invoice age
+(0–30, 31–60, 61–90, 90+ days since commit) plus the unpaid opening balance, using the same oldest-first settlement as invoice status.

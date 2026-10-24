@@ -411,3 +411,26 @@ class BalanceRow(BaseModel):
 class BalancesReport(BaseModel):
     total: Decimal
     rows: List[BalanceRow]
+
+
+class AgingRow(BaseModel):
+    party_id: int
+    name: str
+    phone: Optional[str] = None
+    opening: Decimal  # unpaid part of the opening balance
+    current: Decimal  # 0-30 days
+    d31_60: Decimal
+    d61_90: Decimal
+    d90_plus: Decimal
+    total: Decimal
+
+
+class AgingReport(BaseModel):
+    as_of: date
+    total_opening: Decimal
+    total_current: Decimal
+    total_d31_60: Decimal
+    total_d61_90: Decimal
+    total_d90_plus: Decimal
+    total_total: Decimal
+    rows: List[AgingRow]

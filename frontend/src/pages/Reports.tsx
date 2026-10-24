@@ -2,7 +2,7 @@ import { useState } from "react";
 import { api, qs } from "../api";
 import { dayLabel, money, num } from "../format";
 import { useAction, useFetch } from "../hooks";
-import type { BalancesReport, DayTotal, InventoryValuationRow, LowStockItem, PurchasesSummary, SalesSummary } from "../types";
+import type { AgingReport, BalancesReport, DayTotal, InventoryValuationRow, LowStockItem, PurchasesSummary, SalesSummary } from "../types";
 import { Alert, Empty, Loading, PageHeader } from "../ui";
 
 type Tab = "sales" | "purchases" | "inventory" | "receivables" | "payables";
@@ -94,7 +94,7 @@ export default function Reports() {
       {tab === "sales" && rangeValid && <SalesTab range={range} from={from} to={to} onExport={exportFile} busy={download.busy} />}
       {tab === "purchases" && rangeValid && <PurchasesTab range={range} from={from} to={to} onExport={exportFile} busy={download.busy} />}
       {tab === "inventory" && <InventoryTab onExport={exportFile} busy={download.busy} />}
-      {(tab === "receivables" || tab === "payables") && <BalancesTab kind={tab} onExport={exportFile} busy={download.busy} />}
+      {(tab === "receivables" || tab === "payables") && <BalancesTab key={tab} kind={tab} onExport={exportFile} busy={download.busy} />}
     </>
   );
 }
@@ -314,17 +314,24 @@ function InventoryTab({ onExport, busy }: { onExport: (path: string, name: strin
 
 function BalancesTab({ kind, onExport, busy }: { kind: "receivables" | "payables"; onExport: (path: string, name: string) => void; busy: boolean }) {
   const isRec = kind === "receivables";
+  const [view, setView] = useState<"balances" | "aging">("balances");
   const data = useFetch(() => api.get<BalancesReport>(`/reports/${kind}`), `bal-${kind}`);
   const r = data.data;
+  const suffix = view === "aging" ? "/aging" : "";
   return (
     <>
       <div className="page-actions" style={{ marginBottom: 14 }}>
-        <ExportButton busy={busy} onClick={() => onExport(`/reports/${kind}/xlsx`, `report-${kind}.xlsx`)}>
+        <select value={view} onChange={(e) => setView(e.target.value as typeof view)} aria-label="نوع العرض">
+          <option value="balances">الأرصدة</option>
+          <option value="aging">أعمار الديون</option>
+        </select>
+        <ExportButton busy={busy} onClick={() => onExport(`/reports/${kind}${suffix}/xlsx`, `report-${kind}${view === "aging" ? "-aging" : ""}.xlsx`)}>
           تصدير Excel
         </ExportButton>
       </div>
+      {view === "aging" && <AgingTable kind={kind} />}
       <Alert>{data.error}</Alert>
-      {data.loading && !r ? (
+      {view === "balances" && (data.loading && !r ? (
         <Loading />
       ) : (
         r && (
@@ -339,7 +346,63 @@ function BalancesTab({ kind, onExport, busy }: { kind: "receivables" | "payables
             />
           </>
         )
-      )}
+      ))}
     </>
+  );
+}
+
+function AgingTable({ kind }: { kind: "receivables" | "payables" }) {
+  const data = useFetch(() => api.get<AgingReport>(`/reports/${kind}/aging`), `aging-${kind}`);
+  const a = data.data;
+  const isRec = kind === "receivables";
+  if (data.error) return <Alert>{data.error}</Alert>;
+  if (!a) return <Loading />;
+  const cols = ["أول المدة", "0–30 يوماً", "31–60 يوماً", "61–90 يوماً", "أكثر من 90", "الإجمالي"];
+  const sum = [a.total_opening, a.total_current, a.total_d31_60, a.total_d61_90, a.total_d90_plus, a.total_total];
+  return (
+    <div className="card card-pad">
+      <h3>{isRec ? "أعمار ديون العملاء" : "أعمار ديون الموردين"} (حتى {a.as_of})</h3>
+      {a.rows.length === 0 ? (
+        <Empty>لا توجد مبالغ مستحقة</Empty>
+      ) : (
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>{isRec ? "العميل" : "المورد"}</th>
+                {cols.map((c) => (
+                  <th key={c} className="num">
+                    {c}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {a.rows.map((r) => (
+                <tr key={r.party_id}>
+                  <td>{r.name}</td>
+                  {[r.opening, r.current, r.d31_60, r.d61_90, r.d90_plus, r.total].map((v, i) => (
+                    <td key={i} className="num" style={i === 4 && Number(v) > 0 ? { color: "var(--danger, #b42318)", fontWeight: 600 } : undefined}>
+                      {Number(v) ? money(v) : "—"}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+              <tr>
+                <td>
+                  <b>الإجمالي</b>
+                </td>
+                {sum.map((v, i) => (
+                  <td key={i} className="num">
+                    <b>{money(v)}</b>
+                  </td>
+                ))}
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+      <p className="muted" style={{ marginBottom: 0, fontSize: 12 }}>العمر = الأيام منذ تأكيد الفاتورة. تُسدَّد الأقدم أولاً، والأرصدة الدائنة لا تُحتسب.</p>
+    </div>
   );
 }
