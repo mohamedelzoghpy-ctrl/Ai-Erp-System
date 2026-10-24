@@ -30,8 +30,11 @@ def _require(db: Session, model, obj_id: int, label: str):
     return obj
 
 
-def _order_or_404(db: Session, model, order_id: int, label: str):
-    order = db.get(model, order_id)
+def _order_or_404(db: Session, model, order_id: int, label: str, *, lock: bool = False):
+    query = db.query(model).filter(model.id == order_id)
+    if lock:
+        query = query.with_for_update()
+    order = query.one_or_none()
     if order is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"{label} {order_id} not found")
     return order
@@ -107,7 +110,7 @@ def get_purchase_order(order_id: int, db: Session = Depends(get_db)):
 @purchases.post("/{order_id}/receive", response_model=schemas.PurchaseOrderOut)
 def receive_purchase_order(order_id: int, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     """Mark goods as received: adds stock, updates each product's cost price, logs movements."""
-    order = _order_or_404(db, models.PurchaseOrder, order_id, "Purchase order")
+    order = _order_or_404(db, models.PurchaseOrder, order_id, "Purchase order", lock=True)
     _require_draft(order, "receive")
     for item in order.items:
         product = _locked_product(db, item.product_id)
@@ -131,7 +134,7 @@ def receive_purchase_order(order_id: int, db: Session = Depends(get_db), user: m
 
 @purchases.post("/{order_id}/cancel", response_model=schemas.PurchaseOrderOut)
 def cancel_purchase_order(order_id: int, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
-    order = _order_or_404(db, models.PurchaseOrder, order_id, "Purchase order")
+    order = _order_or_404(db, models.PurchaseOrder, order_id, "Purchase order", lock=True)
     _require_draft(order, "cancel")
     order.status = "cancelled"
     audit(db, user, 'cancel', 'purchase_order', order, None)
@@ -226,7 +229,7 @@ def get_sales_order(order_id: int, db: Session = Depends(get_db)):
 @sales.post("/{order_id}/confirm", response_model=schemas.SalesOrderOut)
 def confirm_sales_order(order_id: int, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     """Confirm the sale: removes stock (all-or-nothing) and logs movements."""
-    order = _order_or_404(db, models.SalesOrder, order_id, "Sales order")
+    order = _order_or_404(db, models.SalesOrder, order_id, "Sales order", lock=True)
     _require_draft(order, "confirm")
     apply_sale_stock(db, order)
     order.status = "confirmed"
@@ -238,7 +241,7 @@ def confirm_sales_order(order_id: int, db: Session = Depends(get_db), user: mode
 
 @sales.post("/{order_id}/cancel", response_model=schemas.SalesOrderOut)
 def cancel_sales_order(order_id: int, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
-    order = _order_or_404(db, models.SalesOrder, order_id, "Sales order")
+    order = _order_or_404(db, models.SalesOrder, order_id, "Sales order", lock=True)
     _require_draft(order, "cancel")
     order.status = "cancelled"
     audit(db, user, 'cancel', 'sales_order', order, None)
