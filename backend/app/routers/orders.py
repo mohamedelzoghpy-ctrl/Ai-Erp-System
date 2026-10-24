@@ -182,6 +182,8 @@ def create_sales_order(payload: schemas.SalesOrderCreate, db: Session = Depends(
     total = Decimal("0")
     for item in payload.items:
         product = _require(db, models.Product, item.product_id, "Product")
+        if item.unit_price is not None and user.role not in {"admin", "manager"}:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Only managers and admins may override sale prices")
         price = item.unit_price if item.unit_price is not None else product.sale_price
         order.items.append(
             models.SalesOrderItem(product_id=product.id, quantity=item.quantity, unit_price=price)
