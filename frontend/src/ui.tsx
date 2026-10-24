@@ -1,4 +1,5 @@
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { api } from "./api";
 import { STATUS_LABEL } from "./format";
 import type { OrderStatus } from "./types";
 
@@ -102,6 +103,103 @@ export function Pager({ list }: { list: { page: number; pages: number; total: nu
       <button className="btn btn-sm" disabled={list.page >= list.pages} onClick={() => list.setPage(list.page + 1)}>
         التالي
       </button>
+    </div>
+  );
+}
+
+/**
+ * Search-as-you-type picker backed by a list endpoint (`?search=`), so it works with any number of records.
+ * `value` is the chosen item (or null); the parent keeps it so it can use more than the id.
+ */
+export function Lookup<T extends { id: number }>({
+  path,
+  params,
+  value,
+  onChange,
+  label,
+  text,
+  placeholder = "اكتب للبحث…",
+  autoFocus,
+}: {
+  path: string;
+  params?: Record<string, string | number | boolean>;
+  value: T | null;
+  onChange: (item: T | null) => void;
+  label: (item: T) => string;
+  text?: (item: T) => string;
+  placeholder?: string;
+  autoFocus?: boolean;
+}) {
+  const [q, setQ] = useState("");
+  const [open, setOpen] = useState(false);
+  const [items, setItems] = useState<T[]>([]);
+  const [busy, setBusy] = useState(false);
+  const paramsKey = JSON.stringify(params ?? {});
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    const t = setTimeout(() => {
+      setBusy(true);
+      const sp = new URLSearchParams({ limit: "15" });
+      for (const [k, v] of Object.entries(params ?? {})) sp.set(k, String(v));
+      if (q.trim()) sp.set("search", q.trim());
+      api
+        .get<T[]>(`${path}?${sp.toString()}`)
+        .then((r) => !cancelled && setItems(r))
+        .catch(() => !cancelled && setItems([]))
+        .finally(() => !cancelled && setBusy(false));
+    }, 200);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q, open, path, paramsKey]);
+
+  const shown = value ? (text ?? label)(value) : q;
+  return (
+    <div className="lookup" style={{ position: "relative" }}>
+      <input
+        value={shown}
+        placeholder={placeholder}
+        autoFocus={autoFocus}
+        aria-label={placeholder}
+        role="combobox"
+        aria-expanded={open}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        onChange={(e) => {
+          if (value) onChange(null);
+          setQ(e.target.value);
+          setOpen(true);
+        }}
+      />
+      {open && !value && (
+        <ul
+          role="listbox"
+          style={{ position: "absolute", insetInline: 0, top: "100%", zIndex: 20, margin: 0, padding: 4, listStyle: "none", background: "var(--surface, #fff)", border: "1px solid var(--border, #d8dde6)", borderRadius: 8, maxHeight: 240, overflow: "auto", boxShadow: "0 8px 24px rgba(0,0,0,.15)" }}
+        >
+          {busy && items.length === 0 && <li className="muted" style={{ padding: 8 }}>جارٍ البحث…</li>}
+          {!busy && items.length === 0 && <li className="muted" style={{ padding: 8 }}>لا نتائج</li>}
+          {items.map((it) => (
+            <li
+              key={it.id}
+              role="option"
+              aria-selected={false}
+              style={{ padding: "7px 10px", cursor: "pointer", borderRadius: 6 }}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                onChange(it);
+                setQ("");
+                setOpen(false);
+              }}
+            >
+              {label(it)}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

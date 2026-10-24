@@ -61,6 +61,7 @@ export type OrderStatus = "draft" | "received" | "confirmed" | "cancelled";
 export interface OrderItem {
   id: number;
   product_id: number;
+  product_name?: string | null;
   quantity: number;
   unit_cost?: string; // purchase orders
   unit_price?: string; // sales orders
@@ -68,6 +69,7 @@ export interface OrderItem {
 
 export interface Order {
   id: number;
+  party_name?: string | null;
   supplier_id?: number; // purchase orders
   customer_id?: number; // sales orders
   warehouse_id: number;

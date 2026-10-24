@@ -3,7 +3,7 @@ import { api } from "../api";
 import { dateTime, money, num } from "../format";
 import { useAction, useFetch, usePagedList } from "../hooks";
 import type { Order, OrderStatus, Party, Product, Warehouse } from "../types";
-import { Alert, Empty, Field, Loading, Modal, nameOf, PageHeader, Pager, StatusBadge } from "../ui";
+import { Alert, Empty, Field, Loading, Lookup, Modal, PageHeader, Pager, StatusBadge } from "../ui";
 
 type Kind = "purchase" | "sales";
 
@@ -60,6 +60,11 @@ function partyId(o: Order, cfg: KindConfig): number | undefined {
   return o[cfg.partyField];
 }
 
+/** Warehouses are few, so the full list is loaded once and names are looked up locally. */
+function warehouseName(list: Warehouse[] | null, id: number): string {
+  return list?.find((w) => w.id === id)?.name ?? `#${id}`;
+}
+
 function OrdersScreen({ kind }: { kind: Kind }) {
   const cfg = CONFIG[kind];
   const [status, setStatus] = useState("");
@@ -67,9 +72,7 @@ function OrdersScreen({ kind }: { kind: Kind }) {
   const [viewId, setViewId] = useState<number | null>(null);
 
   const orders = usePagedList<Order>(cfg.path, { status_filter: status });
-  const parties = useFetch(() => api.get<Party[]>(`${cfg.partyPath}?limit=500`), `${kind}-parties`);
   const warehouses = useFetch(() => api.get<Warehouse[]>("/warehouses?limit=500"), "wh");
-  const products = useFetch(() => api.get<Product[]>("/products?limit=500"), "products-all");
 
   const view = viewId != null ? orders.data?.find((o) => o.id === viewId) ?? null : null;
 
@@ -87,7 +90,7 @@ function OrdersScreen({ kind }: { kind: Kind }) {
         </button>
       </PageHeader>
 
-      <Alert>{orders.error || parties.error || warehouses.error || products.error}</Alert>
+      <Alert>{orders.error || warehouses.error}</Alert>
 
       <div className="card table-wrap">
         {orders.loading && !orders.data ? (
@@ -110,8 +113,8 @@ function OrdersScreen({ kind }: { kind: Kind }) {
                 <tr key={o.id}>
                   <td>#{o.id}</td>
                   <td>{dateTime(o.created_at)}</td>
-                  <td>{nameOf(parties.data, partyId(o, cfg))}</td>
-                  <td>{nameOf(warehouses.data, o.warehouse_id)}</td>
+                  <td>{o.party_name ?? `#${partyId(o, cfg)}`}</td>
+                  <td>{warehouseName(warehouses.data, o.warehouse_id)}</td>
                   <td>
                     <StatusBadge status={o.status} />
                   </td>
@@ -134,9 +137,7 @@ function OrdersScreen({ kind }: { kind: Kind }) {
       {creating && (
         <OrderForm
           cfg={cfg}
-          parties={(parties.data ?? []).filter((p) => p.is_active)}
           warehouses={(warehouses.data ?? []).filter((w) => w.is_active)}
-          products={(products.data ?? []).filter((p) => p.is_active)}
           onClose={() => setCreating(false)}
           onSaved={(id) => {
             setCreating(false);
@@ -150,13 +151,11 @@ function OrdersScreen({ kind }: { kind: Kind }) {
         <OrderDetail
           cfg={cfg}
           order={view}
-          partyName={nameOf(parties.data, partyId(view, cfg))}
-          warehouseName={nameOf(warehouses.data, view.warehouse_id)}
-          products={products.data ?? []}
+          partyName={view.party_name ?? `#${partyId(view, cfg)}`}
+          warehouseName={warehouseName(warehouses.data, view.warehouse_id)}
           onClose={() => setViewId(null)}
           onChanged={() => {
             orders.reload();
-            products.reload(); // stock levels changed
           }}
         />
       )}
@@ -167,44 +166,39 @@ function OrdersScreen({ kind }: { kind: Kind }) {
 // ---------------------------------------------------------------- new order
 interface Line {
   key: number;
-  product_id: string;
+  product: Product | null;
   quantity: string;
   price: string;
 }
 
 let lineKey = 1;
-const newLine = (): Line => ({ key: lineKey++, product_id: "", quantity: "1", price: "" });
+const newLine = (): Line => ({ key: lineKey++, product: null, quantity: "1", price: "" });
 
 function OrderForm({
   cfg,
-  parties,
   warehouses,
-  products,
   onClose,
   onSaved,
 }: {
   cfg: KindConfig;
-  parties: Party[];
   warehouses: Warehouse[];
-  products: Product[];
   onClose: () => void;
   onSaved: (id: number) => void;
 }) {
-  const [party, setParty] = useState("");
+  const [party, setParty] = useState<Party | null>(null);
   const [warehouse, setWarehouse] = useState(warehouses.length === 1 ? String(warehouses[0].id) : "");
   const [notes, setNotes] = useState("");
   const [lines, setLines] = useState<Line[]>([newLine()]);
   const { busy, error, run } = useAction();
 
-  const byId = new Map(products.map((p) => [p.id, p]));
   const defaultPrice = (p: Product | undefined) => (p ? (cfg.priceField === "unit_cost" ? p.cost_price : p.sale_price) : "");
 
   const patch = (key: number, change: Partial<Line>) => setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...change } : l)));
-  const pickProduct = (key: number, id: string) => patch(key, { product_id: id, price: id ? String(Number(defaultPrice(byId.get(Number(id))))) : "" });
+  const pickProduct = (key: number, p: Product | null) => patch(key, { product: p, price: p ? String(Number(defaultPrice(p))) : "" });
 
   const lineTotal = (l: Line) => (Number(l.quantity) || 0) * (Number(l.price) || 0);
   const total = lines.reduce((s, l) => s + lineTotal(l), 0);
-  const filled = lines.filter((l) => l.product_id);
+  const filled = lines.filter((l) => l.product);
   const valid = !!party && !!warehouse && filled.length > 0 && filled.every((l) => Number.isInteger(Number(l.quantity)) && Number(l.quantity) > 0 && Number(l.price) >= 0);
 
   const submit = (e: FormEvent) => {
@@ -212,10 +206,10 @@ function OrderForm({
     if (!valid) return;
     void run(async () => {
       const created = await api.post<Order>(cfg.path, {
-        [cfg.partyField]: Number(party),
+        [cfg.partyField]: party!.id,
         warehouse_id: Number(warehouse),
         notes: notes.trim() || null,
-        items: filled.map((l) => ({ product_id: Number(l.product_id), quantity: Number(l.quantity), [cfg.priceField]: l.price })),
+        items: filled.map((l) => ({ product_id: l.product!.id, quantity: Number(l.quantity), [cfg.priceField]: l.price })),
       });
       onSaved(created.id);
     });
@@ -227,14 +221,7 @@ function OrderForm({
         <Alert>{error}</Alert>
         <div className="form-grid">
           <Field label={cfg.partyLabel}>
-            <select value={party} onChange={(e) => setParty(e.target.value)} required autoFocus>
-              <option value="">— اختر —</option>
-              {parties.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
+            <Lookup<Party> path={cfg.partyPath} params={{ is_active: true }} value={party} onChange={setParty} label={(p) => p.name} placeholder={`ابحث عن ${cfg.partyLabel}…`} autoFocus />
           </Field>
           <Field label="المخزن">
             <select value={warehouse} onChange={(e) => setWarehouse(e.target.value)} required>
@@ -262,18 +249,19 @@ function OrderForm({
           </thead>
           <tbody>
             {lines.map((l) => {
-              const p = byId.get(Number(l.product_id));
+              const p = l.product;
               return (
                 <tr key={l.key}>
                   <td>
-                    <select value={l.product_id} onChange={(e) => pickProduct(l.key, e.target.value)} aria-label="المنتج">
-                      <option value="">— اختر منتجاً —</option>
-                      {products.map((x) => (
-                        <option key={x.id} value={x.id}>
-                          {x.name} ({x.sku}) — المتاح {x.quantity}
-                        </option>
-                      ))}
-                    </select>
+                    <Lookup<Product>
+                      path="/products"
+                      params={{ is_active: true }}
+                      value={l.product}
+                      onChange={(x) => pickProduct(l.key, x)}
+                      label={(x) => `${x.name} (${x.sku}) — المتاح ${x.quantity}`}
+                      text={(x) => `${x.name} (${x.sku})`}
+                      placeholder="ابحث بالاسم أو الكود…"
+                    />
                   </td>
                   <td>
                     <input type="number" min="1" step="1" value={l.quantity} onChange={(e) => patch(l.key, { quantity: e.target.value })} aria-label="الكمية" />
@@ -333,7 +321,6 @@ function OrderDetail({
   order,
   partyName,
   warehouseName,
-  products,
   onClose,
   onChanged,
 }: {
@@ -341,7 +328,6 @@ function OrderDetail({
   order: Order;
   partyName: string;
   warehouseName: string;
-  products: Product[];
   onClose: () => void;
   onChanged: () => void;
 }) {
@@ -399,7 +385,7 @@ function OrderDetail({
               const price = it[cfg.priceField] ?? "0";
               return (
                 <tr key={it.id}>
-                  <td>{nameOf(products, it.product_id)}</td>
+                  <td>{it.product_name ?? `#${it.product_id}`}</td>
                   <td className="num">{num(it.quantity)}</td>
                   <td className="num">{money(price)}</td>
                   <td className="num">{money(Number(price) * it.quantity)}</td>

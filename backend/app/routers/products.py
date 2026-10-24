@@ -60,6 +60,7 @@ def list_products(
     warehouse_id: Optional[int] = None,
     supplier_id: Optional[int] = None,
     low_stock: bool = False,
+    is_active: Optional[bool] = None,
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),
@@ -72,6 +73,8 @@ def list_products(
         query = query.filter(models.Product.warehouse_id == warehouse_id)
     if supplier_id is not None:
         query = query.filter(models.Product.supplier_id == supplier_id)
+    if is_active is not None:
+        query = query.filter(models.Product.is_active == is_active)
     if low_stock:
         query = query.filter(models.Product.quantity <= models.Product.reorder_level)
     return paginate(query, response, skip, limit, models.Product.id)

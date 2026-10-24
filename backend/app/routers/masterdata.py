@@ -65,12 +65,14 @@ def _crud(router: APIRouter, model, label: str, create_s, update_s, out_s, kind:
         return obj
 
     @router.get("", response_model=List[out_s])
-    def list_all(response: Response, search: Optional[str] = None, skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+    def list_all(response: Response, search: Optional[str] = None, is_active: Optional[bool] = None, skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
         query = db.query(model)
         if search:
             like = f"%{search.strip()}%"
             cols = [getattr(model, c) for c in ("name", "phone", "contact_person", "email", "code") if hasattr(model, c)]
             query = query.filter(or_(*[c.ilike(like) for c in cols]))
+        if is_active is not None and hasattr(model, "is_active"):
+            query = query.filter(model.is_active == is_active)
         rows = paginate(query, response, skip, limit, model.id)
         _attach_balances(db, kind, rows)
         return rows

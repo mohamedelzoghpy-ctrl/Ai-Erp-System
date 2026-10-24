@@ -145,6 +145,7 @@ class PurchaseItemIn(BaseModel):
 
 class PurchaseItemOut(PurchaseItemIn, ORMModel):
     id: int
+    product_name: Optional[str] = None
 
 
 class PurchaseOrderCreate(BaseModel):
@@ -157,6 +158,7 @@ class PurchaseOrderCreate(BaseModel):
 class PurchaseOrderOut(ORMModel):
     id: int
     supplier_id: int
+    party_name: Optional[str] = None
     warehouse_id: int
     status: str
     notes: Optional[str]
@@ -179,6 +181,7 @@ class SalesItemOut(ORMModel):
     product_id: int
     quantity: int
     unit_price: Decimal
+    product_name: Optional[str] = None
 
 
 class SalesOrderCreate(BaseModel):
@@ -191,6 +194,7 @@ class SalesOrderCreate(BaseModel):
 class SalesOrderOut(ORMModel):
     id: int
     customer_id: int
+    party_name: Optional[str] = None
     warehouse_id: int
     status: str
     notes: Optional[str]

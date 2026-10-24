@@ -116,6 +116,10 @@ class PurchaseOrder(Base):
 
     supplier = relationship("Supplier")
     warehouse = relationship("Warehouse")
+
+    @property
+    def party_name(self):
+        return self.supplier.name if self.supplier else None
     items = relationship("PurchaseOrderItem", back_populates="order", cascade="all, delete-orphan")
 
 
@@ -130,6 +134,10 @@ class PurchaseOrderItem(Base):
 
     order = relationship("PurchaseOrder", back_populates="items")
     product = relationship("Product")
+
+    @property
+    def product_name(self):
+        return self.product.name if self.product else None
 
 
 class SalesOrder(Base):
@@ -150,6 +158,10 @@ class SalesOrder(Base):
 
     customer = relationship("Customer", back_populates="sales_orders")
     warehouse = relationship("Warehouse")
+
+    @property
+    def party_name(self):
+        return self.customer.name if self.customer else None
     items = relationship("SalesOrderItem", back_populates="order", cascade="all, delete-orphan")
 
 
@@ -164,6 +176,10 @@ class SalesOrderItem(Base):
 
     order = relationship("SalesOrder", back_populates="items")
     product = relationship("Product")
+
+    @property
+    def product_name(self):
+        return self.product.name if self.product else None
 
 
 class StockMovement(Base):
