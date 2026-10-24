@@ -2,9 +2,9 @@ import { useState, type FormEvent } from "react";
 import { api, qs } from "../api";
 import { useAuth } from "../auth";
 import { balanceNote, dateOnly, METHOD_LABEL, money } from "../format";
-import { useAction, useFetch } from "../hooks";
+import { useAction, useFetch, usePagedList } from "../hooks";
 import type { Payment, PaymentMethod, Statement } from "../types";
-import { Alert, Empty, Field, Loading, Modal, PageHeader } from "../ui";
+import { Alert, Empty, Field, Loading, Modal, PageHeader, Pager } from "../ui";
 
 export type PartyKind = "customer" | "supplier";
 
@@ -200,8 +200,7 @@ export default function Payments() {
   const [to, setTo] = useState("");
   const action = useAction();
   const valid = !from || !to || from <= to;
-  const q = qs({ kind, date_from: from, date_to: to, limit: 500 });
-  const list = useFetch(() => (valid ? api.get<Payment[]>(`/payments${q}`) : Promise.resolve([] as Payment[])), `pay${q}${valid}`);
+  const list = usePagedList<Payment>("/payments", valid ? { kind, date_from: from, date_to: to } : { kind, limit: 1 });
 
   const voidIt = (p: Payment) => {
     if (!confirm(`إلغاء ${p.kind === "receipt" ? "سند القبض" : "سند الدفع"} RC/PY-${p.id} بمبلغ ${money(p.amount)}؟ لا يمكن التراجع.`)) return;
@@ -278,6 +277,7 @@ export default function Payments() {
         ) : (
           <Empty>لا توجد سندات في هذه الفترة.</Empty>
         )}
+        <Pager list={list} />
       </div>
     </>
   );

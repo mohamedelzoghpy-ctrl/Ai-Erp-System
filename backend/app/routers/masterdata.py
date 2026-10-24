@@ -3,12 +3,14 @@
 from decimal import Decimal
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
+from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
 from ..accounts import party_balances
+from ..pagination import paginate
 from ..database import get_db
 from ..deps import get_current_user, require_manager
 
@@ -63,8 +65,13 @@ def _crud(router: APIRouter, model, label: str, create_s, update_s, out_s, kind:
         return obj
 
     @router.get("", response_model=List[out_s])
-    def list_all(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-        rows = db.query(model).order_by(model.id).offset(skip).limit(min(limit, 500)).all()
+    def list_all(response: Response, search: Optional[str] = None, skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+        query = db.query(model)
+        if search:
+            like = f"%{search.strip()}%"
+            cols = [getattr(model, c) for c in ("name", "phone", "contact_person", "email", "code") if hasattr(model, c)]
+            query = query.filter(or_(*[c.ilike(like) for c in cols]))
+        rows = paginate(query, response, skip, limit, model.id)
         _attach_balances(db, kind, rows)
         return rows
 

@@ -2,10 +2,11 @@
 
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from ..pagination import paginate
 from .. import models, schemas
 from ..database import get_db
 from ..deps import require_manager
@@ -54,6 +55,7 @@ def create_product(payload: schemas.ProductCreate, db: Session = Depends(get_db)
 
 @router.get("", response_model=List[schemas.ProductOut])
 def list_products(
+    response: Response,
     search: Optional[str] = None,
     warehouse_id: Optional[int] = None,
     supplier_id: Optional[int] = None,
@@ -72,7 +74,7 @@ def list_products(
         query = query.filter(models.Product.supplier_id == supplier_id)
     if low_stock:
         query = query.filter(models.Product.quantity <= models.Product.reorder_level)
-    return query.order_by(models.Product.id).offset(skip).limit(min(limit, 500)).all()
+    return paginate(query, response, skip, limit, models.Product.id)
 
 
 @router.get("/{product_id}", response_model=schemas.ProductOut)

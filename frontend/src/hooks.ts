@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { api } from "./api";
 
 export interface Fetched<T> {
   data: T | null;
@@ -60,4 +61,45 @@ export function useAction() {
   }, []);
 
   return { busy, error, setError, run };
+}
+
+export const PAGE_SIZE = 50;
+
+export interface PagedList<T> {
+  data: T[] | null;
+  total: number;
+  page: number;
+  pages: number;
+  setPage: (p: number) => void;
+  error: string | null;
+  loading: boolean;
+  reload: () => void;
+}
+
+/** Paginated list: `params` are the filters (a change returns to page 1). */
+export function usePagedList<T>(path: string, params: Record<string, string | number | boolean | undefined | null>): PagedList<T> {
+  const filterKey = path + JSON.stringify(params);
+  const [state, setState] = useState({ key: filterKey, page: 1 });
+  const page = state.key === filterKey ? state.page : 1; // filters changed -> first page
+  const sp = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== null && v !== "" && v !== false) sp.set(k, String(v));
+  sp.set("limit", String(PAGE_SIZE));
+  sp.set("skip", String((page - 1) * PAGE_SIZE));
+  const f = useFetch(() => api.getPage<T>(`${path}?${sp.toString()}`), `${filterKey}#${page}`);
+  const total = f.data?.total ?? 0;
+  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  // If rows were deleted and the page no longer exists, step back.
+  useEffect(() => {
+    if (f.data && page > pages) setState({ key: filterKey, page: pages });
+  }, [f.data, page, pages, filterKey]);
+  return {
+    data: f.data ? f.data.items : null,
+    total,
+    page,
+    pages,
+    setPage: (p) => setState({ key: filterKey, page: Math.min(Math.max(1, p), pages) }),
+    error: f.error,
+    loading: f.loading,
+    reload: f.reload,
+  };
 }

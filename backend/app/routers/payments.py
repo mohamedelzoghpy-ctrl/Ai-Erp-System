@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
 from .. import accounts, exports, models, schemas
+from ..pagination import paginate
 from ..database import get_db
 from ..deps import get_current_user, require_manager
 
@@ -65,6 +66,7 @@ def create_payment(
 
 @payments.get("", response_model=List[schemas.PaymentOut])
 def list_payments(
+    response: Response,
     customer_id: Optional[int] = None,
     supplier_id: Optional[int] = None,
     kind: Optional[str] = Query(None, pattern="^(receipt|payment)$"),
@@ -90,7 +92,7 @@ def list_payments(
         q = q.filter(models.Payment.paid_on >= date_from)
     if date_to:
         q = q.filter(models.Payment.paid_on <= date_to)
-    rows = q.order_by(models.Payment.paid_on.desc(), models.Payment.id.desc()).offset(skip).limit(min(limit, 500)).all()
+    rows = paginate(q, response, skip, limit, models.Payment.paid_on.desc(), models.Payment.id.desc())
     return [_out(p) for p in rows]
 
 

@@ -1,10 +1,10 @@
 import { useState, type FormEvent } from "react";
 import { api } from "../api";
 import { useAuth } from "../auth";
-import { useAction, useFetch } from "../hooks";
+import { useAction, useFetch, usePagedList } from "../hooks";
 import type { Party, Warehouse } from "../types";
 import { balanceNote, money } from "../format";
-import { Alert, Empty, Field, Loading, Modal, PageHeader } from "../ui";
+import { Alert, Empty, Field, Loading, Modal, PageHeader, Pager } from "../ui";
 import { PaymentDialog, StatementDialog } from "./Accounts";
 
 /** Shared shape of the three master-data screens. */
@@ -151,16 +151,14 @@ function WarehouseForm({ initial, onClose, onSaved }: { initial: Warehouse | nul
 // ------------------------------------------------- Suppliers & customers
 function PartyScreen({ title, singular, path, kind }: { title: string; singular: string; path: string; kind: "customer" | "supplier" }) {
   const { isManager } = useAuth();
-  const { list, action } = useCrud<Party>(path);
-  const [editing, setEditing] = useState<Party | "new" | null>(null);
   const [search, setSearch] = useState("");
+  const list = usePagedList<Party>(path, { search: search.trim() });
+  const action = useAction();
+  const [editing, setEditing] = useState<Party | "new" | null>(null);
   const [paying, setPaying] = useState<Party | null>(null);
   const [statement, setStatement] = useState<Party | null>(null);
 
-  const rows = (list.data ?? []).filter((p) => {
-    const q = search.trim().toLowerCase();
-    return !q || [p.name, p.phone, p.contact_person, p.email].some((v) => v?.toLowerCase().includes(q));
-  });
+  const rows = list.data ?? [];
 
   const columns: Column<Party>[] = [
     { header: "الاسم", cell: (p) => p.name },
@@ -237,6 +235,7 @@ function PartyScreen({ title, singular, path, kind }: { title: string; singular:
         ) : (
           <Empty>{search ? "لا نتائج مطابقة" : `لا يوجد ${singular} بعد.`}</Empty>
         )}
+        <Pager list={list} />
       </div>
       {paying && (
         <PaymentDialog

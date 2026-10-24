@@ -44,7 +44,7 @@ function messageFromDetail(status: number, detail: unknown): string {
   return `حدث خطأ غير متوقع (${status})`;
 }
 
-async function request<T>(method: string, path: string, body?: unknown, form?: URLSearchParams): Promise<T> {
+async function request<T>(method: string, path: string, body?: unknown, form?: URLSearchParams, onHeaders?: (h: Headers) => void): Promise<T> {
   const headers: Record<string, string> = {};
   if (token) headers.Authorization = `Bearer ${token}`;
   let payload: BodyInit | undefined;
@@ -63,6 +63,7 @@ async function request<T>(method: string, path: string, body?: unknown, form?: U
     throw new ApiError(0, "تعذّر الاتصال بالخادم، تحقق من الشبكة");
   }
 
+  onHeaders?.(res.headers);
   if (res.status === 204) return undefined as T;
   const text = await res.text();
   let data: unknown = null;
@@ -116,6 +117,12 @@ async function download(path: string, fallbackName: string): Promise<void> {
 export const api = {
   download,
   get: <T>(path: string) => request<T>("GET", path),
+  /** One page of a list endpoint plus the total number of matches (X-Total-Count). */
+  getPage: async <T>(path: string): Promise<{ items: T[]; total: number }> => {
+    let total = 0;
+    const items = await request<T[]>("GET", path, undefined, undefined, (h) => (total = Number(h.get("X-Total-Count") ?? 0)));
+    return { items, total: total || items.length };
+  },
   post: <T>(path: string, body?: unknown) => request<T>("POST", path, body ?? {}),
   patch: <T>(path: string, body: unknown) => request<T>("PATCH", path, body),
   del: (path: string) => request<void>("DELETE", path),

@@ -87,3 +87,21 @@ export function nameOf<T extends { id: number; name: string }>(list: T[] | null 
   if (id == null) return "—";
   return list?.find((x) => x.id === id)?.name ?? `#${id}`;
 }
+
+/** Previous/next controls under a paginated table; hidden when everything fits on one page. */
+export function Pager({ list }: { list: { page: number; pages: number; total: number; setPage: (p: number) => void } }) {
+  if (list.pages <= 1) return null;
+  return (
+    <div className="pager" style={{ display: "flex", gap: 10, alignItems: "center", justifyContent: "center", padding: 12 }}>
+      <button className="btn btn-sm" disabled={list.page <= 1} onClick={() => list.setPage(list.page - 1)}>
+        السابق
+      </button>
+      <span className="muted">
+        صفحة {list.page} من {list.pages} · {list.total} سجل
+      </span>
+      <button className="btn btn-sm" disabled={list.page >= list.pages} onClick={() => list.setPage(list.page + 1)}>
+        التالي
+      </button>
+    </div>
+  );
+}

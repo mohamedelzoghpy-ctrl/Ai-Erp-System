@@ -49,6 +49,7 @@ if _origins:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        expose_headers=["X-Total-Count", "Content-Disposition"],
     )
 
 app.include_router(auth.router)  # login / setup are public; user admin is protected inside

@@ -12,6 +12,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
+from ..pagination import paginate
 from .. import exports, models, schemas
 from ..database import get_db
 
@@ -75,6 +76,7 @@ def create_purchase_order(payload: schemas.PurchaseOrderCreate, db: Session = De
 
 @purchases.get("", response_model=List[schemas.PurchaseOrderOut])
 def list_purchase_orders(
+    response: Response,
     status_filter: Optional[str] = None,
     supplier_id: Optional[int] = None,
     skip: int = 0,
@@ -86,7 +88,7 @@ def list_purchase_orders(
         query = query.filter(models.PurchaseOrder.status == status_filter)
     if supplier_id is not None:
         query = query.filter(models.PurchaseOrder.supplier_id == supplier_id)
-    return query.order_by(models.PurchaseOrder.id.desc()).offset(skip).limit(min(limit, 500)).all()
+    return paginate(query, response, skip, limit, models.PurchaseOrder.id.desc())
 
 
 @purchases.get("/{order_id}", response_model=schemas.PurchaseOrderOut)
@@ -153,6 +155,7 @@ def create_sales_order(payload: schemas.SalesOrderCreate, db: Session = Depends(
 
 @sales.get("", response_model=List[schemas.SalesOrderOut])
 def list_sales_orders(
+    response: Response,
     status_filter: Optional[str] = None,
     customer_id: Optional[int] = None,
     skip: int = 0,
@@ -164,7 +167,7 @@ def list_sales_orders(
         query = query.filter(models.SalesOrder.status == status_filter)
     if customer_id is not None:
         query = query.filter(models.SalesOrder.customer_id == customer_id)
-    return query.order_by(models.SalesOrder.id.desc()).offset(skip).limit(min(limit, 500)).all()
+    return paginate(query, response, skip, limit, models.SalesOrder.id.desc())
 
 
 @sales.get("/{order_id}", response_model=schemas.SalesOrderOut)

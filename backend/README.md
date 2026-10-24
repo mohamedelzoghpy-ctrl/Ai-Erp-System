@@ -98,3 +98,8 @@ Reports date an order by when it was confirmed (sales) or received (purchases), 
 - `GET /reports/receivables` and `/reports/payables` (+ `/xlsx`, manager/admin); the dashboard shows both totals.
 - Upgrading a database created by `AUTO_CREATE_TABLES=true`: run `alembic stamp 0001` then `alembic upgrade head`
   (the `opening_balance` columns are added by migration `0002`; `create_all` never alters existing tables).
+
+## Pagination
+
+List endpoints (`/products`, `/customers`, `/suppliers`, `/purchase-orders`, `/sales-orders`, `/payments`) take `skip` and `limit`
+(max 500) and return the number of matches in the `X-Total-Count` response header. `/customers` and `/suppliers` also accept `search`.

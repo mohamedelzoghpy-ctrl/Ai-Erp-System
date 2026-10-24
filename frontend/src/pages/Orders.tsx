@@ -1,9 +1,9 @@
 import { useState, type FormEvent } from "react";
-import { api, qs } from "../api";
+import { api } from "../api";
 import { dateTime, money, num } from "../format";
-import { useAction, useFetch } from "../hooks";
+import { useAction, useFetch, usePagedList } from "../hooks";
 import type { Order, OrderStatus, Party, Product, Warehouse } from "../types";
-import { Alert, Empty, Field, Loading, Modal, nameOf, PageHeader, StatusBadge } from "../ui";
+import { Alert, Empty, Field, Loading, Modal, nameOf, PageHeader, Pager, StatusBadge } from "../ui";
 
 type Kind = "purchase" | "sales";
 
@@ -66,8 +66,7 @@ function OrdersScreen({ kind }: { kind: Kind }) {
   const [creating, setCreating] = useState(false);
   const [viewId, setViewId] = useState<number | null>(null);
 
-  const query = qs({ status_filter: status, limit: 500 });
-  const orders = useFetch(() => api.get<Order[]>(`${cfg.path}${query}`), `${kind}${query}`);
+  const orders = usePagedList<Order>(cfg.path, { status_filter: status });
   const parties = useFetch(() => api.get<Party[]>(`${cfg.partyPath}?limit=500`), `${kind}-parties`);
   const warehouses = useFetch(() => api.get<Warehouse[]>("/warehouses?limit=500"), "wh");
   const products = useFetch(() => api.get<Product[]>("/products?limit=500"), "products-all");
@@ -129,6 +128,7 @@ function OrdersScreen({ kind }: { kind: Kind }) {
         ) : (
           <Empty>{status ? "لا نتائج مطابقة" : "لا توجد أوامر بعد."}</Empty>
         )}
+        <Pager list={orders} />
       </div>
 
       {creating && (
@@ -140,6 +140,7 @@ function OrdersScreen({ kind }: { kind: Kind }) {
           onClose={() => setCreating(false)}
           onSaved={(id) => {
             setCreating(false);
+            orders.setPage(1);
             orders.reload();
             setViewId(id);
           }}

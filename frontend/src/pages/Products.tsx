@@ -1,10 +1,10 @@
 import { useState, type FormEvent } from "react";
-import { api, qs } from "../api";
+import { api } from "../api";
 import { useAuth } from "../auth";
 import { dateTime, money, num, REASON_LABEL } from "../format";
-import { useAction, useFetch } from "../hooks";
+import { useAction, useFetch, usePagedList } from "../hooks";
 import type { Party, Product, StockMovement, Warehouse } from "../types";
-import { Alert, Empty, Field, Loading, Modal, nameOf, PageHeader } from "../ui";
+import { Alert, Empty, Field, Loading, Modal, nameOf, PageHeader, Pager } from "../ui";
 
 export default function Products() {
   const { isManager } = useAuth();
@@ -15,8 +15,7 @@ export default function Products() {
   const [adjusting, setAdjusting] = useState<Product | null>(null);
   const [history, setHistory] = useState<Product | null>(null);
 
-  const query = qs({ search: search.trim(), warehouse_id: warehouseId, low_stock: lowOnly, limit: 500 });
-  const products = useFetch(() => api.get<Product[]>(`/products${query}`), `p${query}`);
+  const products = usePagedList<Product>("/products", { search: search.trim(), warehouse_id: warehouseId, low_stock: lowOnly });
   const warehouses = useFetch(() => api.get<Warehouse[]>("/warehouses?limit=500"), "wh");
   const suppliers = useFetch(() => api.get<Party[]>("/suppliers?limit=500"), "sup");
   const action = useAction();
@@ -112,6 +111,7 @@ export default function Products() {
         ) : (
           <Empty>{search || warehouseId || lowOnly ? "لا نتائج مطابقة" : "لا توجد منتجات بعد. أضف منتجاً للبدء."}</Empty>
         )}
+        <Pager list={products} />
       </div>
 
       {editing && (
