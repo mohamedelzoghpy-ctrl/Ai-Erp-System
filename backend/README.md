@@ -17,7 +17,7 @@ uvicorn app.main:app --reload
 ```
 
 Open http://localhost:8000/docs. First run: call `POST /auth/setup` to create the first admin
-(works only while there are no users), then click **Authorize** and log in.
+(works only while there are no users; PostgreSQL serializes simultaneous setup requests), then click **Authorize** and log in.
 
 ## Run with Docker (PostgreSQL + backend)
 
