@@ -59,14 +59,20 @@ def _require_draft(order, action: str):
 # ======================= Purchases =======================
 @purchases.post("", response_model=schemas.PurchaseOrderOut, status_code=status.HTTP_201_CREATED)
 def create_purchase_order(payload: schemas.PurchaseOrderCreate, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
-    _require(db, models.Supplier, payload.supplier_id, "Supplier")
-    _require(db, models.Warehouse, payload.warehouse_id, "Warehouse")
+    supplier = _require(db, models.Supplier, payload.supplier_id, "Supplier")
+    warehouse = _require(db, models.Warehouse, payload.warehouse_id, "Warehouse")
+    if not supplier.is_active:
+        raise HTTPException(422, "Supplier is inactive")
+    if not warehouse.is_active:
+        raise HTTPException(422, "Warehouse is inactive")
     order = models.PurchaseOrder(
         supplier_id=payload.supplier_id, warehouse_id=payload.warehouse_id, notes=payload.notes
     )
     total = Decimal("0")
     for item in payload.items:
-        _require(db, models.Product, item.product_id, "Product")
+        product = _require(db, models.Product, item.product_id, "Product")
+        if not product.is_active:
+            raise HTTPException(422, f"Product '{product.name}' is inactive")
         order.items.append(
             models.PurchaseOrderItem(
                 product_id=item.product_id, quantity=item.quantity, unit_cost=item.unit_cost
@@ -177,14 +183,20 @@ def apply_sale_stock(db: Session, order) -> None:
 
 @sales.post("", response_model=schemas.SalesOrderOut, status_code=status.HTTP_201_CREATED)
 def create_sales_order(payload: schemas.SalesOrderCreate, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
-    _require(db, models.Customer, payload.customer_id, "Customer")
-    _require(db, models.Warehouse, payload.warehouse_id, "Warehouse")
+    customer = _require(db, models.Customer, payload.customer_id, "Customer")
+    warehouse = _require(db, models.Warehouse, payload.warehouse_id, "Warehouse")
+    if not customer.is_active:
+        raise HTTPException(422, "Customer is inactive")
+    if not warehouse.is_active:
+        raise HTTPException(422, "Warehouse is inactive")
     order = models.SalesOrder(
         customer_id=payload.customer_id, warehouse_id=payload.warehouse_id, notes=payload.notes
     )
     total = Decimal("0")
     for item in payload.items:
         product = _require(db, models.Product, item.product_id, "Product")
+        if not product.is_active:
+            raise HTTPException(422, f"Product '{product.name}' is inactive")
         if item.unit_price is not None and user.role not in {"admin", "manager"}:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Only managers and admins may override sale prices")
         price = item.unit_price if item.unit_price is not None else product.sale_price

@@ -28,7 +28,9 @@ def _walk_in(db: Session) -> models.Customer:
 
 @router.post("/checkout", response_model=schemas.PosReceipt, status_code=status.HTTP_201_CREATED)
 def checkout(payload: schemas.PosCheckout, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
-    _require(db, models.Warehouse, payload.warehouse_id, "Warehouse")
+    warehouse = _require(db, models.Warehouse, payload.warehouse_id, "Warehouse")
+    if not warehouse.is_active:
+        raise HTTPException(422, "Warehouse is inactive")
     if payload.customer_id is not None:
         customer = _require(db, models.Customer, payload.customer_id, "Customer")
         if not customer.is_active:
