@@ -43,7 +43,7 @@ class PartyBase(BaseModel):
     email: Optional[str] = None
     address: Optional[str] = None
     is_active: bool = True
-    opening_balance: Decimal = Decimal("0")
+    opening_balance: Decimal = Field(default=Decimal("0"), max_digits=14, decimal_places=2)
 
 
 class PartyUpdate(BaseModel):
@@ -53,7 +53,7 @@ class PartyUpdate(BaseModel):
     email: Optional[str] = None
     address: Optional[str] = None
     is_active: Optional[bool] = None
-    opening_balance: Optional[Decimal] = None
+    opening_balance: Optional[Decimal] = Field(default=None, max_digits=14, decimal_places=2)
 
 
 class SupplierCreate(PartyBase):
@@ -90,8 +90,8 @@ class ProductBase(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     description: Optional[str] = None
     unit: str = "piece"
-    cost_price: Decimal = Field(default=Decimal("0"), ge=0)
-    sale_price: Decimal = Field(default=Decimal("0"), ge=0)
+    cost_price: Decimal = Field(default=Decimal("0"), ge=0, max_digits=12, decimal_places=2)
+    sale_price: Decimal = Field(default=Decimal("0"), ge=0, max_digits=12, decimal_places=2)
     reorder_level: int = Field(default=0, ge=0)
     is_active: bool = True
     warehouse_id: Optional[int] = None
@@ -107,8 +107,8 @@ class ProductUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=200)
     description: Optional[str] = None
     unit: Optional[str] = None
-    cost_price: Optional[Decimal] = Field(default=None, ge=0)
-    sale_price: Optional[Decimal] = Field(default=None, ge=0)
+    cost_price: Optional[Decimal] = Field(default=None, ge=0, max_digits=12, decimal_places=2)
+    sale_price: Optional[Decimal] = Field(default=None, ge=0, max_digits=12, decimal_places=2)
     reorder_level: Optional[int] = Field(default=None, ge=0)
     is_active: Optional[bool] = None
     warehouse_id: Optional[int] = None
@@ -140,7 +140,7 @@ class StockMovementOut(ORMModel):
 class PurchaseItemIn(BaseModel):
     product_id: int
     quantity: int = Field(gt=0)
-    unit_cost: Decimal = Field(ge=0)
+    unit_cost: Decimal = Field(ge=0, max_digits=12, decimal_places=2)
 
 
 class PurchaseItemOut(PurchaseItemIn, ORMModel):
@@ -176,7 +176,7 @@ class SalesItemIn(BaseModel):
     product_id: int
     quantity: int = Field(gt=0)
     unit_price: Optional[Decimal] = Field(
-        default=None, ge=0, description="Defaults to the product's current sale price."
+        default=None, ge=0, max_digits=12, decimal_places=2, description="Defaults to the product's current sale price."
     )
 
 
@@ -497,7 +497,7 @@ class PosCheckout(BaseModel):
     warehouse_id: int
     customer_id: Optional[int] = Field(default=None, description="Omit for a walk-in cash customer (must pay in full).")
     items: List[SalesItemIn] = Field(min_length=1)
-    amount_paid: Optional[Decimal] = Field(default=None, ge=0, description="Defaults to the full total.")
+    amount_paid: Optional[Decimal] = Field(default=None, ge=0, max_digits=14, decimal_places=2, description="Defaults to the full total.")
     method: PaymentMethod = "cash"
     notes: Optional[str] = None
 
@@ -521,7 +521,7 @@ class ReturnItemIn(BaseModel):
 class ReturnCreate(BaseModel):
     order_id: int
     items: List[ReturnItemIn] = Field(min_length=1)
-    refund_amount: Decimal = Field(default=Decimal("0"), ge=0, description="Cash exchanged now; the rest changes the balance.")
+    refund_amount: Decimal = Field(default=Decimal("0"), ge=0, max_digits=14, decimal_places=2, description="Cash exchanged now; the rest changes the balance.")
     method: PaymentMethod = "cash"
     notes: Optional[str] = None
 
