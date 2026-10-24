@@ -11,6 +11,13 @@ class ORMModel(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+def _reject_explicit_nulls(model: BaseModel, *fields: str) -> BaseModel:
+    invalid = [name for name in fields if name in model.model_fields_set and getattr(model, name) is None]
+    if invalid:
+        raise ValueError(f"{', '.join(invalid)} cannot be null")
+    return model
+
+
 # ---------- Warehouses ----------
 class WarehouseBase(BaseModel):
     name: str = Field(min_length=1, max_length=150)
@@ -28,6 +35,10 @@ class WarehouseUpdate(BaseModel):
     code: Optional[str] = Field(default=None, min_length=1, max_length=50)
     location: Optional[str] = None
     is_active: Optional[bool] = None
+
+    @model_validator(mode="after")
+    def _validate_non_nullable_fields(self):
+        return _reject_explicit_nulls(self, "name", "code", "is_active")
 
 
 class WarehouseOut(WarehouseBase, ORMModel):
@@ -54,6 +65,10 @@ class PartyUpdate(BaseModel):
     address: Optional[str] = None
     is_active: Optional[bool] = None
     opening_balance: Optional[Decimal] = Field(default=None, max_digits=14, decimal_places=2)
+
+    @model_validator(mode="after")
+    def _validate_non_nullable_fields(self):
+        return _reject_explicit_nulls(self, "name", "is_active", "opening_balance")
 
 
 class SupplierCreate(PartyBase):
@@ -113,6 +128,12 @@ class ProductUpdate(BaseModel):
     is_active: Optional[bool] = None
     warehouse_id: Optional[int] = None
     supplier_id: Optional[int] = None
+
+    @model_validator(mode="after")
+    def _validate_non_nullable_fields(self):
+        return _reject_explicit_nulls(
+            self, "name", "unit", "cost_price", "sale_price", "reorder_level", "is_active"
+        )
 
 
 class ProductOut(ProductBase, ORMModel):
@@ -230,6 +251,10 @@ class UserUpdate(BaseModel):
     role: Optional[Role] = None
     is_active: Optional[bool] = None
     password: Optional[str] = Field(default=None, min_length=8, max_length=128)
+
+    @model_validator(mode="after")
+    def _validate_non_nullable_fields(self):
+        return _reject_explicit_nulls(self, "role", "is_active", "password")
 
 
 class UserOut(ORMModel):
