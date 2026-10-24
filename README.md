@@ -41,6 +41,7 @@ Set `VITE_BACKEND_URL` if the API runs elsewhere.
 - Dashboard and detailed reports with a custom date range: sales, purchases, inventory valuation, low stock
 - Export invoices and purchase orders as PDF or Excel; export every report to Excel
 - Accounts: customer receipts and supplier payments, opening balances, account statements (PDF/Excel), receivables and payables reports
+- Point of sale screen: scan SKU, cart, cash change, credit or partial sales, invoice PDF
 - Audit log of who changed what and when (managers and admins)
 - Receivables/payables aging report (0–30 / 31–60 / 61–90 / 90+ days)
 - Paid / partial / unpaid status on every invoice (payments applied oldest-first)

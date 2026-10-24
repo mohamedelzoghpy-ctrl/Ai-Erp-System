@@ -29,6 +29,9 @@ export default function Layout() {
             أوامر الشراء
           </NavLink>
           <div className="section">المبيعات</div>
+          <NavLink to="/pos" className={link}>
+            نقطة البيع
+          </NavLink>
           <NavLink to="/customers" className={link}>
             العملاء
           </NavLink>

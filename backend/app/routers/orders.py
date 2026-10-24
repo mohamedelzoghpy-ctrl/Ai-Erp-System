@@ -141,6 +141,37 @@ def cancel_purchase_order(order_id: int, db: Session = Depends(get_db), user: mo
 
 
 # ======================= Sales =======================
+def apply_sale_stock(db: Session, order) -> None:
+    """Locks the products, verifies stock for the whole order and deducts it (all-or-nothing).
+    Does not commit. On a shortage the session is rolled back and a 409 is raised."""
+    # Aggregate per product so duplicate lines are validated together.
+    needed: dict = {}
+    for item in order.items:
+        needed[item.product_id] = needed.get(item.product_id, 0) + item.quantity
+
+    products = {pid: _locked_product(db, pid) for pid in sorted(needed)}
+    shortages = [
+        f"product {pid} ('{p.name}'): need {needed[pid]}, have {p.quantity}"
+        for pid, p in products.items()
+        if p.quantity < needed[pid]
+    ]
+    if shortages:
+        db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, "Insufficient stock: " + "; ".join(shortages))
+
+    for pid, qty in needed.items():
+        products[pid].quantity -= qty
+        db.add(
+            models.StockMovement(
+                product_id=pid,
+                warehouse_id=order.warehouse_id,
+                change=-qty,
+                reason="sale",
+                reference=f"SO-{order.id}",
+            )
+        )
+
+
 @sales.post("", response_model=schemas.SalesOrderOut, status_code=status.HTTP_201_CREATED)
 def create_sales_order(payload: schemas.SalesOrderCreate, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     _require(db, models.Customer, payload.customer_id, "Customer")
@@ -195,33 +226,7 @@ def confirm_sales_order(order_id: int, db: Session = Depends(get_db), user: mode
     """Confirm the sale: removes stock (all-or-nothing) and logs movements."""
     order = _order_or_404(db, models.SalesOrder, order_id, "Sales order")
     _require_draft(order, "confirm")
-
-    # Aggregate per product so duplicate lines are validated together.
-    needed: dict = {}
-    for item in order.items:
-        needed[item.product_id] = needed.get(item.product_id, 0) + item.quantity
-
-    products = {pid: _locked_product(db, pid) for pid in sorted(needed)}
-    shortages = [
-        f"product {pid} ('{p.name}'): need {needed[pid]}, have {p.quantity}"
-        for pid, p in products.items()
-        if p.quantity < needed[pid]
-    ]
-    if shortages:
-        db.rollback()
-        raise HTTPException(status.HTTP_409_CONFLICT, "Insufficient stock: " + "; ".join(shortages))
-
-    for pid, qty in needed.items():
-        products[pid].quantity -= qty
-        db.add(
-            models.StockMovement(
-                product_id=pid,
-                warehouse_id=order.warehouse_id,
-                change=-qty,
-                reason="sale",
-                reference=f"SO-{order.id}",
-            )
-        )
+    apply_sale_stock(db, order)
     order.status = "confirmed"
     audit(db, user, 'confirm', 'sales_order', order, f"إجمالي {order.total_amount}")
     db.commit()

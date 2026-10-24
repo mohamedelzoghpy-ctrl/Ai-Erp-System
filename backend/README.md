@@ -121,3 +121,11 @@ Every change that matters (orders created/confirmed/received/cancelled, payments
 changes, creates/updates/deletes of products, parties and users, and logins) writes a row to `audit_logs` in the same transaction as
 the change, so a rolled-back change leaves no entry. `GET /audit-logs` (manager/admin; filters `entity`, `action`, `username`,
 `date_from`, `date_to`; paginated) is read-only. Failed login attempts are limited but not logged.
+
+## Point of sale
+
+`POST /pos/checkout` (any logged-in user) creates a sales order, takes the stock and records the payment in one transaction:
+if stock is short, nothing is saved (409). Without `customer_id` the sale goes to the shared "عميل نقدي" customer and must be paid in
+full; with a customer, `amount_paid` may be lower (credit sale, `0` = fully on account) but never above the total.
+The web app's "نقطة البيع" screen uses it (barcode/SKU + Enter, cart, change calculation, invoice PDF). Prices can only be edited by
+managers/admins in the UI; note that the API itself accepts a `unit_price` from any user, as `/sales-orders` always did.
