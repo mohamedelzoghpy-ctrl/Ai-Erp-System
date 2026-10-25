@@ -297,6 +297,9 @@ export default function Pos() {
             <button className="btn" disabled={dl.busy} onClick={() => void dl.run(() => api.download(`/sales-orders/${receipt.order_id}/pdf`, `invoice-SO-${receipt.order_id}.pdf`))}>
               ⬇ الفاتورة PDF
             </button>
+            <button className="btn" disabled={dl.busy} onClick={() => void dl.run(() => api.download(`/sales-orders/${receipt.order_id}/receipt`, `receipt-SO-${receipt.order_id}.pdf`))}>
+              ⬇ إيصال حراري 80mm
+            </button>
           </div>
         </Modal>
       )}

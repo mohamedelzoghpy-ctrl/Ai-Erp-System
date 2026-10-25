@@ -312,6 +312,16 @@ def sales_order_invoice_pdf(order_id: int, db: Session = Depends(get_db)):
     return _export("sales", "pdf", _order_or_404(db, models.SalesOrder, order_id, "Sales order"), "invoice")
 
 
+@sales.get("/{order_id}/receipt")
+def sales_order_receipt(order_id: int, db: Session = Depends(get_db)):
+    """80 mm thermal-printer receipt for a sale."""
+    order = _order_or_404(db, models.SalesOrder, order_id, "Sales order")
+    attach_settlement(db, "customer", order)
+    doc = _document("sales", order)
+    doc["paid"], doc["remaining"] = order.paid_amount, order.balance_due
+    return _download(exports.build_receipt_pdf(doc), exports.PDF_MIME, f"receipt-{doc['number']}.pdf")
+
+
 @sales.get("/{order_id}/xlsx")
 def sales_order_invoice_xlsx(order_id: int, db: Session = Depends(get_db)):
     return _export("sales", "xlsx", _order_or_404(db, models.SalesOrder, order_id, "Sales order"), "invoice")

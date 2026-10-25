@@ -250,6 +250,74 @@ def build_shift_pdf(shift: Dict[str, Any]) -> bytes:
     return pdf.finish()
 
 
+RECEIPT_W = 226.8  # 80 mm thermal paper
+
+
+def build_receipt_pdf(doc: Dict[str, Any]) -> bytes:
+    """Narrow receipt for 80 mm thermal printers. Page height grows with the content (one continuous strip)."""
+    _register_fonts()
+    inner = RECEIPT_W - 20
+
+    def w(text, font, size):
+        return pdfmetrics.stringWidth(visual(text), font, size)
+
+    def wrap(text, font, size):
+        lines, cur = [], ""
+        for word in (text or "").split():
+            trial = f"{cur} {word}".strip()
+            if cur and w(trial, font, size) > inner:
+                lines.append(cur)
+                cur = word
+            else:
+                cur = trial
+        return lines + [cur]
+
+    # Lay everything out first as (kind, payload) rows so the page height is known before drawing.
+    rows: List[Tuple[str, Any]] = [("title", COMPANY_NAME)]
+    for extra in (COMPANY_ADDRESS, COMPANY_PHONE):
+        if extra:
+            rows.append(("small", extra))
+    rows += [("rule", None), ("kv", ("فاتورة", doc["number"])), ("kv", ("التاريخ", fmt_dt(doc["date"]))), ("kv", ("العميل", doc["party"]["name"])), ("rule", None)]
+    for it in doc["items"]:
+        for ln in wrap(it["name"], "Amiri-Bold", 10):
+            rows.append(("name", ln))
+        rows.append(("line", (f"{it['quantity']} × {fmt_money(it['price'])}", fmt_money(it["total"]))))
+    rows += [("rule", None), ("total", ("الإجمالي", f"{fmt_money(doc['total'])} {CURRENCY}"))]
+    if doc.get("paid") is not None:
+        rows.append(("kv", ("المدفوع", f"{fmt_money(doc['paid'])} {CURRENCY}")))
+        if Decimal(str(doc["remaining"] or 0)) > 0:
+            rows.append(("kv", ("المتبقي", f"{fmt_money(doc['remaining'])} {CURRENCY}")))
+    rows += [("rule", None), ("small", "شكراً لتعاملكم معنا")]
+
+    heights = {"title": 24, "small": 14, "rule": 10, "kv": 15, "name": 14, "line": 15, "total": 22}
+    page_h = 20 + sum(heights[k] for k, _ in rows)
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=(RECEIPT_W, page_h))
+    c.setTitle(f"إيصال {doc['number']}")
+    y = page_h - 10
+    xr, xl = RECEIPT_W - 10, 10
+    for kind, val in rows:
+        y -= heights[kind]
+        c.setFillColor(INK)
+        if kind == "title":
+            c.setFont("Amiri-Bold", 15); c.drawCentredString(RECEIPT_W / 2, y + 6, visual(val))
+        elif kind == "small":
+            c.setFont("Amiri", 9); c.setFillColor(MUTED); c.drawCentredString(RECEIPT_W / 2, y + 4, visual(val))
+        elif kind == "rule":
+            c.setStrokeColor(MUTED); c.setDash(2, 2); c.line(xl, y + 5, xr, y + 5); c.setDash()
+        elif kind == "kv":
+            c.setFont("Amiri", 10); c.drawRightString(xr, y + 3, visual(val[0] + ":")); c.drawString(xl, y + 3, visual(val[1]))
+        elif kind == "name":
+            c.setFont("Amiri-Bold", 10); c.drawRightString(xr, y + 3, visual(val))
+        elif kind == "line":
+            c.setFont("Amiri", 10); c.drawRightString(xr, y + 3, visual(val[0])); c.drawString(xl, y + 3, visual(val[1]))
+        elif kind == "total":
+            c.setFont("Amiri-Bold", 13); c.drawRightString(xr, y + 4, visual(val[0])); c.drawString(xl, y + 4, visual(val[1]))
+    c.showPage()
+    c.save()
+    return buf.getvalue()
+
+
 def build_document_pdf(doc: Dict[str, Any]) -> bytes:
     """Invoice (sales) or purchase order PDF. `doc` shape: see build_document_xlsx."""
     pdf = _Pdf(f"{KIND_TITLE[doc['kind']]} {doc['number']}")
