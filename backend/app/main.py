@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from . import models  # noqa: F401  (importing registers the tables on Base.metadata)
 from .database import Base, engine, get_db
 from .deps import get_current_user
-from .routers import audit as audit_router, auth, pos, returns, shifts, stocktakes, masterdata, orders, payments, products, reports
+from .routers import audit as audit_router, auth, pos, returns, shifts, stocktakes, masterdata, orders, payments, products, reports, tenancy
 
 
 @asynccontextmanager
@@ -53,6 +53,8 @@ if _origins:
     )
 
 app.include_router(auth.router)  # login / setup are public; user admin is protected inside
+app.include_router(tenancy.platform)
+app.include_router(tenancy.company)
 
 # Every business route requires a logged-in user.
 _protected = [Depends(get_current_user)]

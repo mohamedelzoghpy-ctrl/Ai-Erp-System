@@ -20,8 +20,8 @@ from ..pagination import paginate
 from .. import exports, models, schemas
 from ..database import get_db
 
-purchases = APIRouter(prefix="/purchase-orders", tags=["purchases"])
-sales = APIRouter(prefix="/sales-orders", tags=["sales"])
+purchases = APIRouter(prefix="/purchase-orders", tags=["purchases"], dependencies=[Depends(get_current_user)])
+sales = APIRouter(prefix="/sales-orders", tags=["sales"], dependencies=[Depends(get_current_user)])
 
 
 def _require(db: Session, model, obj_id: int, label: str):

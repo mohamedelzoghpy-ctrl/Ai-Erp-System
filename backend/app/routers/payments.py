@@ -16,9 +16,13 @@ from ..audit import audit
 from ..database import get_db
 from ..deps import get_current_user, require_manager
 
-payments = APIRouter(prefix="/payments", tags=["payments"])
-customer_accounts = APIRouter(prefix="/customers", tags=["customer accounts"])
-supplier_accounts = APIRouter(prefix="/suppliers", tags=["supplier accounts"])
+payments = APIRouter(prefix="/payments", tags=["payments"], dependencies=[Depends(get_current_user)])
+customer_accounts = APIRouter(
+    prefix="/customers", tags=["customer accounts"], dependencies=[Depends(get_current_user)]
+)
+supplier_accounts = APIRouter(
+    prefix="/suppliers", tags=["supplier accounts"], dependencies=[Depends(get_current_user)]
+)
 
 
 def _today() -> date:

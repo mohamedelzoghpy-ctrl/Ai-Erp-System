@@ -1,9 +1,13 @@
 import { NavLink, Outlet } from "react-router-dom";
 import { useAuth } from "./auth";
 import { ROLE_LABEL } from "./format";
+import { api } from "./api";
+import { useFetch } from "./hooks";
+import type { Company } from "./types";
 
 export default function Layout() {
-  const { user, logout, isAdmin, isManager } = useAuth();
+  const { user, logout, isManager, isPlatformAdmin } = useAuth();
+  const company = useFetch(() => api.get<Company>("/company"), "current-company");
   const link = ({ isActive }: { isActive: boolean }) => (isActive ? "active" : undefined);
 
   return (
@@ -62,19 +66,28 @@ export default function Layout() {
               </NavLink>
             </>
           )}
-          {isAdmin && (
+          {isManager && (
             <>
-              <div className="section">الإدارة</div>
+              <div className="section">الشركة</div>
               <NavLink to="/users" className={link}>
-                المستخدمون
+                الموظفون
+              </NavLink>
+              <NavLink to="/company" className={link}>
+                الفروع والإعدادات
               </NavLink>
             </>
+          )}
+          {isPlatformAdmin && (
+            <NavLink to="/platform/companies" className={link}>
+              إدارة الشركات
+            </NavLink>
           )}
         </nav>
       </aside>
       <div className="main">
         <header className="topbar">
           <span className="who">
+            {company.data?.name ? `${company.data.name} · ` : ""}
             {user?.full_name || user?.username} · {user ? ROLE_LABEL[user.role] : ""}
           </span>
           <button className="btn btn-sm" onClick={logout}>

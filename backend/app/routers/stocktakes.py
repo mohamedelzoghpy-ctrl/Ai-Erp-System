@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session, joinedload
 from .. import exports, models, schemas
 from ..audit import audit
 from ..database import get_db
-from ..deps import get_current_user, require_manager
+from ..deps import get_current_user, require_manager, user_role
 from ..pagination import paginate
 
 router = APIRouter(prefix="/stocktakes", tags=["stock-take"])
@@ -45,6 +45,8 @@ def _get(db: Session, stocktake_id: int, lock: bool = False) -> models.Stocktake
 
 @router.post("", response_model=schemas.StocktakeOut, status_code=status.HTTP_201_CREATED)
 def create(payload: schemas.StocktakeCreate, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    if payload.warehouse_id is None and user_role(user) not in ("admin", "manager"):
+        raise HTTPException(403, "Only a company manager can create a company-wide stock-take")
     if payload.warehouse_id is not None and db.get(models.Warehouse, payload.warehouse_id) is None:
         raise HTTPException(422, f"Warehouse {payload.warehouse_id} does not exist")
     q = db.query(models.Product).filter(models.Product.is_active.is_(True))
@@ -132,7 +134,7 @@ def apply(stocktake_id: int, db: Session = Depends(get_db), user: models.User = 
 @router.post("/{stocktake_id}/cancel", response_model=schemas.StocktakeOut)
 def cancel(stocktake_id: int, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     s = _get(db, stocktake_id, lock=True)
-    if s.created_by != user.id and user.role not in ("admin", "manager"):
+    if s.created_by != user.id and user_role(user) not in ("admin", "manager"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Only the creator or a manager can cancel this stock-take")
     if s.status != "open":
         raise HTTPException(status.HTTP_409_CONFLICT, f"Stock-take is already {s.status}")

@@ -61,8 +61,37 @@ alembic revision --autogenerate -m "describe change"   # after editing app/model
 alembic upgrade head
 ```
 
-If your database was already created by `AUTO_CREATE_TABLES=true`, mark it as up to date instead of
-re-creating tables: `alembic stamp head`.
+For a database created by `AUTO_CREATE_TABLES=true` that already matches revision `0008`, run
+`alembic stamp 0008 && alembic upgrade head` to apply the company/branch migration. Only stamp a
+new database at `head` when its schema was created from the current models; stamping an older
+schema at `head` skips required migrations.
+
+## Company and branch schema foundation
+
+Migration `0009` adds company and branch records, then assigns every existing warehouse to the
+`default` company and its `main` branch without changing warehouse or inventory IDs. New warehouses
+created through the API are assigned to a branch in the active company. Migration `0010` adds a
+single-company membership per employee, branch and warehouse access assignments, and a separate
+platform-admin flag. Existing users are assigned to the `default` company with their current role;
+the oldest existing admin becomes the platform admin. Migration `0011` assigns business records to
+companies and makes warehouse names/codes and product SKUs unique within a company instead of
+globally.
+
+The platform admin can create companies at `POST /platform/companies`, including the first company
+admin and the optional per-branch warehouse limit. Each company starts with a main branch and can
+add unlimited branches through `POST /company/branches`. Company admins/managers manage employees
+through `/company/employees`; each staff member must be assigned at least one branch or warehouse.
+A branch grant includes all its warehouses, while an individual warehouse grant allows access only
+to that warehouse. Company admins/managers can see all company branches and warehouses.
+The legacy `POST /auth/users` endpoint also requires explicit `branch_ids` or `warehouse_ids` for
+staff accounts, and rejects access targets outside the active company.
+
+Business-data endpoints require authentication so the active company and resource grants are always
+loaded before a query runs. Business records and report queries are scoped to the authenticated
+user's company. Staff queries are additionally restricted to their assigned branches/warehouses. A
+company with no configured warehouse limit has no fixed per-branch cap. Apply migrations through
+`alembic upgrade head` before using this release; do not use `Base.metadata.create_all()` to update
+an existing database because it does not alter existing tables.
 
 ## Roles
 

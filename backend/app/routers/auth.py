@@ -21,7 +21,17 @@ from ..security import DUMMY_HASH, create_access_token, hash_password, verify_pa
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-def _make_user(db: Session, payload: schemas.UserCreate, role: str, actor: Optional[models.User] = None) -> models.User:
+def _make_user(
+    db: Session,
+    payload: schemas.SetupAdmin,
+    role: str,
+    actor: Optional[models.User] = None,
+    branch_ids: Optional[List[int]] = None,
+    warehouse_ids: Optional[List[int]] = None,
+) -> models.User:
+    company_id = db.info.get("company_id")
+    if company_id is None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "No company is configured for user creation")
     user = models.User(
         username=payload.username.strip().lower(),
         full_name=payload.full_name,
@@ -30,6 +40,33 @@ def _make_user(db: Session, payload: schemas.UserCreate, role: str, actor: Optio
     )
     db.add(user)
     try:
+        db.flush()
+        db.add(
+            models.UserCompanyMembership(
+                user_id=user.id,
+                company_id=company_id,
+                role=role,
+            )
+        )
+        if branch_ids is None:
+            branch_ids = [
+                branch_id
+                for (branch_id,) in db.query(models.Branch.id)
+                .filter(models.Branch.company_id == company_id)
+                .all()
+            ]
+        if warehouse_ids is None:
+            warehouse_ids = [
+                warehouse_id
+                for (warehouse_id,) in db.query(models.Warehouse.id)
+                .filter(models.Warehouse.company_id == company_id)
+                .all()
+            ]
+        db.add_all(models.UserBranchAccess(user_id=user.id, branch_id=branch_id) for branch_id in branch_ids)
+        db.add_all(
+            models.UserWarehouseAccess(user_id=user.id, warehouse_id=warehouse_id)
+            for warehouse_id in warehouse_ids
+        )
         audit(db, actor, "create", "user", user, f"{user.username} ({role})")
         db.commit()
     except IntegrityError:
@@ -44,7 +81,19 @@ def first_run_setup(payload: schemas.SetupAdmin, db: Session = Depends(get_db)):
     """Creates the first admin. Only works while there are no users at all."""
     if db.query(models.User).first() is not None:
         raise HTTPException(status.HTTP_409_CONFLICT, "Setup already completed")
-    return _make_user(db, payload, role="admin")
+    company = db.query(models.Company).filter(models.Company.code == "default").one_or_none()
+    if company is None:
+        company = models.Company(name="Default Company", code="default")
+        db.add(company)
+        db.flush()
+        db.add(models.Branch(company_id=company.id, name="Main Branch", code="main"))
+        db.flush()
+    db.info["company_id"] = company.id
+    user = _make_user(db, payload, role="admin")
+    user.is_platform_admin = True
+    db.commit()
+    db.refresh(user)
+    return user
 
 
 # --- brute-force protection: too many failed logins per (client IP, username) -> 429 for a while.
@@ -101,6 +150,19 @@ def login(request: Request, form: OAuth2PasswordRequestForm = Depends(), db: Ses
             "Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    membership = (
+        db.query(models.UserCompanyMembership)
+        .join(models.Company)
+        .filter(models.UserCompanyMembership.user_id == user.id)
+        .filter(models.Company.is_active.is_(True))
+        .one_or_none()
+    )
+    if membership is None:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "User is not assigned to a company; contact the platform administrator",
+        )
+    db.info["company_id"] = membership.company_id
     with _failures_lock:
         _failures.pop(key, None)
     audit(db, user, "login", "user", user.id, None)
@@ -117,12 +179,43 @@ def me(user: models.User = Depends(get_current_user)):
 def create_user(
     payload: schemas.UserCreate, db: Session = Depends(get_db), admin: models.User = Depends(require_admin)
 ):
-    return _make_user(db, payload, role=payload.role, actor=admin)
+    company_id = db.info["company_id"]
+    if payload.role == "staff" and not payload.branch_ids and not payload.warehouse_ids:
+        raise HTTPException(422, "Assign at least one branch or warehouse to a staff member")
+    branch_count = (
+        db.query(models.Branch.id)
+        .filter(models.Branch.company_id == company_id, models.Branch.id.in_(payload.branch_ids or [-1]))
+        .count()
+    )
+    warehouse_count = (
+        db.query(models.Warehouse.id)
+        .filter(
+            models.Warehouse.company_id == company_id,
+            models.Warehouse.id.in_(payload.warehouse_ids or [-1]),
+        )
+        .count()
+    )
+    if branch_count != len(set(payload.branch_ids)) or warehouse_count != len(set(payload.warehouse_ids)):
+        raise HTTPException(422, "One or more access targets do not belong to this company")
+    return _make_user(
+        db,
+        payload,
+        role=payload.role,
+        actor=admin,
+        branch_ids=payload.branch_ids,
+        warehouse_ids=payload.warehouse_ids,
+    )
 
 
 @router.get("/users", response_model=List[schemas.UserOut])
 def list_users(db: Session = Depends(get_db), _: models.User = Depends(require_admin)):
-    return db.query(models.User).order_by(models.User.id).all()
+    return (
+        db.query(models.User)
+        .join(models.UserCompanyMembership)
+        .filter(models.UserCompanyMembership.company_id == db.info["company_id"])
+        .order_by(models.User.id)
+        .all()
+    )
 
 
 @router.patch("/users/{user_id}", response_model=schemas.UserOut)
@@ -132,9 +225,19 @@ def update_user(
     db: Session = Depends(get_db),
     admin: models.User = Depends(require_admin),
 ):
+    membership = (
+        db.query(models.UserCompanyMembership)
+        .filter(
+            models.UserCompanyMembership.user_id == user_id,
+            models.UserCompanyMembership.company_id == db.info["company_id"],
+        )
+        .one_or_none()
+    )
     user = db.get(models.User, user_id)
-    if user is None:
+    if user is None or membership is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"User {user_id} not found")
+    if user.is_platform_admin and user.id != admin.id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "The platform administrator cannot be managed as a company employee")
     data = payload.model_dump(exclude_unset=True)
     # An admin must not lock themselves out by demoting or deactivating their own account.
     if user.id == admin.id and (data.get("role", "admin") != "admin" or data.get("is_active") is False):
@@ -142,6 +245,8 @@ def update_user(
     password_changed = "password" in data
     if "password" in data:
         user.hashed_password = hash_password(data.pop("password"))
+    if "role" in data:
+        membership.role = data["role"]
     changed = [k for k in data] + (['password'] if password_changed else [])
     for key, value in data.items():
         setattr(user, key, value)

@@ -20,7 +20,7 @@ class WarehouseBase(BaseModel):
 
 
 class WarehouseCreate(WarehouseBase):
-    pass
+    branch_id: Optional[int] = None
 
 
 class WarehouseUpdate(BaseModel):
@@ -32,6 +32,7 @@ class WarehouseUpdate(BaseModel):
 
 class WarehouseOut(WarehouseBase, ORMModel):
     id: int
+    branch_id: int
     created_at: datetime
 
 
@@ -224,6 +225,8 @@ class SetupAdmin(BaseModel):
 
 class UserCreate(SetupAdmin):
     role: Role = "staff"
+    branch_ids: List[int] = Field(default_factory=list)
+    warehouse_ids: List[int] = Field(default_factory=list)
 
 
 class UserUpdate(BaseModel):
@@ -239,7 +242,67 @@ class UserOut(ORMModel):
     full_name: Optional[str]
     role: str
     is_active: bool
+    is_platform_admin: bool = False
     created_at: datetime
+
+
+class CompanyCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=150)
+    code: str = Field(min_length=1, max_length=50)
+    max_warehouses_per_branch: Optional[int] = Field(default=None, gt=0)
+    admin_username: str = Field(min_length=3, max_length=60)
+    admin_password: str = Field(min_length=8, max_length=128)
+    admin_full_name: Optional[str] = None
+
+
+class CompanyUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=150)
+    max_warehouses_per_branch: Optional[int] = Field(default=None, gt=0)
+
+
+class CompanyOut(ORMModel):
+    id: int
+    name: str
+    code: str
+    max_warehouses_per_branch: Optional[int]
+    is_active: bool
+    created_at: datetime
+
+
+class BranchCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=150)
+    code: str = Field(min_length=1, max_length=50)
+    location: Optional[str] = None
+
+
+class BranchOut(ORMModel):
+    id: int
+    company_id: int
+    name: str
+    code: str
+    location: Optional[str]
+    is_active: bool
+    created_at: datetime
+
+
+class EmployeeCreate(SetupAdmin):
+    role: Role = "staff"
+    branch_ids: List[int] = Field(default_factory=list)
+    warehouse_ids: List[int] = Field(default_factory=list)
+
+
+class EmployeeUpdate(BaseModel):
+    full_name: Optional[str] = None
+    role: Optional[Role] = None
+    is_active: Optional[bool] = None
+    password: Optional[str] = Field(default=None, min_length=8, max_length=128)
+    branch_ids: Optional[List[int]] = None
+    warehouse_ids: Optional[List[int]] = None
+
+
+class EmployeeOut(UserOut):
+    branch_ids: List[int]
+    warehouse_ids: List[int]
 
 
 class Token(BaseModel):
