@@ -11,6 +11,7 @@ interface AuthState {
   /** manager or admin */
   isManager: boolean;
   isAdmin: boolean;
+  isPlatformAdmin: boolean;
 }
 
 const AuthContext = createContext<AuthState | null>(null);
@@ -68,6 +69,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       logout,
       isManager: role === "admin" || role === "manager",
       isAdmin: role === "admin",
+      isPlatformAdmin: user?.is_platform_admin ?? false,
     };
   }, [user, loading, login, setupAdmin, logout]);
 

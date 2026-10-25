@@ -2,7 +2,7 @@ import { useState, type FormEvent } from "react";
 import { api } from "../api";
 import { useAuth } from "../auth";
 import { useAction, useFetch, usePagedList } from "../hooks";
-import type { Party, Warehouse } from "../types";
+import type { Branch, Party, Warehouse } from "../types";
 import { balanceNote, money } from "../format";
 import { Alert, Empty, Field, Loading, Modal, PageHeader, Pager } from "../ui";
 import { PaymentDialog, StatementDialog } from "./Accounts";
@@ -27,6 +27,7 @@ function ActiveBadge({ active }: { active: boolean }) {
 export function Warehouses() {
   const { isManager } = useAuth();
   const { list, action } = useCrud<Warehouse>("/warehouses");
+  const branches = useFetch(() => api.get<Branch[]>("/company/branches"), "warehouse-branches");
   const [editing, setEditing] = useState<Warehouse | "new" | null>(null);
 
   const remove = (w: Warehouse) => {
@@ -40,9 +41,11 @@ export function Warehouses() {
   return (
     <>
       <PageHeader title="المخازن">
-        <button className="btn btn-primary" onClick={() => setEditing("new")}>
-          + مخزن جديد
-        </button>
+        {isManager && (
+          <button className="btn btn-primary" onClick={() => setEditing("new")}>
+            + مخزن جديد
+          </button>
+        )}
       </PageHeader>
       <Alert>{list.error || action.error}</Alert>
       <div className="card table-wrap">
@@ -54,6 +57,7 @@ export function Warehouses() {
               <tr>
                 <th>الاسم</th>
                 <th>الكود</th>
+                <th>الفرع</th>
                 <th>الموقع</th>
                 <th>الحالة</th>
                 <th />
@@ -64,6 +68,7 @@ export function Warehouses() {
                 <tr key={w.id}>
                   <td>{w.name}</td>
                   <td>{w.code}</td>
+                  <td>{branches.data?.find((branch) => branch.id === w.branch_id)?.name || "—"}</td>
                   <td>{w.location || "—"}</td>
                   <td>
                     <ActiveBadge active={w.is_active} />
@@ -89,6 +94,7 @@ export function Warehouses() {
       {editing && (
         <WarehouseForm
           initial={editing === "new" ? null : editing}
+          branches={branches.data ?? []}
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null);
@@ -100,16 +106,17 @@ export function Warehouses() {
   );
 }
 
-function WarehouseForm({ initial, onClose, onSaved }: { initial: Warehouse | null; onClose: () => void; onSaved: () => void }) {
+function WarehouseForm({ initial, branches, onClose, onSaved }: { initial: Warehouse | null; branches: Branch[]; onClose: () => void; onSaved: () => void }) {
   const [name, setName] = useState(initial?.name ?? "");
   const [code, setCode] = useState(initial?.code ?? "");
   const [location, setLocation] = useState(initial?.location ?? "");
+  const [branchId, setBranchId] = useState(initial?.branch_id ?? branches[0]?.id ?? 0);
   const [active, setActive] = useState(initial?.is_active ?? true);
   const { busy, error, run } = useAction();
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    const body = { name: name.trim(), code: code.trim(), location: location.trim() || null, is_active: active };
+    const body = { name: name.trim(), code: code.trim(), location: location.trim() || null, is_active: active, branch_id: branchId || null };
     void run(async () => {
       if (initial) await api.patch(`/warehouses/${initial.id}`, body);
       else await api.post("/warehouses", body);
@@ -129,6 +136,13 @@ function WarehouseForm({ initial, onClose, onSaved }: { initial: Warehouse | nul
             <input value={code} onChange={(e) => setCode(e.target.value)} required />
           </Field>
         </div>
+        {!initial && (
+          <Field label="الفرع">
+            <select value={branchId} onChange={(e) => setBranchId(Number(e.target.value))} required>
+              {branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}
+            </select>
+          </Field>
+        )}
         <Field label="الموقع">
           <input value={location} onChange={(e) => setLocation(e.target.value)} />
         </Field>

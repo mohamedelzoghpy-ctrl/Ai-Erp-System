@@ -8,6 +8,28 @@ export interface User {
   full_name: string | null;
   role: Role;
   is_active: boolean;
+  is_platform_admin: boolean;
+  created_at: string;
+  branch_ids?: number[];
+  warehouse_ids?: number[];
+}
+
+export interface Company {
+  id: number;
+  name: string;
+  code: string;
+  max_warehouses_per_branch: number | null;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface Branch {
+  id: number;
+  company_id: number;
+  name: string;
+  code: string;
+  location: string | null;
+  is_active: boolean;
   created_at: string;
 }
 
@@ -17,6 +39,7 @@ export interface Warehouse {
   code: string;
   location: string | null;
   is_active: boolean;
+  branch_id: number;
 }
 
 export interface Party {

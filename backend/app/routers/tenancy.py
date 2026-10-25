@@ -1,0 +1,372 @@
+"""Platform company provisioning and company-scoped organization management."""
+
+from typing import List
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
+from .. import models, schemas
+from ..audit import audit
+from ..database import get_db
+from ..deps import get_current_user, require_manager, require_platform_admin, user_role
+from ..security import hash_password
+
+platform = APIRouter(prefix="/platform", tags=["platform administration"])
+company = APIRouter(prefix="/company", tags=["company administration"])
+
+
+def _membership(db: Session, user: models.User) -> models.UserCompanyMembership:
+    membership = (
+        db.query(models.UserCompanyMembership)
+        .filter(
+            models.UserCompanyMembership.user_id == user.id,
+            models.UserCompanyMembership.company_id == db.info["company_id"],
+        )
+        .one_or_none()
+    )
+    if membership is None:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "User is not assigned to this company")
+    return membership
+
+
+def _check_access_targets(
+    db: Session,
+    company_id: int,
+    branch_ids: List[int],
+    warehouse_ids: List[int],
+) -> None:
+    branches = (
+        db.query(models.Branch.id)
+        .filter(models.Branch.company_id == company_id, models.Branch.id.in_(branch_ids or [-1]))
+        .all()
+    )
+    warehouses = (
+        db.query(models.Warehouse.id)
+        .filter(
+            models.Warehouse.company_id == company_id,
+            models.Warehouse.id.in_(warehouse_ids or [-1]),
+        )
+        .all()
+    )
+    if len(branches) != len(set(branch_ids)):
+        raise HTTPException(422, "One or more branches do not belong to this company")
+    if len(warehouses) != len(set(warehouse_ids)):
+        raise HTTPException(422, "One or more warehouses do not belong to this company")
+
+
+def _employee_out(db: Session, user: models.User) -> schemas.EmployeeOut:
+    membership = _membership(db, user)
+    branches = [
+        branch_id
+        for (branch_id,) in db.query(models.UserBranchAccess.branch_id)
+        .filter(models.UserBranchAccess.user_id == user.id)
+        .all()
+    ]
+    warehouses = [
+        warehouse_id
+        for (warehouse_id,) in db.query(models.UserWarehouseAccess.warehouse_id)
+        .filter(models.UserWarehouseAccess.user_id == user.id)
+        .all()
+    ]
+    return schemas.EmployeeOut(
+        id=user.id,
+        username=user.username,
+        full_name=user.full_name,
+        role=membership.role,
+        is_active=user.is_active,
+        created_at=user.created_at,
+        branch_ids=branches,
+        warehouse_ids=warehouses,
+    )
+
+
+def _replace_access(
+    db: Session,
+    user: models.User,
+    company_id: int,
+    branch_ids: List[int],
+    warehouse_ids: List[int],
+) -> None:
+    _check_access_targets(db, company_id, branch_ids, warehouse_ids)
+    db.query(models.UserBranchAccess).filter(models.UserBranchAccess.user_id == user.id).delete()
+    db.query(models.UserWarehouseAccess).filter(models.UserWarehouseAccess.user_id == user.id).delete()
+    db.add_all(
+        [models.UserBranchAccess(user_id=user.id, branch_id=branch_id) for branch_id in set(branch_ids)]
+        + [
+            models.UserWarehouseAccess(user_id=user.id, warehouse_id=warehouse_id)
+            for warehouse_id in set(warehouse_ids)
+        ]
+    )
+
+
+@platform.get("/companies", response_model=List[schemas.CompanyOut])
+def list_companies(
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_platform_admin),
+):
+    return db.query(models.Company).order_by(models.Company.id).all()
+
+
+@platform.post("/companies", response_model=schemas.CompanyOut, status_code=status.HTTP_201_CREATED)
+def create_company(
+    payload: schemas.CompanyCreate,
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(require_platform_admin),
+):
+    company_obj = models.Company(
+        name=payload.name.strip(),
+        code=payload.code.strip().lower(),
+        max_warehouses_per_branch=payload.max_warehouses_per_branch,
+    )
+    user = models.User(
+        username=payload.admin_username.strip().lower(),
+        full_name=payload.admin_full_name,
+        hashed_password=hash_password(payload.admin_password),
+        role="admin",
+    )
+    db.add_all([company_obj, user])
+    try:
+        db.info["allow_company_provisioning"] = True
+        db.flush()
+        branch = models.Branch(company_id=company_obj.id, name="Main Branch", code="main")
+        db.add(branch)
+        db.flush()
+        db.add(
+            models.UserCompanyMembership(
+                user_id=user.id,
+                company_id=company_obj.id,
+                role="admin",
+            )
+        )
+        db.add(models.UserBranchAccess(user_id=user.id, branch_id=branch.id))
+        audit(db, actor, "create", "company", company_obj, f"{company_obj.code} · admin {user.username}")
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, "Company code or username already exists") from exc
+    finally:
+        db.info.pop("allow_company_provisioning", None)
+    db.refresh(company_obj)
+    return company_obj
+
+
+@company.get("", response_model=schemas.CompanyOut)
+def get_company(db: Session = Depends(get_db), _: models.User = Depends(get_current_user)):
+    result = db.get(models.Company, db.info["company_id"])
+    if result is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Company not found")
+    return result
+
+
+@company.patch("", response_model=schemas.CompanyOut)
+def update_company(
+    payload: schemas.CompanyUpdate,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(require_manager),
+):
+    if user_role(user) != "admin":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only a company admin can update company settings")
+    result = db.get(models.Company, db.info["company_id"])
+    if result is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Company not found")
+    for key, value in payload.model_dump(exclude_unset=True).items():
+        setattr(result, key, value)
+    audit(db, user, "update", "company", result, "company settings")
+    db.commit()
+    db.refresh(result)
+    return result
+
+
+@company.get("/branches", response_model=List[schemas.BranchOut])
+def list_branches(db: Session = Depends(get_db), _: models.User = Depends(get_current_user)):
+    return db.query(models.Branch).order_by(models.Branch.id).all()
+
+
+@company.post("/branches", response_model=schemas.BranchOut, status_code=status.HTTP_201_CREATED)
+def create_branch(
+    payload: schemas.BranchCreate,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(require_manager),
+):
+    branch = models.Branch(
+        company_id=db.info["company_id"],
+        name=payload.name.strip(),
+        code=payload.code.strip().lower(),
+        location=payload.location,
+    )
+    db.add(branch)
+    audit(db, user, "create", "branch", branch, f"{branch.code} · {branch.name}")
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, "Branch code already exists in this company") from exc
+    db.refresh(branch)
+    return branch
+
+
+@company.get("/employees", response_model=List[schemas.EmployeeOut])
+def list_employees(
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_manager),
+):
+    company_id = db.info["company_id"]
+    users = (
+        db.query(models.User)
+        .join(models.UserCompanyMembership)
+        .filter(models.UserCompanyMembership.company_id == company_id)
+        .order_by(models.User.id)
+        .all()
+    )
+    return [_employee_out(db, employee) for employee in users]
+
+
+@company.post("/employees", response_model=schemas.EmployeeOut, status_code=status.HTTP_201_CREATED)
+def create_employee(
+    payload: schemas.EmployeeCreate,
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(require_manager),
+):
+    role = user_role(actor)
+    if payload.role != "staff" and role != "admin":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only a company admin can assign manager or admin roles")
+    if payload.role == "staff" and not payload.branch_ids and not payload.warehouse_ids:
+        raise HTTPException(422, "Assign at least one branch or warehouse to a staff member")
+    company_id = db.info["company_id"]
+    _check_access_targets(db, company_id, payload.branch_ids, payload.warehouse_ids)
+    employee = models.User(
+        username=payload.username.strip().lower(),
+        full_name=payload.full_name,
+        hashed_password=hash_password(payload.password),
+        role=payload.role,
+    )
+    db.add(employee)
+    try:
+        db.flush()
+        db.add(
+            models.UserCompanyMembership(
+                user_id=employee.id,
+                company_id=company_id,
+                role=payload.role,
+            )
+        )
+        _replace_access(db, employee, company_id, payload.branch_ids, payload.warehouse_ids)
+        audit(db, actor, "create", "user", employee, f"{employee.username} ({payload.role})")
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, "Username already exists") from exc
+    db.refresh(employee)
+    return _employee_out(db, employee)
+
+
+@company.patch("/employees/{user_id}", response_model=schemas.EmployeeOut)
+def update_employee(
+    user_id: int,
+    payload: schemas.EmployeeUpdate,
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(require_manager),
+):
+    company_id = db.info["company_id"]
+    membership = (
+        db.query(models.UserCompanyMembership)
+        .filter(
+            models.UserCompanyMembership.user_id == user_id,
+            models.UserCompanyMembership.company_id == company_id,
+        )
+        .one_or_none()
+    )
+    employee = db.get(models.User, user_id)
+    if membership is None or employee is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Employee {user_id} not found")
+    if employee.is_platform_admin and employee.id != actor.id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "The platform administrator cannot be managed as a company employee")
+    data = payload.model_dump(exclude_unset=True)
+    role = user_role(actor)
+    if role != "admin" and membership.role != "staff":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only a company admin can manage managers and admins")
+    if data.get("role") not in (None, "staff") and role != "admin":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only a company admin can assign manager or admin roles")
+    if data.get("role") is not None:
+        if employee.id == actor.id and data["role"] != "admin":
+            raise HTTPException(status.HTTP_409_CONFLICT, "You cannot demote your own account")
+        if membership.role == "admin" and data["role"] != "admin" and employee.is_active:
+            remaining_admins = (
+                db.query(models.UserCompanyMembership)
+                .join(models.User)
+                .filter(
+                    models.UserCompanyMembership.company_id == company_id,
+                    models.UserCompanyMembership.role == "admin",
+                    models.UserCompanyMembership.user_id != employee.id,
+                    models.User.is_active.is_(True),
+                )
+                .count()
+            )
+            if remaining_admins == 0:
+                raise HTTPException(status.HTTP_409_CONFLICT, "The company must have an active admin")
+        membership.role = data["role"]
+        employee.role = data["role"]
+    if data.get("role") == "staff":
+        branch_ids = data.get("branch_ids")
+        warehouse_ids = data.get("warehouse_ids")
+        if branch_ids is None:
+            branch_ids = [
+                branch_id
+                for (branch_id,) in db.query(models.UserBranchAccess.branch_id)
+                .filter(models.UserBranchAccess.user_id == employee.id)
+                .all()
+            ]
+        if warehouse_ids is None:
+            warehouse_ids = [
+                warehouse_id
+                for (warehouse_id,) in db.query(models.UserWarehouseAccess.warehouse_id)
+                .filter(models.UserWarehouseAccess.user_id == employee.id)
+                .all()
+            ]
+        if not branch_ids and not warehouse_ids:
+            raise HTTPException(422, "Assign at least one branch or warehouse to a staff member")
+    if "password" in data and data["password"]:
+        employee.hashed_password = hash_password(data["password"])
+    if "full_name" in data:
+        employee.full_name = data["full_name"]
+    if "is_active" in data:
+        if employee.id == actor.id and data["is_active"] is False:
+            raise HTTPException(status.HTTP_409_CONFLICT, "You cannot deactivate your own account")
+        if membership.role == "admin" and data["is_active"] is False:
+            remaining_admins = (
+                db.query(models.UserCompanyMembership)
+                .join(models.User)
+                .filter(
+                    models.UserCompanyMembership.company_id == company_id,
+                    models.UserCompanyMembership.role == "admin",
+                    models.UserCompanyMembership.user_id != employee.id,
+                    models.User.is_active.is_(True),
+                )
+                .count()
+            )
+            if remaining_admins == 0:
+                raise HTTPException(status.HTTP_409_CONFLICT, "The company must have an active admin")
+        employee.is_active = data["is_active"]
+    if "branch_ids" in data or "warehouse_ids" in data:
+        branch_ids = data.get("branch_ids")
+        warehouse_ids = data.get("warehouse_ids")
+        if branch_ids is None:
+            branch_ids = [
+                branch_id
+                for (branch_id,) in db.query(models.UserBranchAccess.branch_id)
+                .filter(models.UserBranchAccess.user_id == employee.id)
+                .all()
+            ]
+        if warehouse_ids is None:
+            warehouse_ids = [
+                warehouse_id
+                for (warehouse_id,) in db.query(models.UserWarehouseAccess.warehouse_id)
+                .filter(models.UserWarehouseAccess.user_id == employee.id)
+                .all()
+            ]
+        _replace_access(db, employee, company_id, branch_ids, warehouse_ids)
+    audit(db, actor, "update", "user", employee, employee.username)
+    db.commit()
+    db.refresh(employee)
+    return _employee_out(db, employee)

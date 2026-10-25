@@ -21,6 +21,12 @@ from sqlalchemy.orm import relationship
 from .database import Base
 
 
+class TenantOwned:
+    company_id = Column(
+        Integer, ForeignKey("companies.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+
+
 class Company(Base):
     __tablename__ = "companies"
     __table_args__ = (
@@ -41,14 +47,14 @@ class Company(Base):
     )
 
     branches = relationship("Branch", back_populates="company")
+    memberships = relationship("UserCompanyMembership", back_populates="company")
 
 
-class Branch(Base):
+class Branch(TenantOwned, Base):
     __tablename__ = "branches"
     __table_args__ = (UniqueConstraint("company_id", "code", name="uq_branch_company_code"),)
 
     id = Column(Integer, primary_key=True, index=True)
-    company_id = Column(Integer, ForeignKey("companies.id", ondelete="RESTRICT"), nullable=False, index=True)
     name = Column(String(150), nullable=False)
     code = Column(String(50), nullable=False)
     location = Column(String(255), nullable=True)
@@ -62,12 +68,16 @@ class Branch(Base):
     warehouses = relationship("Warehouse", back_populates="branch")
 
 
-class Warehouse(Base):
+class Warehouse(TenantOwned, Base):
     __tablename__ = "warehouses"
+    __table_args__ = (
+        UniqueConstraint("company_id", "name", name="uq_warehouse_company_name"),
+        UniqueConstraint("company_id", "code", name="uq_warehouse_company_code"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(150), nullable=False, unique=True, index=True)
-    code = Column(String(50), nullable=False, unique=True, index=True)
+    name = Column(String(150), nullable=False, index=True)
+    code = Column(String(50), nullable=False, index=True)
     branch_id = Column(Integer, ForeignKey("branches.id", ondelete="RESTRICT"), nullable=False, index=True)
     location = Column(String(255), nullable=True)
     is_active = Column(Boolean, nullable=False, default=True, server_default="true")
@@ -80,7 +90,7 @@ class Warehouse(Base):
     branch = relationship("Branch", back_populates="warehouses")
 
 
-class Supplier(Base):
+class Supplier(TenantOwned, Base):
     __tablename__ = "suppliers"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -100,11 +110,12 @@ class Supplier(Base):
     products = relationship("Product", back_populates="supplier")
 
 
-class Product(Base):
+class Product(TenantOwned, Base):
     __tablename__ = "products"
+    __table_args__ = (UniqueConstraint("company_id", "sku", name="uq_product_company_sku"),)
 
     id = Column(Integer, primary_key=True, index=True)
-    sku = Column(String(60), nullable=False, unique=True, index=True)
+    sku = Column(String(60), nullable=False, index=True)
     name = Column(String(200), nullable=False, index=True)
     description = Column(Text, nullable=True)
     unit = Column(String(30), nullable=False, default="piece", server_default="piece")
@@ -124,7 +135,7 @@ class Product(Base):
     supplier = relationship("Supplier", back_populates="products")
 
 
-class Customer(Base):
+class Customer(TenantOwned, Base):
     __tablename__ = "customers"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -144,7 +155,7 @@ class Customer(Base):
     sales_orders = relationship("SalesOrder", back_populates="customer")
 
 
-class PurchaseOrder(Base):
+class PurchaseOrder(TenantOwned, Base):
     """Order placed with a supplier. Stock increases when status becomes 'received'."""
 
     __tablename__ = "purchase_orders"
@@ -169,7 +180,7 @@ class PurchaseOrder(Base):
     items = relationship("PurchaseOrderItem", back_populates="order", cascade="all, delete-orphan")
 
 
-class PurchaseOrderItem(Base):
+class PurchaseOrderItem(TenantOwned, Base):
     __tablename__ = "purchase_order_items"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -191,7 +202,7 @@ class PurchaseOrderItem(Base):
         return self.product.name if self.product else None
 
 
-class SalesOrder(Base):
+class SalesOrder(TenantOwned, Base):
     """Order sold to a customer. Stock decreases when status becomes 'confirmed'."""
 
     __tablename__ = "sales_orders"
@@ -222,7 +233,7 @@ class SalesOrder(Base):
     items = relationship("SalesOrderItem", back_populates="order", cascade="all, delete-orphan")
 
 
-class SalesOrderItem(Base):
+class SalesOrderItem(TenantOwned, Base):
     __tablename__ = "sales_order_items"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -244,7 +255,7 @@ class SalesOrderItem(Base):
         return self.product.name if self.product else None
 
 
-class StockMovement(Base):
+class StockMovement(TenantOwned, Base):
     """Audit trail of every quantity change on a product."""
 
     __tablename__ = "stock_movements"
@@ -269,10 +280,56 @@ class User(Base):
     hashed_password = Column(String(255), nullable=False)
     role = Column(String(20), nullable=False, default="staff", server_default="staff")  # admin | manager | staff
     is_active = Column(Boolean, nullable=False, default=True, server_default="true")
+    is_platform_admin = Column(Boolean, nullable=False, default=False, server_default="false")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
+    memberships = relationship("UserCompanyMembership", back_populates="user", cascade="all, delete-orphan")
+    branch_access = relationship("UserBranchAccess", back_populates="user", cascade="all, delete-orphan")
+    warehouse_access = relationship("UserWarehouseAccess", back_populates="user", cascade="all, delete-orphan")
 
-class Payment(Base):
+
+class UserCompanyMembership(Base):
+    __tablename__ = "user_company_memberships"
+    __table_args__ = (
+        UniqueConstraint("user_id", name="uq_user_company_membership"),
+        CheckConstraint("role IN ('admin', 'manager', 'staff')", name="ck_membership_role"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    company_id = Column(Integer, ForeignKey("companies.id", ondelete="RESTRICT"), nullable=False, index=True)
+    role = Column(String(20), nullable=False, default="staff", server_default="staff")
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    user = relationship("User", back_populates="memberships")
+    company = relationship("Company", back_populates="memberships")
+
+
+class UserBranchAccess(Base):
+    __tablename__ = "user_branch_access"
+    __table_args__ = (UniqueConstraint("user_id", "branch_id", name="uq_user_branch_access"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    branch_id = Column(Integer, ForeignKey("branches.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    user = relationship("User", back_populates="branch_access")
+    branch = relationship("Branch")
+
+
+class UserWarehouseAccess(Base):
+    __tablename__ = "user_warehouse_access"
+    __table_args__ = (UniqueConstraint("user_id", "warehouse_id", name="uq_user_warehouse_access"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    warehouse_id = Column(Integer, ForeignKey("warehouses.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    user = relationship("User", back_populates="warehouse_access")
+    warehouse = relationship("Warehouse")
+
+
+class Payment(TenantOwned, Base):
     """Money received from a customer (receipt) or paid to a supplier (payment).
 
     Exactly one of customer_id / supplier_id is set. Payments are never edited or deleted:
@@ -307,7 +364,7 @@ class Payment(Base):
         return "receipt" if self.customer_id is not None else "payment"
 
 
-class AuditLog(Base):
+class AuditLog(TenantOwned, Base):
     """Who did what and when. Rows are only ever inserted, in the same transaction as the change they describe."""
 
     __tablename__ = "audit_logs"
@@ -322,7 +379,7 @@ class AuditLog(Base):
     summary = Column(Text, nullable=True)
 
 
-class SalesReturn(Base):
+class SalesReturn(TenantOwned, Base):
     """Goods a customer sends back: stock goes up, the customer's balance goes down by (total - refund)."""
 
     __tablename__ = "sales_returns"
@@ -354,7 +411,7 @@ class SalesReturn(Base):
         return self.customer.name if self.customer else None
 
 
-class SalesReturnItem(Base):
+class SalesReturnItem(TenantOwned, Base):
     __tablename__ = "sales_return_items"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -373,7 +430,7 @@ class SalesReturnItem(Base):
         return self.product.name if self.product else None
 
 
-class PurchaseReturn(Base):
+class PurchaseReturn(TenantOwned, Base):
     """Goods sent back to a supplier: stock goes down, what we owe the supplier goes down by (total - refund)."""
 
     __tablename__ = "purchase_returns"
@@ -405,7 +462,7 @@ class PurchaseReturn(Base):
         return self.supplier.name if self.supplier else None
 
 
-class PurchaseReturnItem(Base):
+class PurchaseReturnItem(TenantOwned, Base):
     __tablename__ = "purchase_return_items"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -424,7 +481,7 @@ class PurchaseReturnItem(Base):
         return self.product.name if self.product else None
 
 
-class Shift(Base):
+class Shift(TenantOwned, Base):
     """A cashier's drawer session. Expected cash is derived from the cash movements the user recorded while it was open."""
 
     __tablename__ = "shifts"
@@ -453,7 +510,7 @@ class Shift(Base):
     notes = Column(Text, nullable=True)
 
 
-class Stocktake(Base):
+class Stocktake(TenantOwned, Base):
     """A physical count of stock. Lines snapshot the system quantity; applying turns count differences into adjustments."""
 
     __tablename__ = "stocktakes"
@@ -472,7 +529,7 @@ class Stocktake(Base):
     lines = relationship("StocktakeLine", back_populates="stocktake", cascade="all, delete-orphan", order_by="StocktakeLine.id")
 
 
-class StocktakeLine(Base):
+class StocktakeLine(TenantOwned, Base):
     __tablename__ = "stocktake_lines"
     __table_args__ = (
         UniqueConstraint("stocktake_id", "product_id", name="uq_stocktake_line_product"),

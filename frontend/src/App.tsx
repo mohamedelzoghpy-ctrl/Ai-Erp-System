@@ -14,10 +14,11 @@ import Pos from "./pages/Pos";
 import Returns from "./pages/Returns";
 import Reports from "./pages/Reports";
 import Users from "./pages/Users";
+import CompanyAdmin from "./pages/CompanyAdmin";
 import { Loading } from "./ui";
 
 export default function App() {
-  const { user, loading, isAdmin, isManager } = useAuth();
+  const { user, loading, isPlatformAdmin, isManager } = useAuth();
 
   if (loading) return <Loading />;
   if (!user) return <Login />;
@@ -39,7 +40,9 @@ export default function App() {
         <Route path="payments" element={<Payments />} />
         {isManager && <Route path="reports" element={<Reports />} />}
         {isManager && <Route path="audit" element={<AuditLog />} />}
-        {isAdmin && <Route path="users" element={<Users />} />}
+        {isManager && <Route path="users" element={<Users />} />}
+        {isManager && <Route path="company" element={<CompanyAdmin />} />}
+        {isPlatformAdmin && <Route path="platform/companies" element={<CompanyAdmin platform />} />}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

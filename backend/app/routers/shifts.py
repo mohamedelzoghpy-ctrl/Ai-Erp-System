@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from .. import exports, models, schemas
 from ..audit import audit
 from ..database import get_db
-from ..deps import get_current_user
+from ..deps import get_current_user, user_role
 from ..pagination import paginate
 
 router = APIRouter(prefix="/shifts", tags=["shifts"])
@@ -113,7 +113,7 @@ def close_shift(shift_id: int, payload: schemas.ShiftClose, db: Session = Depend
     s = db.query(models.Shift).filter(models.Shift.id == shift_id).with_for_update().one_or_none()
     if s is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Shift {shift_id} not found")
-    if s.user_id != user.id and user.role not in ("admin", "manager"):
+    if s.user_id != user.id and user_role(user) not in ("admin", "manager"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Only the cashier or a manager can close this shift")
     if s.status != "open":
         raise HTTPException(status.HTTP_409_CONFLICT, "Shift is already closed")
@@ -142,7 +142,7 @@ def list_shifts(
     user: models.User = Depends(get_current_user),
 ):
     q = db.query(models.Shift)
-    if user.role not in ("admin", "manager"):
+    if user_role(user) not in ("admin", "manager"):
         q = q.filter(models.Shift.user_id == user.id)  # a cashier sees only their own shifts
     if status_filter:
         q = q.filter(models.Shift.status == status_filter)
@@ -153,7 +153,7 @@ def list_shifts(
 def shift_pdf(shift_id: int, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     s = db.query(models.Shift).filter(models.Shift.id == shift_id).one_or_none()
     # Someone else's shift is reported as missing for cashiers, like the list endpoint hides it.
-    if s is None or (s.user_id != user.id and user.role not in ("admin", "manager")):
+    if s is None or (s.user_id != user.id and user_role(user) not in ("admin", "manager")):
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Shift {shift_id} not found")
     data = _out(db, s).model_dump()
     return Response(

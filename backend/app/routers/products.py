@@ -13,7 +13,7 @@ from .. import models, schemas
 from ..database import get_db
 from ..deps import require_manager
 
-router = APIRouter(prefix="/products", tags=["products & inventory"])
+router = APIRouter(prefix="/products", tags=["products & inventory"], dependencies=[Depends(get_current_user)])
 
 
 def _product_or_404(db: Session, product_id: int) -> models.Product:

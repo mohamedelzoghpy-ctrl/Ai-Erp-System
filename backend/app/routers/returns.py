@@ -17,8 +17,10 @@ from ..deps import get_current_user
 from ..pagination import paginate
 from .orders import _locked_product
 
-sales_returns = APIRouter(prefix="/sales-returns", tags=["returns"])
-purchase_returns = APIRouter(prefix="/purchase-returns", tags=["returns"])
+sales_returns = APIRouter(prefix="/sales-returns", tags=["returns"], dependencies=[Depends(get_current_user)])
+purchase_returns = APIRouter(
+    prefix="/purchase-returns", tags=["returns"], dependencies=[Depends(get_current_user)]
+)
 
 # kind -> the models and field names that differ between the two directions
 CFG = {
