@@ -44,6 +44,7 @@ The backend container applies Alembic migrations on start, then serves on http:/
 | `CURRENCY_LABEL` | `ج.م` | Currency shown next to totals |
 | `EXPORT_TIMEZONE` | `Africa/Cairo` | Timezone of dates printed in exports |
 | `ENABLE_DOCS` | `true` | Serve `/docs` and `/openapi.json`; set `false` in production |
+| `SHIFT_STALE_HOURS` | `16` | Open shifts older than this are flagged as forgotten |
 | `POS_REQUIRE_SHIFT` | `false` | When `true`, POS checkout needs an open cashier shift |
 | `LOGIN_MAX_FAILURES`, `LOGIN_WINDOW_SECONDS` | `10`, `900` | Failed logins per client IP + username before HTTP 429 (`0` disables). In-memory, per worker process |
 | `FORWARDED_ALLOW_IPS` | `127.0.0.1` | Proxy addresses trusted for `X-Forwarded-For` (so the limiter sees real client IPs) |
@@ -147,6 +148,8 @@ Expected cash = opening cash + cash receipts from customers + cash refunds from 
 counted from what **that user** recorded between opening and closing (POS cash sales are receipts, so they are included). Bank/other methods are
 shown separately and do not enter the drawer. Closing freezes the totals and stores the difference (counted - expected). A shift can be closed
 by its cashier or a manager/admin; each open/close is audit-logged. `GET /shifts/{id}/pdf` downloads the closing report (cashier: own shifts only).
+
+A shift still open after `SHIFT_STALE_HOURS` (default 16) is flagged `is_stale`; the dashboard shows the count (`stale_shifts`) to managers, who can close it from the shifts screen ("إغلاق إداري") using the same close endpoint.
 
 Set `POS_REQUIRE_SHIFT=true` to make `/pos/checkout` return 409 until the cashier has opened a shift (default: off).
 

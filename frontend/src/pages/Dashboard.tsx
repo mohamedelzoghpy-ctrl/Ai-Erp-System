@@ -2,6 +2,7 @@ import { useState } from "react";
 import { api } from "../api";
 import { useAuth } from "../auth";
 import { dayLabel, money, num } from "../format";
+import { Link } from "react-router-dom";
 import { useFetch } from "../hooks";
 import type { Dashboard as DashboardData, InventoryValuationRow, LowStockItem, SalesSummary } from "../types";
 import { Alert, Empty, Loading, PageHeader } from "../ui";
@@ -46,6 +47,11 @@ export default function Dashboard() {
       </PageHeader>
 
       <Alert>{dash.error || sales.error || valuation.error || low.error}</Alert>
+      {isManager && d && (d.stale_shifts ?? 0) > 0 && (
+        <Alert kind="info">
+          يوجد {num(d.stale_shifts)} وردية مفتوحة منذ وقت طويل. <Link to="/shifts">راجع الورديات وأغلقها</Link>
+        </Alert>
+      )}
 
       {isManager &&
         (dash.loading && !d ? (

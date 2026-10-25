@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { api } from "../api";
+import { useAuth } from "../auth";
 import { dateTime, money } from "../format";
 import { useAction, useFetch, usePagedList } from "../hooks";
 import type { Shift } from "../types";
@@ -102,8 +103,41 @@ export function ShiftBar({ onChange }: { onChange?: (open: boolean) => void }) {
   );
 }
 
+function AdminCloseDialog({ shift, onClose, onDone }: { shift: Shift; onClose: () => void; onDone: () => void }) {
+  const [cash, setCash] = useState("");
+  const [notes, setNotes] = useState("إغلاق إداري لوردية منسية");
+  const act = useAction();
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    void act.run(async () => {
+      await api.post(`/shifts/${shift.id}/close`, { counted_cash: cash, notes: notes || null });
+      onDone();
+    });
+  };
+  return (
+    <Modal title={`إغلاق إداري — وردية ${shift.username}`} onClose={onClose}>
+      <form onSubmit={submit}>
+        <Alert>{act.error}</Alert>
+        <Summary s={shift} />
+        <Field label="النقدية المعدودة فعلياً" hint="إن لم تُعدّ النقدية بعد، اكتب المتوقع وسجّل ذلك في الملاحظات.">
+          <input type="number" min="0" step="0.01" required autoFocus value={cash} onChange={(e) => setCash(e.target.value)} aria-label="النقدية المعدودة" />
+        </Field>
+        <Field label="ملاحظات">
+          <input value={notes} onChange={(e) => setNotes(e.target.value)} />
+        </Field>
+        <div className="actions">
+          <button className="btn btn-primary" disabled={act.busy}>إغلاق الوردية</button>
+          <button type="button" className="btn" onClick={onClose}>إلغاء</button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 export default function Shifts() {
+  const { isManager } = useAuth();
   const list = usePagedList<Shift>("/shifts", {});
+  const [closing, setClosing] = useState<Shift | null>(null);
   const dl = useAction();
   return (
     <>
@@ -124,7 +158,7 @@ export default function Shifts() {
                 <tr key={x.id}>
                   <td dir="ltr">{x.username}</td>
                   <td>{dateTime(x.opened_at)}</td>
-                  <td>{x.closed_at ? dateTime(x.closed_at) : <span className="badge">مفتوحة</span>}</td>
+                  <td>{x.closed_at ? dateTime(x.closed_at) : <span className="badge">{x.is_stale ? "منسية — مفتوحة" : "مفتوحة"}</span>}</td>
                   <td>{money(x.opening_cash)}</td>
                   <td>{money(x.cash_in)}</td>
                   <td>{money(x.cash_out)}</td>
@@ -135,6 +169,11 @@ export default function Shifts() {
                     <button className="btn btn-sm" disabled={dl.busy} onClick={() => void dl.run(() => api.download(`/shifts/${x.id}/pdf`, `shift-${x.id}.pdf`))}>
                       PDF
                     </button>
+                    {isManager && x.status === "open" && (
+                      <button className="btn btn-sm" onClick={() => setClosing(x)}>
+                        إغلاق إداري
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -145,6 +184,16 @@ export default function Shifts() {
         )}
         <Pager list={list} />
       </div>
+      {closing && (
+        <AdminCloseDialog
+          shift={closing}
+          onClose={() => setClosing(null)}
+          onDone={() => {
+            setClosing(null);
+            list.reload();
+          }}
+        />
+      )}
     </>
   );
 }

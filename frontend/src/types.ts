@@ -148,6 +148,7 @@ export interface Dashboard {
   sales_returns_total: string;
   purchase_returns_total: string;
   payables_total: string;
+  stale_shifts?: number;
 }
 
 export type PaymentMethod = "cash" | "bank" | "wallet" | "cheque";
@@ -274,4 +275,5 @@ export interface Shift {
   counted_cash: string | null;
   difference: string | null;
   notes: string | null;
+  is_stale: boolean;
 }

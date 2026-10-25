@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from .. import accounts, exports, models, schemas
 from ..database import get_db
+from .shifts import stale_cutoff
 from ..deps import get_current_user, require_manager
 
 router = APIRouter(prefix="/reports", tags=["reports"])
@@ -535,4 +536,5 @@ def dashboard(
         draft_purchase_orders=db.query(func.count(PO.id)).filter(PO.status == "draft").scalar() or 0,
         receivables_total=_balances_report(db, "customer").total,
         payables_total=_balances_report(db, "supplier").total,
+        stale_shifts=db.query(func.count(models.Shift.id)).filter(models.Shift.status == "open", models.Shift.opened_at < stale_cutoff()).scalar() or 0,
     )

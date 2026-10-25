@@ -350,6 +350,7 @@ class Dashboard(BaseModel):
     sales_returns_total: Decimal = Decimal("0")  # returns in the same period as sales_total
     purchase_returns_total: Decimal = Decimal("0")
     payables_total: Decimal = Decimal("0")
+    stale_shifts: int = 0  # cashier shifts left open too long
 
 
 # ---------- Payments & statements ----------
@@ -583,3 +584,4 @@ class ShiftOut(BaseModel):
     counted_cash: Optional[Decimal] = None
     difference: Optional[Decimal] = None  # counted - expected; negative = shortage
     notes: Optional[str] = None
+    is_stale: bool = False  # still open long after it should have been closed

@@ -4,7 +4,8 @@ Expected cash = opening cash + cash the user took in - cash the user paid out, b
 (receipts, supplier payments and cash refunds on returns recorded by that user). Closing freezes the figures.
 """
 
-from datetime import datetime, timezone
+import os
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import List, Optional
 
@@ -30,6 +31,20 @@ def _sum(db: Session, col, *conds) -> Decimal:
     return _dec(db.query(func.coalesce(func.sum(col), 0)).filter(*conds).scalar())
 
 
+STALE_HOURS = float(os.getenv("SHIFT_STALE_HOURS", "16"))
+
+
+def stale_cutoff() -> datetime:
+    return datetime.now(timezone.utc) - timedelta(hours=STALE_HOURS)
+
+
+def _is_stale(s: models.Shift) -> bool:
+    if s.status != "open":
+        return False
+    opened = s.opened_at if s.opened_at.tzinfo else s.opened_at.replace(tzinfo=timezone.utc)  # SQLite drops the zone
+    return opened < stale_cutoff()
+
+
 def _totals(db: Session, s: models.Shift) -> dict:
     """Live cash movements of the shift's user inside its time window."""
     P, SR, PR = models.Payment, models.SalesReturn, models.PurchaseReturn
@@ -51,7 +66,7 @@ def _totals(db: Session, s: models.Shift) -> dict:
 def _out(db: Session, s: models.Shift) -> schemas.ShiftOut:
     base = dict(
         id=s.id, user_id=s.user_id, username=s.username, status=s.status, opened_at=s.opened_at, closed_at=s.closed_at,
-        opening_cash=s.opening_cash, counted_cash=s.counted_cash, difference=s.difference, notes=s.notes,
+        opening_cash=s.opening_cash, counted_cash=s.counted_cash, difference=s.difference, notes=s.notes, is_stale=_is_stale(s),
     )
     if s.status == "closed":
         return schemas.ShiftOut(**base, cash_in=s.cash_in, cash_out=s.cash_out, other_methods_in=s.other_methods_in, expected_cash=s.expected_cash)
