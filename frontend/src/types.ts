@@ -72,6 +72,7 @@ export type PaymentStatus = "paid" | "partial" | "unpaid";
 
 export interface Order {
   id: number;
+  created_by_name?: string | null; // sales orders
   paid_amount?: string | null;
   balance_due?: string | null;
   payment_status?: PaymentStatus | null;

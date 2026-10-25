@@ -158,6 +158,7 @@ class SalesOrder(Base):
     status = Column(String(20), nullable=False, default="draft", server_default="draft", index=True)
     notes = Column(Text, nullable=True)
     total_amount = Column(Numeric(14, 2), nullable=False, default=0, server_default="0")
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)  # NULL for orders made before this was recorded
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
@@ -165,6 +166,11 @@ class SalesOrder(Base):
 
     customer = relationship("Customer", back_populates="sales_orders")
     warehouse = relationship("Warehouse")
+    creator = relationship("User", foreign_keys=[created_by])
+
+    @property
+    def created_by_name(self):
+        return self.creator.username if self.creator else None
 
     @property
     def party_name(self):

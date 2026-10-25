@@ -204,6 +204,7 @@ class SalesOrderOut(ORMModel):
     status: str
     notes: Optional[str]
     total_amount: Decimal
+    created_by_name: Optional[str] = None
     created_at: datetime
     items: List[SalesItemOut]
     paid_amount: Optional[Decimal] = None

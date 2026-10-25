@@ -42,7 +42,7 @@ def checkout(payload: schemas.PosCheckout, db: Session = Depends(get_db), user: 
     else:
         customer = _walk_in(db)
 
-    order = models.SalesOrder(customer_id=customer.id, warehouse_id=payload.warehouse_id, notes=payload.notes)
+    order = models.SalesOrder(customer_id=customer.id, warehouse_id=payload.warehouse_id, notes=payload.notes, created_by=user.id)
     total = Decimal("0")
     for item in payload.items:
         product = _require(db, models.Product, item.product_id, "Product")

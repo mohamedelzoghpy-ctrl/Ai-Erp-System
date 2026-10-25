@@ -177,7 +177,7 @@ def create_sales_order(payload: schemas.SalesOrderCreate, db: Session = Depends(
     _require(db, models.Customer, payload.customer_id, "Customer")
     _require(db, models.Warehouse, payload.warehouse_id, "Warehouse")
     order = models.SalesOrder(
-        customer_id=payload.customer_id, warehouse_id=payload.warehouse_id, notes=payload.notes
+        customer_id=payload.customer_id, warehouse_id=payload.warehouse_id, notes=payload.notes, created_by=user.id
     )
     total = Decimal("0")
     for item in payload.items:
@@ -319,6 +319,7 @@ def sales_order_receipt(order_id: int, db: Session = Depends(get_db)):
     attach_settlement(db, "customer", order)
     doc = _document("sales", order)
     doc["paid"], doc["remaining"] = order.paid_amount, order.balance_due
+    doc["cashier"] = order.created_by_name
     return _download(exports.build_receipt_pdf(doc), exports.PDF_MIME, f"receipt-{doc['number']}.pdf")
 
 

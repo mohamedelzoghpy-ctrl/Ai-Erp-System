@@ -277,7 +277,10 @@ def build_receipt_pdf(doc: Dict[str, Any]) -> bytes:
     for extra in (COMPANY_ADDRESS, COMPANY_PHONE):
         if extra:
             rows.append(("small", extra))
-    rows += [("rule", None), ("kv", ("فاتورة", doc["number"])), ("kv", ("التاريخ", fmt_dt(doc["date"]))), ("kv", ("العميل", doc["party"]["name"])), ("rule", None)]
+    rows += [("rule", None), ("kv", ("فاتورة", doc["number"])), ("kv", ("التاريخ", fmt_dt(doc["date"]))), ("kv", ("العميل", doc["party"]["name"]))]
+    if doc.get("cashier"):
+        rows.append(("kv", ("الكاشير", doc["cashier"])))
+    rows.append(("rule", None))
     for it in doc["items"]:
         for ln in wrap(it["name"], "Amiri-Bold", 10):
             rows.append(("name", ln))

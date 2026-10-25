@@ -131,6 +131,8 @@ full; with a customer, `amount_paid` may be lower (credit sale, `0` = fully on a
 The web app's "نقطة البيع" screen uses it (barcode/SKU + Enter, cart, change calculation, invoice PDF). Prices can only be edited by
 managers/admins in the UI; note that the API itself accepts a `unit_price` from any user, as `/sales-orders` always did.
 
+Sales orders record who created them (`created_by_name`; empty for older orders), shown on the receipt.
+
 `GET /sales-orders/{id}/receipt` returns an 80 mm thermal-printer receipt PDF (items, total, paid/remaining); the POS success dialog has a button for it.
 
 ## Cashier shifts
