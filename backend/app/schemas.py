@@ -289,6 +289,12 @@ class SalesByCustomer(BaseModel):
     total: Decimal
 
 
+class SalesByCashier(BaseModel):
+    username: Optional[str] = None  # None: orders made before creators were recorded
+    orders: int
+    total: Decimal
+
+
 class SalesSummary(BaseModel):
     date_from: datetime
     date_to: datetime
@@ -297,6 +303,7 @@ class SalesSummary(BaseModel):
     by_day: List[SalesByDay]
     top_products: List[TopProduct]
     by_customer: List[SalesByCustomer] = []
+    by_cashier: List[SalesByCashier] = []
 
 
 class PurchaseTopProduct(BaseModel):

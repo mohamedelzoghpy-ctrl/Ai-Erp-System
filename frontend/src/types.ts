@@ -118,6 +118,7 @@ export interface SalesSummary {
   by_day: DayTotal[];
   top_products: { product_id: number; sku: string; name: string; quantity_sold: number; revenue: string }[];
   by_customer: { customer_id: number; customer_name: string; orders: number; total: string }[];
+  by_cashier: { username: string | null; orders: number; total: string }[];
 }
 
 export interface PurchasesSummary {

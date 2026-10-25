@@ -219,6 +219,11 @@ function SalesTab({ range, from, to, onExport, busy }: TabProps) {
                 rows={s.by_customer.map((c) => [c.customer_name, num(c.orders), money(c.total)])}
               />
             </div>
+            <RankTable
+              title="المبيعات حسب الكاشير"
+              headers={["الكاشير", "الأوامر", "الإجمالي"]}
+              rows={s.by_cashier.map((c) => [c.username ?? "غير مسجّل", num(c.orders), money(c.total)])}
+            />
           </>
         )
       )}

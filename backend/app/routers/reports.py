@@ -233,6 +233,17 @@ def _sales_summary(db: Session, date_from, date_to, top: int) -> schemas.SalesSu
         .limit(top)
         .all()
     )
+    U = models.User
+    cashier_total = func.sum(SO.total_amount)
+    cashier_rows = (
+        db.query(U.username, func.count(SO.id), cashier_total)
+        .select_from(SO)
+        .outerjoin(U, U.id == SO.created_by)
+        .filter(*in_period)
+        .group_by(U.username)
+        .order_by(cashier_total.desc(), U.username)
+        .all()
+    )
     return schemas.SalesSummary(
         date_from=start,
         date_to=end - timedelta(microseconds=1),
@@ -247,6 +258,7 @@ def _sales_summary(db: Session, date_from, date_to, top: int) -> schemas.SalesSu
             schemas.SalesByCustomer(customer_id=cid, customer_name=cname, orders=n, total=_money(t))
             for cid, cname, n, t in cust_rows
         ],
+        by_cashier=[schemas.SalesByCashier(username=u, orders=n, total=_money(t)) for u, n, t in cashier_rows],
     )
 
 
@@ -283,6 +295,11 @@ def sales_summary_xlsx(
             "العملاء",
             ["العميل", "عدد الأوامر", "الإجمالي"],
             [[("text", c.customer_name), ("int", c.orders), ("money", c.total)] for c in s.by_customer],
+        ),
+        (
+            "الكاشير",
+            ["الكاشير", "عدد الأوامر", "الإجمالي"],
+            [[("text", c.username or "غير مسجّل"), ("int", c.orders), ("money", c.total)] for c in s.by_cashier],
         ),
     ]
     content = exports.build_tables_xlsx("تقرير المبيعات", _range_label(s), tables)

@@ -132,6 +132,7 @@ The web app's "نقطة البيع" screen uses it (barcode/SKU + Enter, cart, c
 managers/admins in the UI; note that the API itself accepts a `unit_price` from any user, as `/sales-orders` always did.
 
 Sales orders record who created them (`created_by_name`; empty for older orders), shown on the receipt.
+The sales summary report (`/reports/sales-summary`, and its Excel export) also breaks sales down by cashier.
 
 `GET /sales-orders/{id}/receipt` returns an 80 mm thermal-printer receipt PDF (items, total, paid/remaining); the POS success dialog has a button for it.
 
