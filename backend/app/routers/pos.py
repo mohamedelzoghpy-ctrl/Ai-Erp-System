@@ -30,6 +30,19 @@ def _walk_in(db: Session) -> models.Customer:
     return c
 
 
+def _load_checkout_products(db: Session, items) -> dict[int, models.Product]:
+    product_ids = list(dict.fromkeys(item.product_id for item in items))
+    if not product_ids:
+        return {}
+
+    products = db.query(models.Product).filter(models.Product.id.in_(product_ids)).all()
+    products_by_id = {product.id: product for product in products}
+    missing_id = next((product_id for product_id in product_ids if product_id not in products_by_id), None)
+    if missing_id is not None:
+        raise HTTPException(422, f"Product {missing_id} does not exist")
+    return products_by_id
+
+
 @router.post("/checkout", response_model=schemas.PosReceipt, status_code=status.HTTP_201_CREATED)
 def checkout(payload: schemas.PosCheckout, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     if REQUIRE_SHIFT and open_shift_of(db, user.id) is None:
@@ -42,10 +55,11 @@ def checkout(payload: schemas.PosCheckout, db: Session = Depends(get_db), user: 
     else:
         customer = _walk_in(db)
 
+    products = _load_checkout_products(db, payload.items)
     order = models.SalesOrder(customer_id=customer.id, warehouse_id=payload.warehouse_id, notes=payload.notes, created_by=user.id)
     total = Decimal("0")
     for item in payload.items:
-        product = _require(db, models.Product, item.product_id, "Product")
+        product = products[item.product_id]
         if not product.is_active:
             raise HTTPException(422, f"Product '{product.name}' is inactive")
         price = item.unit_price if item.unit_price is not None else product.sale_price
