@@ -270,6 +270,8 @@ export interface Shift {
   opening_cash: string;
   cash_in: string;
   cash_out: string;
+  cash_refunds_in: string;
+  cash_refunds_out: string;
   other_methods_in: string;
   expected_cash: string;
   counted_cash: string | null;

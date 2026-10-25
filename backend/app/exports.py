@@ -215,8 +215,10 @@ def build_shift_pdf(shift: Dict[str, Any]) -> bytes:
 
     money_rows = [
         ("رصيد الافتتاح", shift["opening_cash"], False),
-        ("+ نقدي مقبوض (عملاء ومرتجعات موردين)", shift["cash_in"], False),
-        ("− نقدي مدفوع (موردين ومرتجعات عملاء)", shift["cash_out"], False),
+        ("+ نقدي مقبوض من العملاء", shift["cash_in"], False),
+        ("+ مردود نقدي من الموردين (مرتجعات شراء)", shift["cash_refunds_in"], False),
+        ("− نقدي مدفوع للموردين", shift["cash_out"], False),
+        ("− مردود نقدي للعملاء (مرتجعات بيع)", shift["cash_refunds_out"], False),
         ("المتوقع في الدرج", shift["expected_cash"], True),
     ]
     if closed:

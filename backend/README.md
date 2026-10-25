@@ -153,7 +153,7 @@ downloads the sheet. Applied and cancelled stock-takes are read-only. Everything
 per user is enforced by a partial unique index. `GET /shifts/current` shows the live expected cash, `GET /shifts` lists shifts (cashiers see
 their own, managers/admins all).
 
-Expected cash = opening cash + cash receipts from customers + cash refunds from suppliers - cash supplier payments - cash refunds to customers,
+Expected cash = opening cash + cash receipts from customers + cash refunds from suppliers - cash supplier payments - cash refunds to customers (refunds are reported on their own lines),
 counted from what **that user** recorded between opening and closing (POS cash sales are receipts, so they are included). Bank/other methods are
 shown separately and do not enter the drawer. Closing freezes the totals and stores the difference (counted - expected). A shift can be closed
 by its cashier or a manager/admin; each open/close is audit-logged. `GET /shifts/{id}/pdf` downloads the closing report (cashier: own shifts only).

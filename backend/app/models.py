@@ -401,6 +401,8 @@ class Shift(Base):
     # frozen at close
     cash_in = Column(Numeric(14, 2), nullable=True)
     cash_out = Column(Numeric(14, 2), nullable=True)
+    cash_refunds_in = Column(Numeric(14, 2), nullable=True)  # cash received back from suppliers (purchase returns)
+    cash_refunds_out = Column(Numeric(14, 2), nullable=True)  # cash handed back to customers (sales returns)
     other_methods_in = Column(Numeric(14, 2), nullable=True)
     expected_cash = Column(Numeric(14, 2), nullable=True)
     counted_cash = Column(Numeric(14, 2), nullable=True)

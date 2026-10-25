@@ -18,8 +18,10 @@ function Summary({ s }: { s: Shift }) {
     <table className="kv" style={{ width: "100%", marginBottom: 12 }}>
       <tbody>
         <tr><td>رصيد الافتتاح</td><td>{money(s.opening_cash)}</td></tr>
-        <tr><td>+ نقدي مقبوض</td><td>{money(s.cash_in)}</td></tr>
-        <tr><td>− نقدي مدفوع</td><td>{money(s.cash_out)}</td></tr>
+        <tr><td>+ نقدي مقبوض من العملاء</td><td>{money(s.cash_in)}</td></tr>
+        {Number(s.cash_refunds_in) > 0 && <tr><td>+ مردود نقدي من الموردين</td><td>{money(s.cash_refunds_in)}</td></tr>}
+        <tr><td>− نقدي مدفوع للموردين</td><td>{money(s.cash_out)}</td></tr>
+        {Number(s.cash_refunds_out) > 0 && <tr><td>− مردود نقدي للعملاء (مرتجعات)</td><td>{money(s.cash_refunds_out)}</td></tr>}
         <tr><td><strong>المتوقع في الدرج</strong></td><td><strong>{money(s.expected_cash)}</strong></td></tr>
         <tr><td className="muted">مقبوضات غير نقدية (لا تدخل الدرج)</td><td className="muted">{money(s.other_methods_in)}</td></tr>
       </tbody>
@@ -150,7 +152,7 @@ export default function Shifts() {
           <table>
             <thead>
               <tr>
-                <th>الكاشير</th><th>الفتح</th><th>الإغلاق</th><th>الافتتاح</th><th>نقدي مقبوض</th><th>نقدي مدفوع</th><th>المتوقع</th><th>المعدود</th><th>الفرق</th><th></th>
+                <th>الكاشير</th><th>الفتح</th><th>الإغلاق</th><th>الافتتاح</th><th>نقدي مقبوض</th><th>نقدي مدفوع</th><th>مردود نقدي</th><th>المتوقع</th><th>المعدود</th><th>الفرق</th><th></th>
               </tr>
             </thead>
             <tbody>
@@ -162,6 +164,7 @@ export default function Shifts() {
                   <td>{money(x.opening_cash)}</td>
                   <td>{money(x.cash_in)}</td>
                   <td>{money(x.cash_out)}</td>
+                  <td>{money(Number(x.cash_refunds_out) - Number(x.cash_refunds_in))}</td>
                   <td>{money(x.expected_cash)}</td>
                   <td>{x.counted_cash === null ? "—" : money(x.counted_cash)}</td>
                   <td>{diffText(x.difference)}</td>

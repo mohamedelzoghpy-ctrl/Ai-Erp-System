@@ -58,9 +58,14 @@ def _totals(db: Session, s: models.Shift) -> dict:
     supplier_cash = _sum(db, P.amount, *window(P), P.status == "posted", P.supplier_id.isnot(None), P.method == "cash")
     sales_refunds = _sum(db, SR.refund_amount, *window(SR), SR.method == "cash")
     purchase_refunds = _sum(db, PR.refund_amount, *window(PR), PR.method == "cash")
-    cash_in = receipts_cash + purchase_refunds
-    cash_out = supplier_cash + sales_refunds
-    return {"cash_in": cash_in, "cash_out": cash_out, "other_methods_in": receipts_other, "expected_cash": _dec(s.opening_cash) + cash_in - cash_out}
+    return {
+        "cash_in": receipts_cash,
+        "cash_out": supplier_cash,
+        "cash_refunds_in": purchase_refunds,
+        "cash_refunds_out": sales_refunds,
+        "other_methods_in": receipts_other,
+        "expected_cash": _dec(s.opening_cash) + receipts_cash + purchase_refunds - supplier_cash - sales_refunds,
+    }
 
 
 def _out(db: Session, s: models.Shift) -> schemas.ShiftOut:
@@ -69,7 +74,11 @@ def _out(db: Session, s: models.Shift) -> schemas.ShiftOut:
         opening_cash=s.opening_cash, counted_cash=s.counted_cash, difference=s.difference, notes=s.notes, is_stale=_is_stale(s),
     )
     if s.status == "closed":
-        return schemas.ShiftOut(**base, cash_in=s.cash_in, cash_out=s.cash_out, other_methods_in=s.other_methods_in, expected_cash=s.expected_cash)
+        # Shifts closed before refunds were split out have NULL refund columns (their cash_in/out already include them).
+        return schemas.ShiftOut(
+            **base, cash_in=s.cash_in, cash_out=s.cash_out, cash_refunds_in=s.cash_refunds_in or 0, cash_refunds_out=s.cash_refunds_out or 0,
+            other_methods_in=s.other_methods_in, expected_cash=s.expected_cash,
+        )
     return schemas.ShiftOut(**base, **_totals(db, s))
 
 
@@ -112,6 +121,7 @@ def close_shift(shift_id: int, payload: schemas.ShiftClose, db: Session = Depend
     s.closed_by = user.id
     t = _totals(db, s)
     s.cash_in, s.cash_out, s.other_methods_in, s.expected_cash = t["cash_in"], t["cash_out"], t["other_methods_in"], t["expected_cash"]
+    s.cash_refunds_in, s.cash_refunds_out = t["cash_refunds_in"], t["cash_refunds_out"]
     s.counted_cash = payload.counted_cash
     s.difference = payload.counted_cash - t["expected_cash"]
     s.notes = payload.notes

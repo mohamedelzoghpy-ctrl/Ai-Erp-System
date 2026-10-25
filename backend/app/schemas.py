@@ -577,8 +577,10 @@ class ShiftOut(BaseModel):
     opened_at: datetime
     closed_at: Optional[datetime] = None
     opening_cash: Decimal
-    cash_in: Decimal = Decimal("0")  # cash receipts from customers (+ cash refunds from suppliers)
-    cash_out: Decimal = Decimal("0")  # cash payments to suppliers (+ cash refunds to customers)
+    cash_in: Decimal = Decimal("0")  # cash receipts from customers
+    cash_out: Decimal = Decimal("0")  # cash payments to suppliers
+    cash_refunds_in: Decimal = Decimal("0")  # cash received back from suppliers for purchase returns
+    cash_refunds_out: Decimal = Decimal("0")  # cash handed back to customers for sales returns
     other_methods_in: Decimal = Decimal("0")  # bank / wallet / cheque receipts (not in the drawer)
     expected_cash: Decimal = Decimal("0")
     counted_cash: Optional[Decimal] = None
