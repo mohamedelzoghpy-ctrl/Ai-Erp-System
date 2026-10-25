@@ -61,8 +61,22 @@ alembic revision --autogenerate -m "describe change"   # after editing app/model
 alembic upgrade head
 ```
 
-If your database was already created by `AUTO_CREATE_TABLES=true`, mark it as up to date instead of
-re-creating tables: `alembic stamp head`.
+For a database created by `AUTO_CREATE_TABLES=true` that already matches revision `0008`, run
+`alembic stamp 0008 && alembic upgrade head` to apply the company/branch migration. Only stamp a
+new database at `head` when its schema was created from the current models; stamping an older
+schema at `head` skips required migrations.
+
+## Company and branch schema foundation
+
+Migration `0009` adds company and branch records, then assigns every existing warehouse to the
+`default` company and its `main` branch without changing warehouse or inventory IDs. New warehouses
+created through the legacy API are assigned to that same default branch. The per-company
+`max_warehouses_per_branch` setting is optional until plan limits are configured.
+
+This is schema groundwork, not an enabled multi-company rollout: business records and API queries
+are not yet isolated by company, and the warehouse limit is not enforced. Do not create additional
+companies or use this version for multi-company data until tenant membership, company-scoped
+authorization, inventory/pricing ownership, and isolation tests are implemented across all routes.
 
 ## Roles
 

@@ -27,6 +27,25 @@ def _get_or_404(db: Session, model, obj_id: int, label: str):
     return obj
 
 
+def _default_branch_id(db: Session) -> int:
+    company = db.query(models.Company).filter(models.Company.code == "default").one_or_none()
+    if company is None:
+        company = models.Company(name="Default Company", code="default")
+        db.add(company)
+        db.flush()
+
+    branch = (
+        db.query(models.Branch)
+        .filter(models.Branch.company_id == company.id, models.Branch.code == "main")
+        .one_or_none()
+    )
+    if branch is None:
+        branch = models.Branch(company_id=company.id, name="Main Branch", code="main")
+        db.add(branch)
+        db.flush()
+    return branch.id
+
+
 def _commit(db: Session, obj=None, before=None):
     try:
         if before:
@@ -61,6 +80,8 @@ def _crud(router: APIRouter, model, label: str, create_s, update_s, out_s, kind:
     @router.post("", response_model=out_s, status_code=status.HTTP_201_CREATED)
     def create(payload: create_s, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):  # type: ignore[valid-type]
         data = payload.model_dump()
+        if model is models.Warehouse:
+            data["branch_id"] = _default_branch_id(db)
         if Decimal(str(data.get("opening_balance") or 0)) != 0:
             _ensure_manager_for_balance(user)
         obj = model(**data)

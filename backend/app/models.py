@@ -21,12 +21,54 @@ from sqlalchemy.orm import relationship
 from .database import Base
 
 
+class Company(Base):
+    __tablename__ = "companies"
+    __table_args__ = (
+        CheckConstraint(
+            "max_warehouses_per_branch IS NULL OR max_warehouses_per_branch > 0",
+            name="ck_company_warehouse_limit_positive",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(150), nullable=False)
+    code = Column(String(50), nullable=False, unique=True, index=True)
+    max_warehouses_per_branch = Column(Integer, nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True, server_default="true")
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    branches = relationship("Branch", back_populates="company")
+
+
+class Branch(Base):
+    __tablename__ = "branches"
+    __table_args__ = (UniqueConstraint("company_id", "code", name="uq_branch_company_code"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(Integer, ForeignKey("companies.id", ondelete="RESTRICT"), nullable=False, index=True)
+    name = Column(String(150), nullable=False)
+    code = Column(String(50), nullable=False)
+    location = Column(String(255), nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True, server_default="true")
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    company = relationship("Company", back_populates="branches")
+    warehouses = relationship("Warehouse", back_populates="branch")
+
+
 class Warehouse(Base):
     __tablename__ = "warehouses"
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(150), nullable=False, unique=True, index=True)
     code = Column(String(50), nullable=False, unique=True, index=True)
+    branch_id = Column(Integer, ForeignKey("branches.id", ondelete="RESTRICT"), nullable=False, index=True)
     location = Column(String(255), nullable=True)
     is_active = Column(Boolean, nullable=False, default=True, server_default="true")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
@@ -35,6 +77,7 @@ class Warehouse(Base):
     )
 
     products = relationship("Product", back_populates="warehouse")
+    branch = relationship("Branch", back_populates="warehouses")
 
 
 class Supplier(Base):

@@ -32,6 +32,7 @@ class WarehouseUpdate(BaseModel):
 
 class WarehouseOut(WarehouseBase, ORMModel):
     id: int
+    branch_id: int
     created_at: datetime
 
 
