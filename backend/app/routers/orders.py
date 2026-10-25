@@ -10,6 +10,7 @@ from decimal import Decimal
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..accounts import attach_settlement
@@ -200,11 +201,16 @@ def list_sales_orders(
     response: Response,
     status_filter: Optional[str] = None,
     customer_id: Optional[int] = None,
+    cashier: Optional[str] = None,
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),
 ):
     query = db.query(models.SalesOrder)
+    if cashier:  # username of whoever created the order
+        query = query.join(models.User, models.User.id == models.SalesOrder.created_by).filter(
+            func.lower(models.User.username) == cashier.strip().lower()
+        )
     if status_filter:
         query = query.filter(models.SalesOrder.status == status_filter)
     if customer_id is not None:

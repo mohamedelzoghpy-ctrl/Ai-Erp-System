@@ -133,6 +133,7 @@ managers/admins in the UI; note that the API itself accepts a `unit_price` from 
 
 Sales orders record who created them (`created_by_name`; empty for older orders), shown on the receipt.
 The sales summary report (`/reports/sales-summary`, and its Excel export) also breaks sales down by cashier.
+`GET /sales-orders?cashier=<username>` filters orders by creator; the sales orders screen shows a cashier column and filter.
 
 `GET /sales-orders/{id}/receipt` returns an 80 mm thermal-printer receipt PDF (items, total, paid/remaining); the POS success dialog has a button for it.
 

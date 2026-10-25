@@ -81,7 +81,8 @@ function OrdersScreen({ kind }: { kind: Kind }) {
   const [creating, setCreating] = useState(false);
   const [viewId, setViewId] = useState<number | null>(null);
 
-  const orders = usePagedList<Order>(cfg.path, { status_filter: status });
+  const [cashier, setCashier] = useState("");
+  const orders = usePagedList<Order>(cfg.path, kind === "sales" ? { status_filter: status, cashier: cashier.trim() } : { status_filter: status });
   const warehouses = useFetch(() => api.get<Warehouse[]>("/warehouses?limit=500"), "wh");
 
   const view = viewId != null ? orders.data?.find((o) => o.id === viewId) ?? null : null;
@@ -95,6 +96,7 @@ function OrdersScreen({ kind }: { kind: Kind }) {
           <option value={cfg.doneStatus}>{cfg.doneStatus === "received" ? "تم الاستلام" : "مؤكد"}</option>
           <option value="cancelled">ملغي</option>
         </select>
+        {kind === "sales" && <input value={cashier} onChange={(e) => setCashier(e.target.value)} placeholder="الكاشير (اسم المستخدم)" aria-label="الكاشير" style={{ width: 170 }} />}
         <button className="btn btn-primary" onClick={() => setCreating(true)}>
           {cfg.newLabel}
         </button>
@@ -114,6 +116,7 @@ function OrdersScreen({ kind }: { kind: Kind }) {
                 <th>{cfg.partyLabel}</th>
                 <th>المخزن</th>
                 <th>الحالة</th>
+                {kind === "sales" && <th>الكاشير</th>}
                 <th className="num">الإجمالي</th>
                 <th>السداد</th>
                 <th />
@@ -129,6 +132,7 @@ function OrdersScreen({ kind }: { kind: Kind }) {
                   <td>
                     <StatusBadge status={o.status} />
                   </td>
+                  {kind === "sales" && <td dir="ltr">{o.created_by_name ?? "—"}</td>}
                   <td className="num">{money(o.total_amount)}</td>
                   <td>
                     <PaymentBadge status={o.payment_status} />
@@ -143,7 +147,7 @@ function OrdersScreen({ kind }: { kind: Kind }) {
             </tbody>
           </table>
         ) : (
-          <Empty>{status ? "لا نتائج مطابقة" : "لا توجد أوامر بعد."}</Empty>
+          <Empty>{status || cashier ? "لا نتائج مطابقة" : "لا توجد أوامر بعد."}</Empty>
         )}
         <Pager list={orders} />
       </div>
