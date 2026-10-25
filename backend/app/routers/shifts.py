@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from .. import models, schemas
+from .. import exports, models, schemas
 from ..audit import audit
 from ..database import get_db
 from ..deps import get_current_user
@@ -122,3 +122,17 @@ def list_shifts(
     if status_filter:
         q = q.filter(models.Shift.status == status_filter)
     return [_out(db, s) for s in paginate(q, response, skip, limit, models.Shift.id.desc())]
+
+
+@router.get("/{shift_id}/pdf")
+def shift_pdf(shift_id: int, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    s = db.query(models.Shift).filter(models.Shift.id == shift_id).one_or_none()
+    # Someone else's shift is reported as missing for cashiers, like the list endpoint hides it.
+    if s is None or (s.user_id != user.id and user.role not in ("admin", "manager")):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Shift {shift_id} not found")
+    data = _out(db, s).model_dump()
+    return Response(
+        content=exports.build_shift_pdf(data),
+        media_type=exports.PDF_MIME,
+        headers={"Content-Disposition": f'attachment; filename="shift-{s.id}.pdf"', "Cache-Control": "no-store"},
+    )

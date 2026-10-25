@@ -140,7 +140,7 @@ their own, managers/admins all).
 Expected cash = opening cash + cash receipts from customers + cash refunds from suppliers - cash supplier payments - cash refunds to customers,
 counted from what **that user** recorded between opening and closing (POS cash sales are receipts, so they are included). Bank/other methods are
 shown separately and do not enter the drawer. Closing freezes the totals and stores the difference (counted - expected). A shift can be closed
-by its cashier or a manager/admin; each open/close is audit-logged.
+by its cashier or a manager/admin; each open/close is audit-logged. `GET /shifts/{id}/pdf` downloads the closing report (cashier: own shifts only).
 
 Set `POS_REQUIRE_SHIFT=true` to make `/pos/checkout` return 409 until the cashier has opened a shift (default: off).
 

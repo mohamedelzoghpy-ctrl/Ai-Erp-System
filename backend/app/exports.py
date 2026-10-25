@@ -192,6 +192,64 @@ class _Pdf:
         return self.buf.getvalue()
 
 
+def build_shift_pdf(shift: Dict[str, Any]) -> bytes:
+    """Shift closing report (A4): cash reconciliation plus signature lines."""
+    pdf = _Pdf(f"تقرير وردية {shift['id']}")
+    pdf.text(RIGHT, pdf.y - 16, COMPANY_NAME, font="Amiri-Bold", size=19)
+    pdf.text(LEFT, pdf.y - 16, "تقرير إغلاق وردية", font="Amiri-Bold", size=19, align="l", color=ACCENT)
+    pdf.text(LEFT, pdf.y - 36, f"# {shift['id']}", font="Amiri-Bold", size=13, align="l")
+    pdf.y -= 52
+    pdf.rule(pdf.y)
+    pdf.y -= 24
+    closed = shift["closed_at"] is not None
+    rows = [
+        ("الكاشير", shift["username"]),
+        ("وقت الفتح", fmt_dt(shift["opened_at"])),
+        ("وقت الإغلاق", fmt_dt(shift["closed_at"]) if closed else "الوردية ما زالت مفتوحة"),
+    ]
+    for label, value in rows:
+        pdf.text(RIGHT, pdf.y, f"{label}:", font="Amiri-Bold", size=11.5, color=MUTED)
+        pdf.text(RIGHT - 100, pdf.y, value, size=11.5)
+        pdf.y -= 20
+    pdf.y -= 8
+
+    money_rows = [
+        ("رصيد الافتتاح", shift["opening_cash"], False),
+        ("+ نقدي مقبوض (عملاء ومرتجعات موردين)", shift["cash_in"], False),
+        ("− نقدي مدفوع (موردين ومرتجعات عملاء)", shift["cash_out"], False),
+        ("المتوقع في الدرج", shift["expected_cash"], True),
+    ]
+    if closed:
+        money_rows += [("المعدود فعلياً", shift["counted_cash"], True)]
+    for label, value, bold in money_rows:
+        pdf.c.setFillColor(HEAD_BG if bold else colors.white)
+        pdf.c.rect(LEFT, pdf.y - 7, CONTENT_W, 24, stroke=0, fill=1)
+        pdf.text(RIGHT - 8, pdf.y, label, font="Amiri-Bold" if bold else "Amiri", size=12)
+        pdf.text(LEFT + 8, pdf.y, f"{fmt_money(value)} {CURRENCY}", font="Amiri-Bold" if bold else "Amiri", size=12, align="l")
+        pdf.y -= 26
+    if closed:
+        d = Decimal(str(shift["difference"] or 0))
+        word = "مطابق" if d == 0 else ("زيادة" if d > 0 else "عجز")
+        color = colors.HexColor("#1a7f37") if d == 0 else colors.HexColor("#b42318")
+        pdf.text(RIGHT - 8, pdf.y - 4, "الفرق", font="Amiri-Bold", size=14, color=color)
+        pdf.text(LEFT + 8, pdf.y - 4, word if d == 0 else f"{word} {fmt_money(abs(d))} {CURRENCY}", font="Amiri-Bold", size=14, align="l", color=color)
+        pdf.y -= 34
+    pdf.text(RIGHT - 8, pdf.y, f"مقبوضات غير نقدية (لا تدخل الدرج): {fmt_money(shift['other_methods_in'])} {CURRENCY}", size=10.5, color=MUTED)
+    pdf.y -= 22
+    if shift.get("notes"):
+        pdf.text(RIGHT - 8, pdf.y, "ملاحظات:", font="Amiri-Bold", size=11, color=MUTED)
+        pdf.y -= 16
+        for ln in pdf.wrap(shift["notes"], "Amiri", 11, CONTENT_W - 16):
+            pdf.text(RIGHT - 8, pdf.y, ln, size=11)
+            pdf.y -= 15
+    pdf.y -= 50
+    for x, label in ((RIGHT, "توقيع الكاشير"), (LEFT + 190, "توقيع المراجع")):
+        pdf.c.setStrokeColor(RULE)
+        pdf.c.line(x - 170, pdf.y, x, pdf.y)
+        pdf.text(x, pdf.y - 16, label, size=10.5, color=MUTED)
+    return pdf.finish()
+
+
 def build_document_pdf(doc: Dict[str, Any]) -> bytes:
     """Invoice (sales) or purchase order PDF. `doc` shape: see build_document_xlsx."""
     pdf = _Pdf(f"{KIND_TITLE[doc['kind']]} {doc['number']}")

@@ -33,13 +33,15 @@ export function ShiftBar({ onChange }: { onChange?: (open: boolean) => void }) {
   const [cash, setCash] = useState("");
   const [notes, setNotes] = useState("");
   const act = useAction();
+  const dl = useAction();
+  const [closedId, setClosedId] = useState<number | null>(null);
   const s = cur.data;
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
     void act.run(async () => {
       if (dialog === "open") await api.post("/shifts/open", { opening_cash: cash || "0" });
-      else if (s) await api.post(`/shifts/${s.id}/close`, { counted_cash: cash, notes: notes || null });
+      else if (s) setClosedId((await api.post<Shift>(`/shifts/${s.id}/close`, { counted_cash: cash, notes: notes || null })).id);
       setDialog(null);
       setCash("");
       setNotes("");
@@ -68,6 +70,13 @@ export function ShiftBar({ onChange }: { onChange?: (open: boolean) => void }) {
           </>
         )}
       </div>
+      {closedId !== null && !s && (
+        <div className="card" style={{ padding: "8px 14px", marginBottom: 12, display: "flex", gap: 12, alignItems: "center" }}>
+          <span>تم إغلاق الوردية.</span>
+          <button className="btn btn-sm" disabled={dl.busy} onClick={() => void dl.run(() => api.download(`/shifts/${closedId}/pdf`, `shift-${closedId}.pdf`))}>تقرير الوردية PDF</button>
+          <Alert>{dl.error}</Alert>
+        </div>
+      )}
       {dialog && (
         <Modal title={dialog === "open" ? "فتح وردية" : "إغلاق الوردية"} onClose={() => setDialog(null)}>
           <form onSubmit={submit}>
@@ -95,10 +104,11 @@ export function ShiftBar({ onChange }: { onChange?: (open: boolean) => void }) {
 
 export default function Shifts() {
   const list = usePagedList<Shift>("/shifts", {});
+  const dl = useAction();
   return (
     <>
       <PageHeader title="الورديات" />
-      <Alert>{list.error}</Alert>
+      <Alert>{list.error || dl.error}</Alert>
       <div className="card table-wrap">
         {list.loading && !list.data ? (
           <Loading />
@@ -106,7 +116,7 @@ export default function Shifts() {
           <table>
             <thead>
               <tr>
-                <th>الكاشير</th><th>الفتح</th><th>الإغلاق</th><th>الافتتاح</th><th>نقدي مقبوض</th><th>نقدي مدفوع</th><th>المتوقع</th><th>المعدود</th><th>الفرق</th>
+                <th>الكاشير</th><th>الفتح</th><th>الإغلاق</th><th>الافتتاح</th><th>نقدي مقبوض</th><th>نقدي مدفوع</th><th>المتوقع</th><th>المعدود</th><th>الفرق</th><th></th>
               </tr>
             </thead>
             <tbody>
@@ -121,6 +131,11 @@ export default function Shifts() {
                   <td>{money(x.expected_cash)}</td>
                   <td>{x.counted_cash === null ? "—" : money(x.counted_cash)}</td>
                   <td>{diffText(x.difference)}</td>
+                  <td>
+                    <button className="btn btn-sm" disabled={dl.busy} onClick={() => void dl.run(() => api.download(`/shifts/${x.id}/pdf`, `shift-${x.id}.pdf`))}>
+                      PDF
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
