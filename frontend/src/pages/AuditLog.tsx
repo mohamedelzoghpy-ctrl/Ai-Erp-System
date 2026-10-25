@@ -13,6 +13,7 @@ const ENTITY: Record<string, string> = {
   supplier: "مورد",
   warehouse: "مخزن",
   user: "مستخدم",
+  shift: "وردية",
 };
 
 const ACTION: Record<string, string> = {
@@ -26,6 +27,8 @@ const ACTION: Record<string, string> = {
   adjust_stock: "تسوية مخزون",
   opening_balance: "تغيير رصيد أول المدة",
   login: "تسجيل دخول",
+  open: "فتح",
+  close: "إغلاق",
 };
 
 export default function AuditLog() {

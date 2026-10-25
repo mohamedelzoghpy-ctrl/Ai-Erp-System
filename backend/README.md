@@ -44,6 +44,7 @@ The backend container applies Alembic migrations on start, then serves on http:/
 | `CURRENCY_LABEL` | `ج.م` | Currency shown next to totals |
 | `EXPORT_TIMEZONE` | `Africa/Cairo` | Timezone of dates printed in exports |
 | `ENABLE_DOCS` | `true` | Serve `/docs` and `/openapi.json`; set `false` in production |
+| `POS_REQUIRE_SHIFT` | `false` | When `true`, POS checkout needs an open cashier shift |
 | `LOGIN_MAX_FAILURES`, `LOGIN_WINDOW_SECONDS` | `10`, `900` | Failed logins per client IP + username before HTTP 429 (`0` disables). In-memory, per worker process |
 | `FORWARDED_ALLOW_IPS` | `127.0.0.1` | Proxy addresses trusted for `X-Forwarded-For` (so the limiter sees real client IPs) |
 | `AUTO_CREATE_TABLES` | `true` | Create missing tables at startup. Set `false` when using Alembic |
@@ -129,6 +130,19 @@ if stock is short, nothing is saved (409). Without `customer_id` the sale goes t
 full; with a customer, `amount_paid` may be lower (credit sale, `0` = fully on account) but never above the total.
 The web app's "نقطة البيع" screen uses it (barcode/SKU + Enter, cart, change calculation, invoice PDF). Prices can only be edited by
 managers/admins in the UI; note that the API itself accepts a `unit_price` from any user, as `/sales-orders` always did.
+
+## Cashier shifts
+
+`POST /shifts/open` (opening cash in the drawer) and `POST /shifts/{id}/close` (counted cash) give each cashier a drawer session; one open shift
+per user is enforced by a partial unique index. `GET /shifts/current` shows the live expected cash, `GET /shifts` lists shifts (cashiers see
+their own, managers/admins all).
+
+Expected cash = opening cash + cash receipts from customers + cash refunds from suppliers - cash supplier payments - cash refunds to customers,
+counted from what **that user** recorded between opening and closing (POS cash sales are receipts, so they are included). Bank/other methods are
+shown separately and do not enter the drawer. Closing freezes the totals and stores the difference (counted - expected). A shift can be closed
+by its cashier or a manager/admin; each open/close is audit-logged.
+
+Set `POS_REQUIRE_SHIFT=true` to make `/pos/checkout` return 409 until the cashier has opened a shift (default: off).
 
 ## Returns
 

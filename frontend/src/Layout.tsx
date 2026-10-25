@@ -41,6 +41,9 @@ export default function Layout() {
           <NavLink to="/sales-orders" className={link}>
             أوامر البيع
           </NavLink>
+          <NavLink to="/shifts" className={link}>
+            الورديات
+          </NavLink>
           <div className="section">الحسابات</div>
           <NavLink to="/payments" className={link}>
             المقبوضات والمدفوعات

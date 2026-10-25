@@ -256,3 +256,20 @@ export interface ReturnDoc {
   created_at: string;
   items: ReturnItem[];
 }
+
+export interface Shift {
+  id: number;
+  user_id: number;
+  username: string;
+  status: "open" | "closed";
+  opened_at: string;
+  closed_at: string | null;
+  opening_cash: string;
+  cash_in: string;
+  cash_out: string;
+  other_methods_in: string;
+  expected_cash: string;
+  counted_cash: string | null;
+  difference: string | null;
+  notes: string | null;
+}

@@ -1,5 +1,6 @@
 """Point of sale: one request creates the sale, takes the stock and records the payment atomically."""
 
+import os
 from datetime import datetime
 from decimal import Decimal
 
@@ -11,10 +12,13 @@ from ..audit import audit
 from ..database import get_db
 from ..deps import get_current_user
 from .orders import _require, apply_sale_stock
+from .shifts import open_shift_of
 
 router = APIRouter(prefix="/pos", tags=["pos"])
 
 WALK_IN_NAME = "عميل نقدي"
+# Set POS_REQUIRE_SHIFT=true to force cashiers to open a drawer shift before selling.
+REQUIRE_SHIFT = os.getenv("POS_REQUIRE_SHIFT", "false").lower() in ("1", "true", "yes")
 
 
 def _walk_in(db: Session) -> models.Customer:
@@ -28,6 +32,8 @@ def _walk_in(db: Session) -> models.Customer:
 
 @router.post("/checkout", response_model=schemas.PosReceipt, status_code=status.HTTP_201_CREATED)
 def checkout(payload: schemas.PosCheckout, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    if REQUIRE_SHIFT and open_shift_of(db, user.id) is None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Open a shift before selling")
     _require(db, models.Warehouse, payload.warehouse_id, "Warehouse")
     if payload.customer_id is not None:
         customer = _require(db, models.Customer, payload.customer_id, "Customer")

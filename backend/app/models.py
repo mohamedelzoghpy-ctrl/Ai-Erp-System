@@ -8,10 +8,12 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Integer,
+    Index,
     Numeric,
     String,
     Text,
     func,
+    text,
 )
 from sqlalchemy.orm import relationship
 
@@ -370,3 +372,30 @@ class PurchaseReturnItem(Base):
     @property
     def product_name(self):
         return self.product.name if self.product else None
+
+
+class Shift(Base):
+    """A cashier's drawer session. Expected cash is derived from the cash movements the user recorded while it was open."""
+
+    __tablename__ = "shifts"
+    __table_args__ = (
+        Index("uq_shift_one_open_per_user", "user_id", unique=True, postgresql_where=text("status = 'open'"), sqlite_where=text("status = 'open'")),
+        CheckConstraint("opening_cash >= 0", name="ck_shift_opening_cash"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    username = Column(String(60), nullable=False)
+    status = Column(String(10), nullable=False, default="open", server_default="open", index=True)  # open | closed
+    opened_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    opening_cash = Column(Numeric(14, 2), nullable=False, default=0, server_default="0")
+    closed_at = Column(DateTime(timezone=True), nullable=True)
+    closed_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    # frozen at close
+    cash_in = Column(Numeric(14, 2), nullable=True)
+    cash_out = Column(Numeric(14, 2), nullable=True)
+    other_methods_in = Column(Numeric(14, 2), nullable=True)
+    expected_cash = Column(Numeric(14, 2), nullable=True)
+    counted_cash = Column(Numeric(14, 2), nullable=True)
+    difference = Column(Numeric(14, 2), nullable=True)  # counted - expected (negative = shortage)
+    notes = Column(Text, nullable=True)

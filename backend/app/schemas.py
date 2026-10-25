@@ -548,3 +548,30 @@ class ReturnOut(ORMModel):
     notes: Optional[str] = None
     created_at: datetime
     items: List[ReturnItemOut]
+
+
+# ---------- Cashier shifts ----------
+class ShiftOpen(BaseModel):
+    opening_cash: Decimal = Field(default=Decimal("0"), ge=0, description="Cash already in the drawer.")
+
+
+class ShiftClose(BaseModel):
+    counted_cash: Decimal = Field(ge=0, description="Cash actually counted in the drawer.")
+    notes: Optional[str] = None
+
+
+class ShiftOut(BaseModel):
+    id: int
+    user_id: int
+    username: str
+    status: str
+    opened_at: datetime
+    closed_at: Optional[datetime] = None
+    opening_cash: Decimal
+    cash_in: Decimal = Decimal("0")  # cash receipts from customers (+ cash refunds from suppliers)
+    cash_out: Decimal = Decimal("0")  # cash payments to suppliers (+ cash refunds to customers)
+    other_methods_in: Decimal = Decimal("0")  # bank / wallet / cheque receipts (not in the drawer)
+    expected_cash: Decimal = Decimal("0")
+    counted_cash: Optional[Decimal] = None
+    difference: Optional[Decimal] = None  # counted - expected; negative = shortage
+    notes: Optional[str] = None

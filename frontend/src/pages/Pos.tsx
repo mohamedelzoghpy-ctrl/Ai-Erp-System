@@ -5,6 +5,7 @@ import { METHOD_LABEL, money, num } from "../format";
 import { useAction, useFetch } from "../hooks";
 import type { Party, PaymentMethod, Product, Warehouse } from "../types";
 import { Alert, Field, Lookup, Modal, PageHeader } from "../ui";
+import { ShiftBar } from "./Shifts";
 
 interface CartLine {
   product: Product;
@@ -135,6 +136,7 @@ export default function Pos() {
         </select>
       </PageHeader>
 
+      <ShiftBar />
       <Alert>{search.error || sale.error || warehouses.error}</Alert>
       {notice && <Alert kind="info">{notice}</Alert>}
 
