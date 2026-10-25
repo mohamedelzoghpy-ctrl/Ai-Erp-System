@@ -1,6 +1,7 @@
-// Thin fetch wrapper. All calls go to /api/* (proxied to the FastAPI backend).
+// Thin fetch wrapper. Docker proxies /api/*; standalone deployments can set the API origin.
 
-const BASE = "/api";
+const BASE = import.meta.env.VITE_API_BASE_URL ?? "/api";
+const API_URL = (path: string) => `${BASE.replace(/\/$/, "")}${path}`;
 const TOKEN_KEY = "erp_token";
 
 export class ApiError extends Error {
@@ -58,7 +59,7 @@ async function request<T>(method: string, path: string, body?: unknown, form?: U
 
   let res: Response;
   try {
-    res = await fetch(BASE + path, { method, headers, body: payload });
+    res = await fetch(API_URL(path), { method, headers, body: payload });
   } catch {
     throw new ApiError(0, "تعذّر الاتصال بالخادم، تحقق من الشبكة");
   }
@@ -88,7 +89,7 @@ async function download(path: string, fallbackName: string): Promise<void> {
   if (token) headers.Authorization = `Bearer ${token}`;
   let res: Response;
   try {
-    res = await fetch(BASE + path, { headers });
+    res = await fetch(API_URL(path), { headers });
   } catch {
     throw new ApiError(0, "تعذّر الاتصال بالخادم، تحقق من الشبكة");
   }
