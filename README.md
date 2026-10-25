@@ -41,6 +41,7 @@ Set `VITE_BACKEND_URL` if the API runs elsewhere.
 - Dashboard and detailed reports with a custom date range: sales, purchases, inventory valuation, low stock
 - Export invoices and purchase orders as PDF or Excel; export every report to Excel
 - Accounts: customer receipts and supplier payments, opening balances, account statements (PDF/Excel), receivables and payables reports
+- Periodic stock-take (count sheet, differences, applied as stock adjustments)
 - Cashier shifts: open the drawer with a float, close against a cash count, expected vs counted difference
 - Sales and purchase returns (stock, balances, statements and aging stay consistent)
 - Point of sale screen: scan SKU, cart, cash change, credit or partial sales, invoice PDF

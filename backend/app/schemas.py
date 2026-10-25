@@ -585,3 +585,42 @@ class ShiftOut(BaseModel):
     difference: Optional[Decimal] = None  # counted - expected; negative = shortage
     notes: Optional[str] = None
     is_stale: bool = False  # still open long after it should have been closed
+
+
+# ---------- Stock-take ----------
+class StocktakeCreate(BaseModel):
+    warehouse_id: Optional[int] = None
+    notes: Optional[str] = None
+
+
+class StocktakeCount(BaseModel):
+    product_id: int
+    counted_qty: Optional[int] = Field(default=None, ge=0, description="null clears the count")
+
+
+class StocktakeCounts(BaseModel):
+    counts: List[StocktakeCount] = Field(min_length=1, max_length=2000)
+
+
+class StocktakeLineOut(ORMModel):
+    product_id: int
+    sku: Optional[str] = None
+    product_name: Optional[str] = None
+    system_qty: int
+    counted_qty: Optional[int] = None
+    difference: Optional[int] = None
+
+
+class StocktakeOut(BaseModel):
+    id: int
+    status: str
+    warehouse_id: Optional[int] = None
+    warehouse_name: Optional[str] = None
+    notes: Optional[str] = None
+    username: Optional[str] = None
+    created_at: datetime
+    applied_at: Optional[datetime] = None
+    lines_total: int
+    lines_counted: int
+    lines_with_difference: int
+    lines: Optional[List[StocktakeLineOut]] = None  # only in the detail view

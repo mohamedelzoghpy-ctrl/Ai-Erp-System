@@ -138,6 +138,15 @@ The sales summary report (`/reports/sales-summary`, and its Excel export) also b
 
 `GET /sales-orders/{id}/receipt` returns an 80 mm thermal-printer receipt PDF (items, total, paid/remaining); the POS success dialog has a button for it.
 
+## Stock-take (جرد)
+
+`POST /stocktakes` (any user; optional `warehouse_id`) snapshots the system quantity of every active product into a count sheet.
+`PUT /stocktakes/{id}/counts` saves counted quantities (`null` clears one; uncounted products are left untouched).
+`POST /stocktakes/{id}/apply` (manager/admin) adds `counted - system-at-sheet-time` to each counted product's **current** stock, so sales made
+while counting are not lost; it writes a `stocktake` stock movement (reference `ST-<id>`) only where there is a difference, and refuses
+(409) if an adjustment would make stock negative. `POST /stocktakes/{id}/cancel` discards an open count; `GET /stocktakes/{id}/xlsx`
+downloads the sheet. Applied and cancelled stock-takes are read-only. Everything is audit-logged.
+
 ## Cashier shifts
 
 `POST /shifts/open` (opening cash in the drawer) and `POST /shifts/{id}/close` (counted cash) give each cashier a drawer session; one open shift

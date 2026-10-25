@@ -12,6 +12,7 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    UniqueConstraint,
     func,
     text,
 )
@@ -405,3 +406,51 @@ class Shift(Base):
     counted_cash = Column(Numeric(14, 2), nullable=True)
     difference = Column(Numeric(14, 2), nullable=True)  # counted - expected (negative = shortage)
     notes = Column(Text, nullable=True)
+
+
+class Stocktake(Base):
+    """A physical count of stock. Lines snapshot the system quantity; applying turns count differences into adjustments."""
+
+    __tablename__ = "stocktakes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    status = Column(String(10), nullable=False, default="open", server_default="open", index=True)  # open | applied | cancelled
+    warehouse_id = Column(Integer, ForeignKey("warehouses.id"), nullable=True)  # NULL = all products
+    notes = Column(Text, nullable=True)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    username = Column(String(60), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    applied_at = Column(DateTime(timezone=True), nullable=True)
+    applied_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+    warehouse = relationship("Warehouse")
+    lines = relationship("StocktakeLine", back_populates="stocktake", cascade="all, delete-orphan", order_by="StocktakeLine.id")
+
+
+class StocktakeLine(Base):
+    __tablename__ = "stocktake_lines"
+    __table_args__ = (
+        UniqueConstraint("stocktake_id", "product_id", name="uq_stocktake_line_product"),
+        CheckConstraint("counted_qty IS NULL OR counted_qty >= 0", name="ck_stocktake_counted"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    stocktake_id = Column(Integer, ForeignKey("stocktakes.id", ondelete="CASCADE"), nullable=False, index=True)
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=False, index=True)
+    system_qty = Column(Integer, nullable=False)  # quantity when the sheet was created
+    counted_qty = Column(Integer, nullable=True)  # NULL = not counted (left untouched when applying)
+
+    stocktake = relationship("Stocktake", back_populates="lines")
+    product = relationship("Product")
+
+    @property
+    def sku(self):
+        return self.product.sku if self.product else None
+
+    @property
+    def product_name(self):
+        return self.product.name if self.product else None
+
+    @property
+    def difference(self):
+        return None if self.counted_qty is None else self.counted_qty - self.system_qty

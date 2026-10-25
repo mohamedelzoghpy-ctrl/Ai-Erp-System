@@ -37,6 +37,9 @@ export const REASON_LABEL: Record<string, string> = {
   purchase_receipt: "استلام مشتريات",
   sale: "بيع",
   adjustment: "تسوية",
+  stocktake: "جرد",
+  sales_return: "مرتجع بيع",
+  purchase_return: "مرتجع شراء",
 };
 
 export const METHOD_LABEL: Record<PaymentMethod, string> = {

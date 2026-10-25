@@ -14,6 +14,7 @@ const ENTITY: Record<string, string> = {
   warehouse: "مخزن",
   user: "مستخدم",
   shift: "وردية",
+  stocktake: "جرد",
 };
 
 const ACTION: Record<string, string> = {
@@ -28,6 +29,7 @@ const ACTION: Record<string, string> = {
   opening_balance: "تغيير رصيد أول المدة",
   login: "تسجيل دخول",
   open: "فتح",
+  apply: "اعتماد",
   close: "إغلاق",
 };
 

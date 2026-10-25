@@ -125,6 +125,7 @@ export const api = {
   },
   post: <T>(path: string, body?: unknown) => request<T>("POST", path, body ?? {}),
   patch: <T>(path: string, body: unknown) => request<T>("PATCH", path, body),
+  put: <T>(path: string, body: unknown) => request<T>("PUT", path, body),
   del: (path: string) => request<void>("DELETE", path),
   login: (username: string, password: string) =>
     request<{ access_token: string }>("POST", "/auth/login", undefined, new URLSearchParams({ username, password })),

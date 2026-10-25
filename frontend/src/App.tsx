@@ -9,6 +9,7 @@ import { PurchaseOrders, SalesOrders } from "./pages/Orders";
 import Payments from "./pages/Accounts";
 import AuditLog from "./pages/AuditLog";
 import Shifts from "./pages/Shifts";
+import Stocktakes from "./pages/Stocktakes";
 import Pos from "./pages/Pos";
 import Returns from "./pages/Returns";
 import Reports from "./pages/Reports";
@@ -32,6 +33,7 @@ export default function App() {
         <Route path="purchase-orders" element={<PurchaseOrders />} />
         <Route path="sales-orders" element={<SalesOrders />} />
         <Route path="pos" element={<Pos />} />
+        <Route path="stocktakes" element={<Stocktakes />} />
         <Route path="shifts" element={<Shifts />} />
         <Route path="returns" element={<Returns />} />
         <Route path="payments" element={<Payments />} />

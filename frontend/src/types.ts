@@ -277,3 +277,27 @@ export interface Shift {
   notes: string | null;
   is_stale: boolean;
 }
+
+export interface StocktakeLine {
+  product_id: number;
+  sku: string | null;
+  product_name: string | null;
+  system_qty: number;
+  counted_qty: number | null;
+  difference: number | null;
+}
+
+export interface Stocktake {
+  id: number;
+  status: "open" | "applied" | "cancelled";
+  warehouse_id: number | null;
+  warehouse_name: string | null;
+  notes: string | null;
+  username: string | null;
+  created_at: string;
+  applied_at: string | null;
+  lines_total: number;
+  lines_counted: number;
+  lines_with_difference: number;
+  lines: StocktakeLine[] | null;
+}
