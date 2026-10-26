@@ -98,6 +98,23 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
       <PageHeader title={platform ? "إدارة الشركات" : "الفروع وإعدادات الشركة"} />
       <Alert>{error || currentCompany.error || branches.error || companies.error}</Alert>
 
+      {platform && (
+        <div className="card" style={{ padding: 20, marginBottom: 16 }}>
+          <h2>إضافة شركة ومديرها الأول</h2>
+          <form onSubmit={addCompany}>
+            <div className="form-grid">
+              <Field label="اسم الشركة"><input value={companyName} onChange={(e) => setCompanyName(e.target.value)} required /></Field>
+              <Field label="رمز الشركة"><input dir="ltr" value={companyCode} onChange={(e) => setCompanyCode(e.target.value)} required /></Field>
+              <Field label="الحد الأقصى للمخازن لكل فرع" hint="اتركه فارغًا لعدد غير محدود"><input type="number" min={1} value={companyWarehouseLimit} onChange={(e) => setCompanyWarehouseLimit(e.target.value)} /></Field>
+              <Field label="اسم مستخدم المدير الأول"><input dir="ltr" minLength={3} value={adminUsername} onChange={(e) => setAdminUsername(e.target.value)} required /></Field>
+              <Field label="اسم المدير"><input value={adminName} onChange={(e) => setAdminName(e.target.value)} /></Field>
+              <Field label="كلمة مرور المدير"><input type="password" minLength={8} value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)} required /></Field>
+            </div>
+            <button className="btn btn-primary" disabled={busy}>إنشاء الشركة</button>
+          </form>
+        </div>
+      )}
+
       <div className="card" style={{ padding: 20, marginBottom: 16 }}>
         <h2>{currentCompany.data?.name || "الشركة الحالية"}</h2>
         <p className="muted">
@@ -211,20 +228,6 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
             )}
           </div>
 
-          <div className="card" style={{ padding: 20 }}>
-            <h2>إضافة شركة ومديرها الأول</h2>
-            <form onSubmit={addCompany}>
-              <div className="form-grid">
-                <Field label="اسم الشركة"><input value={companyName} onChange={(e) => setCompanyName(e.target.value)} required /></Field>
-                <Field label="رمز الشركة"><input dir="ltr" value={companyCode} onChange={(e) => setCompanyCode(e.target.value)} required /></Field>
-                <Field label="الحد الأقصى للمخازن لكل فرع" hint="اتركه فارغًا لعدد غير محدود"><input type="number" min={1} value={companyWarehouseLimit} onChange={(e) => setCompanyWarehouseLimit(e.target.value)} /></Field>
-                <Field label="اسم مستخدم المدير الأول"><input dir="ltr" minLength={3} value={adminUsername} onChange={(e) => setAdminUsername(e.target.value)} required /></Field>
-                <Field label="اسم المدير"><input value={adminName} onChange={(e) => setAdminName(e.target.value)} /></Field>
-                <Field label="كلمة مرور المدير"><input type="password" minLength={8} value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)} required /></Field>
-              </div>
-              <button className="btn btn-primary" disabled={busy}>إنشاء الشركة</button>
-            </form>
-          </div>
         </>
       )}
     </>
