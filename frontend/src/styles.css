@@ -39,6 +39,9 @@ button, input, select, textarea { font: inherit; }
 .nav a:hover { background: #222f42; }
 .nav a.active { background: var(--primary); color: #fff; }
 .nav .section { font-size: 12px; color: #7d8aa0; padding: 14px 12px 4px; }
+.nav .section-toggle { display: flex; align-items: center; justify-content: space-between; width: 100%; border: 0; background: transparent; cursor: pointer; font: inherit; text-align: start; }
+.nav .section-toggle:hover { color: #c7d2e3; }
+.nav .section-chevron { font-size: 11px; }
 .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .topbar {
   display: flex; align-items: center; justify-content: flex-end; gap: 14px;
