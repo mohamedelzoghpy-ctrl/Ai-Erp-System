@@ -83,7 +83,7 @@ export default function Layout() {
             </>
           ))}
           {isPlatformAdmin && (
-            <NavLink to="/platform/companies" className={link}>إدارة الشركات (الفروع/المخازن)</NavLink>
+            <NavLink to="/platform/companies" className={link}>إدارة الشركات</NavLink>
           )}
         </nav>
       </aside>
