@@ -76,14 +76,14 @@ export default function Layout() {
               <NavLink to="/audit" className={link}>سجل النشاط</NavLink>
             </>
           ))}
-          {isManager && section("comp", "الشركة", (
+          {isManager && !isPlatformAdmin && section("comp", "الشركة", (
             <>
               <NavLink to="/users" className={link}>الموظفون</NavLink>
               <NavLink to="/company" className={link}>الفروع والإعدادات</NavLink>
             </>
           ))}
           {isPlatformAdmin && (
-            <NavLink to="/platform/companies" className={link}>إدارة الشركات</NavLink>
+            <NavLink to="/platform/companies" className={link}>إدارة الشركات (الفروع/المخازن)</NavLink>
           )}
         </nav>
       </aside>
