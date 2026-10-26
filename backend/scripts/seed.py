@@ -21,7 +21,7 @@ DEFAULT_PRODUCTS = [
 
 
 def seed(db: Session) -> None:
-    company = db.query(models.Company).filter(models.Company.code == "default").one_or_none()
+    company = db.query(models.Company).order_by(models.Company.id).first()
     if company is None:
         print("No default company found. Run first-run setup first.")
         return
