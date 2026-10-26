@@ -206,6 +206,71 @@ def remove_company_member(company_id: int, user_id: int, db: Session = Depends(g
         user.active_company_id = other.company_id if other else None
     db.commit()
     audit(db, actor, "remove_member", "company", db.get(models.Company, company_id), f"user {user_id}")
+@platform.get("/companies/{company_id}/branches", response_model=List[schemas.BranchOut])
+def platform_list_branches(company_id: int, db: Session = Depends(get_db), _: models.User = Depends(require_platform_admin)):
+    company = db.get(models.Company, company_id)
+    if company is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Company not found")
+    return db.query(models.Branch).filter(models.Branch.company_id == company_id).order_by(models.Branch.id).all()
+
+
+@platform.post("/companies/{company_id}/branches", response_model=schemas.BranchOut, status_code=status.HTTP_201_CREATED)
+def platform_create_branch(company_id: int, payload: schemas.BranchCreate, db: Session = Depends(get_db), actor: models.User = Depends(require_platform_admin)):
+    company = db.get(models.Company, company_id)
+    if company is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Company not found")
+    branch = models.Branch(company_id=company_id, name=payload.name.strip(), code=payload.code.strip(), location=payload.location)
+    db.add(branch)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, "Branch code already exists for this company")
+    db.refresh(branch)
+    audit(db, actor, "create", "branch", branch, f"{branch.code} · {company.code}")
+    return branch
+
+
+@platform.get("/companies/{company_id}/warehouses", response_model=List[schemas.WarehouseOut])
+def platform_list_warehouses(company_id: int, db: Session = Depends(get_db), _: models.User = Depends(require_platform_admin)):
+    company = db.get(models.Company, company_id)
+    if company is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Company not found")
+    return db.query(models.Warehouse).filter(models.Warehouse.company_id == company_id).order_by(models.Warehouse.id).all()
+
+
+@platform.post("/companies/{company_id}/warehouses", response_model=schemas.WarehouseOut, status_code=status.HTTP_201_CREATED)
+def platform_create_warehouse(company_id: int, payload: schemas.WarehouseCreate, db: Session = Depends(get_db), actor: models.User = Depends(require_platform_admin)):
+    company = db.get(models.Company, company_id)
+    if company is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Company not found")
+    branch_id = payload.branch_id
+    if branch_id is None:
+        branch = db.query(models.Branch).filter(models.Branch.company_id == company_id).order_by(models.Branch.id).first()
+        if branch is None:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Create a branch first")
+        branch_id = branch.id
+    else:
+        branch = db.get(models.Branch, branch_id)
+        if branch is None or branch.company_id != company_id:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Branch does not belong to this company")
+    # Enforce per-branch warehouse limit.
+    if company.max_warehouses_per_branch is not None:
+        count = db.query(models.Warehouse).filter(models.Warehouse.branch_id == branch_id).count()
+        if count >= company.max_warehouses_per_branch:
+            raise HTTPException(status.HTTP_409_CONFLICT, f"Branch warehouse limit reached ({company.max_warehouses_per_branch})")
+    wh = models.Warehouse(company_id=company_id, branch_id=branch_id, name=payload.name.strip(), code=payload.code.strip(), location=payload.location, is_active=payload.is_active)
+    db.add(wh)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, "Warehouse code already exists for this company")
+    db.refresh(wh)
+    audit(db, actor, "create", "warehouse", wh, f"{wh.code} · {company.code}")
+    return wh
+
+
 @company.get("", response_model=schemas.CompanyOut)
 def get_company(db: Session = Depends(get_db), _: models.User = Depends(get_current_user)):
     result = db.get(models.Company, db.info["company_id"])
