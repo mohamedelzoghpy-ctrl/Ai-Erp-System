@@ -25,6 +25,14 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
   const [memberUsername, setMemberUsername] = useState("");
   const [memberRole, setMemberRole] = useState("staff");
   const [members, setMembers] = useState<{ user_id: number; username: string; full_name: string | null; role: string }[]>([]);
+  const [selBranches, setSelBranches] = useState<{ id: number; name: string; code: string; location: string | null; is_active: boolean }[]>([]);
+  const [selWarehouses, setSelWarehouses] = useState<{ id: number; name: string; code: string; branch_id: number; location: string | null; is_active: boolean }[]>([]);
+  const [newBranchName, setNewBranchName] = useState("");
+  const [newBranchCode, setNewBranchCode] = useState("");
+  const [newWhName, setNewWhName] = useState("");
+  const [newWhCode, setNewWhCode] = useState("");
+  const [newWhBranch, setNewWhBranch] = useState<number | null>(null);
+  const [newWhLocation, setNewWhLocation] = useState("");
   const [companyWarehouseLimit, setCompanyWarehouseLimit] = useState("");
   const { busy, error, run } = useAction();
 
@@ -52,6 +60,8 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
   const loadMembers = (companyId: number) => {
     setMemberCompany(companyId);
     void api.get<{ user_id: number; username: string; full_name: string | null; role: string }[]>(`/platform/companies/${companyId}/members`).then(setMembers).catch(() => setMembers([]));
+    void api.get<{ id: number; name: string; code: string; location: string | null; is_active: boolean }[]>(`/platform/companies/${companyId}/branches`).then(setSelBranches).catch(() => setSelBranches([]));
+    void api.get<{ id: number; name: string; code: string; branch_id: number; location: string | null; is_active: boolean }[]>(`/platform/companies/${companyId}/warehouses`).then(setSelWarehouses).catch(() => setSelWarehouses([]));
   };
 
   const addMember = (e: FormEvent) => {
@@ -64,7 +74,27 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
     });
   };
 
-  const removeMember = (userId: number) => {
+  const addSelBranch = (e: FormEvent) => {
+    e.preventDefault();
+    if (!memberCompany) return;
+    void run(async () => {
+      await api.post(`/platform/companies/${memberCompany}/branches`, { name: newBranchName.trim(), code: newBranchCode.trim() });
+      setNewBranchName(""); setNewBranchCode("");
+      loadMembers(memberCompany);
+    });
+  };
+
+  const addSelWarehouse = (e: FormEvent) => {
+    e.preventDefault();
+    if (!memberCompany) return;
+    void run(async () => {
+      await api.post(`/platform/companies/${memberCompany}/warehouses`, { name: newWhName.trim(), code: newWhCode.trim(), branch_id: newWhBranch, location: newWhLocation.trim() || null });
+      setNewWhName(""); setNewWhCode(""); setNewWhBranch(null); setNewWhLocation("");
+      loadMembers(memberCompany);
+    });
+  };
+
+  const removeSelMember = (userId: number) => {
     if (!memberCompany) return;
     if (!confirm("إزالة العضوية؟")) return;
     void run(async () => {
@@ -203,7 +233,7 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
                             <td>{m.full_name || "—"}</td>
                             <td>{m.role}</td>
                             <td className="actions">
-                              <button className="btn btn-sm btn-danger" onClick={() => removeMember(m.user_id)}>إزالة</button>
+                              <button className="btn btn-sm btn-danger" onClick={() => removeSelMember(m.user_id)}>إزالة</button>
                             </td>
                           </tr>
                         ))}
@@ -224,7 +254,46 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
                   </Field>
                   <button className="btn btn-primary" disabled={busy}>إضافة عضوية</button>
                 </form>
-              </>
+                 <h3 style={{ marginTop: 16 }}>الفروع</h3>
+                 {selBranches.length > 0 ? (
+                   <div className="table-wrap" style={{ marginBottom: 12 }}>
+                     <table>
+                       <thead><tr><th>الاسم</th><th>الرمز</th><th>الموقع</th><th>الحالة</th></tr></thead>
+                       <tbody>{selBranches.map((b) => (
+                         <tr key={b.id}><td>{b.name}</td><td dir="ltr">{b.code}</td><td>{b.location || "—"}</td><td>{b.is_active ? "نشط" : "معطّل"}</td></tr>
+                       ))}</tbody>
+                     </table>
+                   </div>
+                 ) : <Empty>لا توجد فروع.</Empty>}
+                 <form onSubmit={addSelBranch} className="form-grid" style={{ marginBottom: 16 }}>
+                   <Field label="اسم الفرع"><input value={newBranchName} onChange={(e) => setNewBranchName(e.target.value)} required /></Field>
+                   <Field label="رمز الفرع"><input dir="ltr" value={newBranchCode} onChange={(e) => setNewBranchCode(e.target.value)} required /></Field>
+                   <button className="btn btn-primary" disabled={busy}>إضافة فرع</button>
+                 </form>
+
+                 <h3>المخازن</h3>
+                 {selWarehouses.length > 0 ? (
+                   <div className="table-wrap" style={{ marginBottom: 12 }}>
+                     <table>
+                       <thead><tr><th>الاسم</th><th>الكود</th><th>الفرع</th><th>الموقع</th><th>الحالة</th></tr></thead>
+                       <tbody>{selWarehouses.map((w) => (
+                         <tr key={w.id}><td>{w.name}</td><td>{w.code}</td><td>{selBranches.find((b) => b.id === w.branch_id)?.name || "—"}</td><td>{w.location || "—"}</td><td>{w.is_active ? "نشط" : "معطّل"}</td></tr>
+                       ))}</tbody>
+                     </table>
+                   </div>
+                 ) : <Empty>لا توجد مخازن.</Empty>}
+                 <form onSubmit={addSelWarehouse} className="form-grid">
+                   <Field label="اسم المخزن"><input value={newWhName} onChange={(e) => setNewWhName(e.target.value)} required /></Field>
+                   <Field label="كود المخزن"><input dir="ltr" value={newWhCode} onChange={(e) => setNewWhCode(e.target.value)} required /></Field>
+                   <Field label="الفرع">
+                     <select value={newWhBranch ?? ""} onChange={(e) => setNewWhBranch(Number(e.target.value) || null)}>
+                       <option value="">— اختر فرع —</option>
+                       {selBranches.map((b) => (<option key={b.id} value={b.id}>{b.name}</option>))}
+                     </select>
+                   </Field>
+                   <Field label="الموقع"><input value={newWhLocation} onChange={(e) => setNewWhLocation(e.target.value)} /></Field>
+                   <button className="btn btn-primary" disabled={busy}>إضافة مخزن</button>
+                 </form>              </>
             )}
           </div>
 
