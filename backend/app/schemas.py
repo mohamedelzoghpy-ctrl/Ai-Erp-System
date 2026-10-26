@@ -282,6 +282,11 @@ class SwitchCompany(BaseModel):
     company_id: int
 
 
+class CompanyMembershipCreate(BaseModel):
+    username: str = Field(min_length=3, max_length=60)
+    role: str = Field(default="staff", pattern="^(admin|manager|staff)$")
+
+
 class BranchCreate(BaseModel):
     name: str = Field(min_length=1, max_length=150)
     code: str = Field(min_length=1, max_length=50)

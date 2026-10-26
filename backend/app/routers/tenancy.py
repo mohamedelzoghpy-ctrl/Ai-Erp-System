@@ -151,6 +151,61 @@ def create_company(
     return company_obj
 
 
+@platform.get("/companies/{company_id}/members")
+def list_company_members(company_id: int, db: Session = Depends(get_db), _: models.User = Depends(require_platform_admin)):
+    company = db.get(models.Company, company_id)
+    if company is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Company not found")
+    memberships = db.query(models.UserCompanyMembership).filter(models.UserCompanyMembership.company_id == company_id).all()
+    out = []
+    for m in memberships:
+        u = db.get(models.User, m.user_id)
+        if u is None:
+            continue
+        out.append({"user_id": u.id, "username": u.username, "full_name": u.full_name, "role": m.role})
+    return out
+
+
+@platform.post("/companies/{company_id}/members", status_code=status.HTTP_201_CREATED)
+def add_company_member(company_id: int, payload: schemas.CompanyMembershipCreate, db: Session = Depends(get_db), actor: models.User = Depends(require_platform_admin)):
+    company = db.get(models.Company, company_id)
+    if company is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Company not found")
+    user = db.query(models.User).filter(models.User.username == payload.username.strip().lower()).one_or_none()
+    if user is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"User '{payload.username}' not found")
+    existing = db.query(models.UserCompanyMembership).filter(
+        models.UserCompanyMembership.user_id == user.id,
+        models.UserCompanyMembership.company_id == company_id,
+    ).one_or_none()
+    if existing is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "User is already a member of this company")
+    membership = models.UserCompanyMembership(user_id=user.id, company_id=company_id, role=payload.role)
+    db.add(membership)
+    # If user has no active company, set this one.
+    if user.active_company_id is None:
+        user.active_company_id = company_id
+    db.commit()
+    audit(db, actor, "add_member", "company", company, f"{user.username} ({payload.role})")
+    return {"user_id": user.id, "username": user.username, "role": payload.role}
+
+
+@platform.delete("/companies/{company_id}/members/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_company_member(company_id: int, user_id: int, db: Session = Depends(get_db), actor: models.User = Depends(require_platform_admin)):
+    membership = db.query(models.UserCompanyMembership).filter(
+        models.UserCompanyMembership.user_id == user_id,
+        models.UserCompanyMembership.company_id == company_id,
+    ).one_or_none()
+    if membership is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Membership not found")
+    user = db.get(models.User, user_id)
+    db.delete(membership)
+    # If removed the active company, switch to another membership if any.
+    if user is not None and user.active_company_id == company_id:
+        other = db.query(models.UserCompanyMembership).filter(models.UserCompanyMembership.user_id == user_id).first()
+        user.active_company_id = other.company_id if other else None
+    db.commit()
+    audit(db, actor, "remove_member", "company", db.get(models.Company, company_id), f"user {user_id}")
 @company.get("", response_model=schemas.CompanyOut)
 def get_company(db: Session = Depends(get_db), _: models.User = Depends(get_current_user)):
     result = db.get(models.Company, db.info["company_id"])

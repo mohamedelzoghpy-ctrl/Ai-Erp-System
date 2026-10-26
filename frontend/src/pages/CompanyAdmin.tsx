@@ -21,6 +21,10 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
   const [adminUsername, setAdminUsername] = useState("");
   const [adminName, setAdminName] = useState("");
   const [adminPassword, setAdminPassword] = useState("");
+  const [memberCompany, setMemberCompany] = useState<number | null>(null);
+  const [memberUsername, setMemberUsername] = useState("");
+  const [memberRole, setMemberRole] = useState("staff");
+  const [members, setMembers] = useState<{ user_id: number; username: string; full_name: string | null; role: string }[]>([]);
   const [companyWarehouseLimit, setCompanyWarehouseLimit] = useState("");
   const { busy, error, run } = useAction();
 
@@ -45,6 +49,29 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
     });
   };
 
+  const loadMembers = (companyId: number) => {
+    setMemberCompany(companyId);
+    void api.get<{ user_id: number; username: string; full_name: string | null; role: string }[]>(`/platform/companies/${companyId}/members`).then(setMembers).catch(() => setMembers([]));
+  };
+
+  const addMember = (e: FormEvent) => {
+    e.preventDefault();
+    if (!memberCompany) return;
+    void run(async () => {
+      await api.post(`/platform/companies/${memberCompany}/members`, { username: memberUsername.trim(), role: memberRole });
+      setMemberUsername("");
+      loadMembers(memberCompany);
+    });
+  };
+
+  const removeMember = (userId: number) => {
+    if (!memberCompany) return;
+    if (!confirm("إزالة العضوية؟")) return;
+    void run(async () => {
+      await api.del(`/platform/companies/${memberCompany}/members/${userId}`);
+      loadMembers(memberCompany);
+    });
+  };
   const addCompany = (e: FormEvent) => {
     e.preventDefault();
     void run(async () => {
@@ -133,6 +160,57 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
               </table>
             ) : <Empty>لا توجد شركات.</Empty>}
           </div>
+          <div className="card" style={{ padding: 20, marginBottom: 16 }}>
+            <h2>ربط المستخدمين بالشركات (تبديل شركة)</h2>
+            <p className="muted" style={{ marginTop: 0 }}>اختر شركة لعرض/إدارة أعضائها. المستخدم الذي ينتمي لأكثر من شركة سيظهر له مُبدِّل "الشركة" في الشريط العلوي.</p>
+            <div className="form-grid" style={{ marginBottom: 12 }}>
+              <Field label="الشركة">
+                <select value={memberCompany ?? ""} onChange={(e) => { const v = Number(e.target.value); if (v) loadMembers(v); }}>
+                  <option value="">— اختر —</option>
+                  {companies.data?.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name} ({c.code})</option>
+                  ))}
+                </select>
+              </Field>
+            </div>
+            {memberCompany && (
+              <>
+                {members.length > 0 ? (
+                  <div className="table-wrap" style={{ marginBottom: 12 }}>
+                    <table>
+                      <thead><tr><th>اسم المستخدم</th><th>الاسم</th><th>الدور</th><th /></tr></thead>
+                      <tbody>
+                        {members.map((m) => (
+                          <tr key={m.user_id}>
+                            <td dir="ltr">{m.username}</td>
+                            <td>{m.full_name || "—"}</td>
+                            <td>{m.role}</td>
+                            <td className="actions">
+                              <button className="btn btn-sm btn-danger" onClick={() => removeMember(m.user_id)}>إزالة</button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <Empty>لا يوجد أعضاء بعد.</Empty>
+                )}
+                <form onSubmit={addMember} className="form-grid">
+                  <Field label="اسم المستخدم (موجود)"><input dir="ltr" value={memberUsername} onChange={(e) => setMemberUsername(e.target.value)} required /></Field>
+                  <Field label="الدور">
+                    <select value={memberRole} onChange={(e) => setMemberRole(e.target.value)}>
+                      <option value="staff">موظف</option>
+                      <option value="manager">مدير</option>
+                      <option value="admin">مدير عام</option>
+                    </select>
+                  </Field>
+                  <button className="btn btn-primary" disabled={busy}>إضافة عضوية</button>
+                </form>
+              </>
+            )}
+          </div>
+
           <div className="card" style={{ padding: 20 }}>
             <h2>إضافة شركة ومديرها الأول</h2>
             <form onSubmit={addCompany}>
