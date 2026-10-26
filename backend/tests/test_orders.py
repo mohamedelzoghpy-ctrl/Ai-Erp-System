@@ -8,9 +8,13 @@ from app.routers import orders
 
 
 class FakeSession:
-    def __init__(self):
+    def __init__(self, stock=None):
         self.added = []
         self.rolled_back = False
+        self.stock = stock if stock is not None else {}  # {(product_id, warehouse_id): ProductStock-like}
+
+    def get(self, model, key):
+        return self.stock.get(key) if model is models.ProductStock else None
 
     def add(self, item):
         self.added.append(item)
@@ -35,7 +39,7 @@ def test_apply_sale_stock_aggregates_duplicate_lines_and_locks_in_order(monkeypa
         return products[product_id]
 
     monkeypatch.setattr(orders, "_locked_product", lock_product)
-    db = FakeSession()
+    db = FakeSession({(2, 3): SimpleNamespace(quantity=6), (7, 3): SimpleNamespace(quantity=10)})
     order = SimpleNamespace(
         id=42,
         warehouse_id=3,
@@ -47,6 +51,7 @@ def test_apply_sale_stock_aggregates_duplicate_lines_and_locks_in_order(monkeypa
     assert locked_ids == [2, 7]
     assert products[2].quantity == 5
     assert products[7].quantity == 5
+    assert db.stock[(2, 3)].quantity == 5 and db.stock[(7, 3)].quantity == 5  # the warehouse's own quantity moves too
     movements = [item for item in db.added if isinstance(item, models.StockMovement)]
     assert {(item.product_id, item.change, item.reason, item.reference) for item in movements} == {
         (2, -1, "sale", "SO-42"),
@@ -61,7 +66,7 @@ def test_apply_sale_stock_rolls_back_without_deducting_any_stock_on_shortage(mon
         7: SimpleNamespace(id=7, name="Product 7", quantity=4),
     }
     monkeypatch.setattr(orders, "_locked_product", lambda _db, product_id: products[product_id])
-    db = FakeSession()
+    db = FakeSession({(2, 3): SimpleNamespace(quantity=6), (7, 3): SimpleNamespace(quantity=4)})
     order = SimpleNamespace(
         id=43,
         warehouse_id=3,
@@ -75,5 +80,6 @@ def test_apply_sale_stock_rolls_back_without_deducting_any_stock_on_shortage(mon
     assert "need 5, have 4" in exc_info.value.detail
     assert products[2].quantity == 6
     assert products[7].quantity == 4
+    assert db.stock[(2, 3)].quantity == 6 and db.stock[(7, 3)].quantity == 4
     assert db.rolled_back
     assert db.added == []

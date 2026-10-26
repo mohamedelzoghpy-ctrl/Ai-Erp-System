@@ -17,7 +17,7 @@ from ..accounts import attach_settlement
 from ..audit import audit
 from ..deps import get_current_user
 from ..pagination import paginate
-from .. import exports, models, schemas
+from .. import exports, models, schemas, stock
 from ..database import get_db
 
 purchases = APIRouter(prefix="/purchase-orders", tags=["purchases"], dependencies=[Depends(get_current_user)])
@@ -112,17 +112,8 @@ def receive_purchase_order(order_id: int, db: Session = Depends(get_db), user: m
     _require_draft(order, "receive")
     for item in order.items:
         product = _locked_product(db, item.product_id)
-        product.quantity += item.quantity
+        stock.move_stock(db, product, order.warehouse_id, item.quantity, "purchase_receipt", f"PO-{order.id}")
         product.cost_price = item.unit_cost
-        db.add(
-            models.StockMovement(
-                product_id=product.id,
-                warehouse_id=order.warehouse_id,
-                change=item.quantity,
-                reason="purchase_receipt",
-                reference=f"PO-{order.id}",
-            )
-        )
     order.status = "received"
     audit(db, user, 'receive', 'purchase_order', order, f"إجمالي {order.total_amount}")
     db.commit()
@@ -152,25 +143,16 @@ def apply_sale_stock(db: Session, order) -> None:
 
     products = {pid: _locked_product(db, pid) for pid in sorted(needed)}
     shortages = [
-        f"product {pid} ('{p.name}'): need {needed[pid]}, have {p.quantity}"
+        stock.shortage_message(db, p, order.warehouse_id, needed[pid])
         for pid, p in products.items()
-        if p.quantity < needed[pid]
+        if stock.available(db, pid, order.warehouse_id) < needed[pid]
     ]
     if shortages:
         db.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, "Insufficient stock: " + "; ".join(shortages))
 
     for pid, qty in needed.items():
-        products[pid].quantity -= qty
-        db.add(
-            models.StockMovement(
-                product_id=pid,
-                warehouse_id=order.warehouse_id,
-                change=-qty,
-                reason="sale",
-                reference=f"SO-{order.id}",
-            )
-        )
+        stock.move_stock(db, products[pid], order.warehouse_id, -qty, "sale", f"SO-{order.id}")
 
 
 @sales.post("", response_model=schemas.SalesOrderOut, status_code=status.HTTP_201_CREATED)

@@ -38,6 +38,8 @@ export const REASON_LABEL: Record<string, string> = {
   sale: "بيع",
   adjustment: "تسوية",
   stocktake: "جرد",
+  transfer_out: "تحويل (صادر)",
+  transfer_in: "تحويل (وارد)",
   sales_return: "مرتجع بيع",
   purchase_return: "مرتجع شراء",
 };

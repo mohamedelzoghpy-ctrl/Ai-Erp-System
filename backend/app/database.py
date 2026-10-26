@@ -3,7 +3,7 @@
 import os
 from typing import Generator
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
 from sqlalchemy.orm import with_loader_criteria
 
@@ -61,6 +61,9 @@ def _scope_tenant_queries(execute_state) -> None:
     ):
         branch_ids = execute_state.session.info.get("visible_branch_ids", ())
         warehouse_ids = execute_state.session.info.get("warehouse_ids", ())
+        stocked_product_ids = select(models.ProductStock.product_id).where(
+            models.ProductStock.warehouse_id.in_(warehouse_ids), models.ProductStock.quantity > 0
+        )
         execute_state.statement = execute_state.statement.options(
             with_loader_criteria(
                 models.Branch,
@@ -74,7 +77,10 @@ def _scope_tenant_queries(execute_state) -> None:
             ),
             with_loader_criteria(
                 models.Product,
-                lambda entity: entity.warehouse_id.is_(None) | entity.warehouse_id.in_(warehouse_ids),
+                # a product is visible through its own warehouse, or through any stock it holds in one of the staff's warehouses
+                lambda entity: entity.warehouse_id.is_(None)
+                | entity.warehouse_id.in_(warehouse_ids)
+                | entity.id.in_(stocked_product_ids),
                 include_aliases=True,
             ),
         )
@@ -100,6 +106,17 @@ def _scope_tenant_queries(execute_state) -> None:
             with_loader_criteria(
                 models.Stocktake,
                 lambda entity: entity.warehouse_id.in_(warehouse_ids),
+                include_aliases=True,
+            ),
+            with_loader_criteria(
+                models.ProductStock,
+                lambda entity: entity.warehouse_id.in_(warehouse_ids),
+                include_aliases=True,
+            ),
+            # a transfer is visible to staff who can access either of its warehouses
+            with_loader_criteria(
+                models.StockTransfer,
+                lambda entity: entity.from_warehouse_id.in_(warehouse_ids) | entity.to_warehouse_id.in_(warehouse_ids),
                 include_aliases=True,
             ),
         )

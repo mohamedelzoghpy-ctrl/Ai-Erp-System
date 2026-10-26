@@ -192,6 +192,65 @@ class _Pdf:
         return self.buf.getvalue()
 
 
+def build_transfer_pdf(tr: Dict[str, Any]) -> bytes:
+    """Warehouse transfer note (A4): from/to, items table, signature lines for sender and receiver."""
+    pdf = _Pdf(f"سند تحويل TR-{tr['id']}")
+    c = pdf.c
+    pdf.text(RIGHT, pdf.y - 16, COMPANY_NAME, font="Amiri-Bold", size=19)
+    pdf.text(LEFT, pdf.y - 16, "سند تحويل مخزني", font="Amiri-Bold", size=19, align="l", color=ACCENT)
+    pdf.text(LEFT, pdf.y - 36, f"# TR-{tr['id']}", font="Amiri-Bold", size=13, align="l")
+    pdf.y -= 52
+    pdf.rule(pdf.y)
+    pdf.y -= 24
+    for label, value in (("من مخزن", tr["from"]), ("إلى مخزن", tr["to"]), ("التاريخ", fmt_dt(tr["date"])), ("أنشأه", tr.get("user") or "—")):
+        pdf.text(RIGHT, pdf.y, f"{label}:", font="Amiri-Bold", size=11.5, color=MUTED)
+        pdf.text(RIGHT - 90, pdf.y, value or "—", size=11.5)
+        pdf.y -= 19
+    pdf.y -= 10
+
+    cols = [("#", 28, "c"), ("الكود", 100, "c"), ("الصنف", 307, "r"), ("الكمية", 80, "c")]  # first = rightmost
+
+    def header() -> None:
+        c.setFillColor(HEAD_BG)
+        c.rect(LEFT, pdf.y - 6, CONTENT_W, 22, stroke=0, fill=1)
+        x = RIGHT
+        for name, w, align in cols:
+            pdf.text(x - 4 if align == "r" else x - w / 2, pdf.y, name, font="Amiri-Bold", size=10.5, align="r" if align == "r" else "c")
+            x -= w
+        pdf.y -= 24
+
+    header()
+    total = 0
+    for i, it in enumerate(tr["items"], 1):
+        pdf.ensure(24, header)
+        x = RIGHT
+        for (name, w, align), value in zip(cols, (str(i), it["sku"] or "", it["name"] or "", fmt_int(it["quantity"]))):
+            if align == "r":
+                pdf.text(x - 4, pdf.y, value, size=10.5)
+            else:
+                pdf.text(x - w / 2, pdf.y, value, size=10.5, align="c")
+            x -= w
+        total += it["quantity"]
+        pdf.rule(pdf.y - 7)
+        pdf.y -= 22
+    pdf.text(RIGHT - 4, pdf.y - 4, f"إجمالي القطع: {fmt_int(total)}", font="Amiri-Bold", size=12)
+    pdf.y -= 30
+    if tr.get("notes"):
+        pdf.text(RIGHT, pdf.y, "ملاحظات:", font="Amiri-Bold", size=11, color=MUTED)
+        pdf.y -= 16
+        for ln in pdf.wrap(tr["notes"], "Amiri", 11, CONTENT_W):
+            pdf.ensure(16)
+            pdf.text(RIGHT, pdf.y, ln, size=11)
+            pdf.y -= 15
+    pdf.ensure(80)
+    pdf.y -= 40
+    for x, label in ((RIGHT, "توقيع المُسلِّم"), (LEFT + 190, "توقيع المستلم")):
+        c.setStrokeColor(RULE)
+        c.line(x - 170, pdf.y, x, pdf.y)
+        pdf.text(x, pdf.y - 16, label, size=10.5, color=MUTED)
+    return pdf.finish()
+
+
 def build_shift_pdf(shift: Dict[str, Any]) -> bytes:
     """Shift closing report (A4): cash reconciliation plus signature lines."""
     pdf = _Pdf(f"تقرير وردية {shift['id']}")

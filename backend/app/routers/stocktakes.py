@@ -6,7 +6,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session, joinedload
 
-from .. import exports, models, schemas
+from .. import exports, models, schemas, stock
 from ..audit import audit
 from ..database import get_db
 from ..deps import get_current_user, require_manager, user_role
@@ -45,18 +45,19 @@ def _get(db: Session, stocktake_id: int, lock: bool = False) -> models.Stocktake
 
 @router.post("", response_model=schemas.StocktakeOut, status_code=status.HTTP_201_CREATED)
 def create(payload: schemas.StocktakeCreate, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
-    if payload.warehouse_id is None and user_role(user) not in ("admin", "manager"):
-        raise HTTPException(403, "Only a company manager can create a company-wide stock-take")
-    if payload.warehouse_id is not None and db.get(models.Warehouse, payload.warehouse_id) is None:
+    if db.get(models.Warehouse, payload.warehouse_id) is None:
         raise HTTPException(422, f"Warehouse {payload.warehouse_id} does not exist")
+    # Lines: every active product that has stock in this warehouse or belongs to it, with that warehouse's quantity.
+    held = dict(db.query(models.ProductStock.product_id, models.ProductStock.quantity).filter(models.ProductStock.warehouse_id == payload.warehouse_id).all())
     q = db.query(models.Product).filter(models.Product.is_active.is_(True))
-    if payload.warehouse_id is not None:
-        q = q.filter(models.Product.warehouse_id == payload.warehouse_id)
-    products = q.order_by(models.Product.name, models.Product.id).all()
+    products = [
+        p for p in q.order_by(models.Product.name, models.Product.id).all()
+        if held.get(p.id, 0) > 0 or p.warehouse_id == payload.warehouse_id
+    ]
     if not products:
-        raise HTTPException(status.HTTP_409_CONFLICT, "No active products to count")
+        raise HTTPException(status.HTTP_409_CONFLICT, "No active products to count in this warehouse")
     s = models.Stocktake(warehouse_id=payload.warehouse_id, notes=payload.notes, created_by=user.id, username=user.username)
-    s.lines = [models.StocktakeLine(product_id=p.id, system_qty=p.quantity) for p in products]
+    s.lines = [models.StocktakeLine(product_id=p.id, system_qty=held.get(p.id, 0)) for p in products]
     db.add(s)
     audit(db, user, "create", "stocktake", s, f"{len(products)} صنف")
     db.commit()
@@ -106,11 +107,14 @@ def apply(stocktake_id: int, db: Session = Depends(get_db), user: models.User = 
         p.id: p
         for p in db.query(models.Product).filter(models.Product.id.in_([l.product_id for l in counted])).order_by(models.Product.id).with_for_update().all()
     }
+    wid = s.warehouse_id
+    # (a legacy count without a warehouse adjusts each product in its own warehouse)
     problems = []
     for l in counted:
         delta = l.counted_qty - l.system_qty
-        if products[l.product_id].quantity + delta < 0:
-            problems.append(f"{products[l.product_id].name}: الكمية الحالية {products[l.product_id].quantity} والتسوية {delta:+d}")
+        target = wid if wid is not None else stock.home_warehouse_id(db, products[l.product_id])
+        if delta < 0 and stock.available(db, l.product_id, target) + delta < 0:
+            problems.append(f"{products[l.product_id].name}: الكمية الحالية {stock.available(db, l.product_id, target)} والتسوية {delta:+d}")
     if problems:
         raise HTTPException(status.HTTP_409_CONFLICT, "Would make stock negative (stock moved since the sheet was created): " + "; ".join(problems))
     changed = 0
@@ -118,9 +122,8 @@ def apply(stocktake_id: int, db: Session = Depends(get_db), user: models.User = 
         delta = l.counted_qty - l.system_qty
         if delta == 0:
             continue
-        p = products[l.product_id]
-        p.quantity += delta
-        db.add(models.StockMovement(product_id=p.id, warehouse_id=p.warehouse_id, change=delta, reason="stocktake", reference=f"ST-{s.id}"))
+        target = wid if wid is not None else stock.home_warehouse_id(db, products[l.product_id])
+        stock.move_stock(db, products[l.product_id], target, delta, "stocktake", f"ST-{s.id}")
         changed += 1
     s.status = "applied"
     s.applied_at = datetime.now(timezone.utc)

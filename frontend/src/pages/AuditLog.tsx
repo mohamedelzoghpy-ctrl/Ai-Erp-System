@@ -15,6 +15,7 @@ const ENTITY: Record<string, string> = {
   user: "مستخدم",
   shift: "وردية",
   stocktake: "جرد",
+  stock_transfer: "تحويل مخزني",
 };
 
 const ACTION: Record<string, string> = {

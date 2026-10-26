@@ -556,3 +556,64 @@ class StocktakeLine(TenantOwned, Base):
     @property
     def difference(self):
         return None if self.counted_qty is None else self.counted_qty - self.system_qty
+
+
+class ProductStock(TenantOwned, Base):
+    """Quantity of one product in one warehouse. Product.quantity stays the total (kept in sync by app.stock)."""
+
+    __tablename__ = "product_stock"
+    __table_args__ = (CheckConstraint("quantity >= 0", name="ck_product_stock_quantity"),)
+
+    product_id = Column(Integer, ForeignKey("products.id", ondelete="CASCADE"), primary_key=True)
+    warehouse_id = Column(Integer, ForeignKey("warehouses.id"), primary_key=True, index=True)
+    quantity = Column(Integer, nullable=False, default=0, server_default="0")
+
+    warehouse = relationship("Warehouse")
+
+
+class StockTransfer(TenantOwned, Base):
+    """Goods moved between two warehouses. Completed immediately; total stock is unchanged."""
+
+    __tablename__ = "stock_transfers"
+    __table_args__ = (CheckConstraint("from_warehouse_id <> to_warehouse_id", name="ck_transfer_distinct_warehouses"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    from_warehouse_id = Column(Integer, ForeignKey("warehouses.id"), nullable=False, index=True)
+    to_warehouse_id = Column(Integer, ForeignKey("warehouses.id"), nullable=False, index=True)
+    notes = Column(Text, nullable=True)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    username = Column(String(60), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    from_warehouse = relationship("Warehouse", foreign_keys=[from_warehouse_id])
+    to_warehouse = relationship("Warehouse", foreign_keys=[to_warehouse_id])
+    items = relationship("StockTransferItem", back_populates="transfer", cascade="all, delete-orphan", order_by="StockTransferItem.id")
+
+    @property
+    def from_warehouse_name(self):
+        return self.from_warehouse.name if self.from_warehouse else None
+
+    @property
+    def to_warehouse_name(self):
+        return self.to_warehouse.name if self.to_warehouse else None
+
+
+class StockTransferItem(TenantOwned, Base):
+    __tablename__ = "stock_transfer_items"
+    __table_args__ = (CheckConstraint("quantity > 0", name="ck_transfer_item_quantity"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    transfer_id = Column(Integer, ForeignKey("stock_transfers.id", ondelete="CASCADE"), nullable=False, index=True)
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=False, index=True)
+    quantity = Column(Integer, nullable=False)
+
+    transfer = relationship("StockTransfer", back_populates="items")
+    product = relationship("Product")
+
+    @property
+    def sku(self):
+        return self.product.sku if self.product else None
+
+    @property
+    def product_name(self):
+        return self.product.name if self.product else None

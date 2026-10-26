@@ -16,7 +16,7 @@ function NewDialog({ onClose, onDone }: { onClose: () => void; onDone: (id: numb
   const submit = (e: FormEvent) => {
     e.preventDefault();
     void act.run(async () => {
-      const s = await api.post<Stocktake>("/stocktakes", { warehouse_id: wh ? Number(wh) : null, notes: notes || null });
+      const s = await api.post<Stocktake>("/stocktakes", { warehouse_id: Number(wh), notes: notes || null });
       onDone(s.id);
     });
   };
@@ -24,9 +24,9 @@ function NewDialog({ onClose, onDone }: { onClose: () => void; onDone: (id: numb
     <Modal title="جرد جديد" onClose={onClose}>
       <form onSubmit={submit}>
         <Alert>{act.error || warehouses.error}</Alert>
-        <Field label="المخزن" hint="اتركه فارغاً لجرد كل الأصناف النشطة.">
-          <select value={wh} onChange={(e) => setWh(e.target.value)} aria-label="مخزن الجرد">
-            <option value="">كل المخازن</option>
+        <Field label="المخزن" hint="يُعدّ مخزن واحد في كل مرة، وتُقارن الكميات المعدودة بما يخصه فقط.">
+          <select value={wh} required onChange={(e) => setWh(e.target.value)} aria-label="مخزن الجرد">
+            <option value="">— اختر المخزن —</option>
             {warehouses.data?.map((w) => (
               <option key={w.id} value={w.id}>
                 {w.name}
@@ -38,7 +38,7 @@ function NewDialog({ onClose, onDone }: { onClose: () => void; onDone: (id: numb
           <input value={notes} onChange={(e) => setNotes(e.target.value)} />
         </Field>
         <div className="actions">
-          <button className="btn btn-primary" disabled={act.busy}>إنشاء ورقة الجرد</button>
+          <button className="btn btn-primary" disabled={act.busy || !wh}>إنشاء ورقة الجرد</button>
           <button type="button" className="btn" onClick={onClose}>إلغاء</button>
         </div>
       </form>
