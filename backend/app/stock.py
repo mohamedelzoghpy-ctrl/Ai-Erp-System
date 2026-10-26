@@ -45,10 +45,12 @@ def move_stock(db: Session, product: models.Product, warehouse_id: int, change: 
     if row is None:
         if change < 0:
             raise HTTPException(status.HTTP_409_CONFLICT, "Insufficient stock: " + shortage_message(db, product, warehouse_id, -change))
-        row = models.ProductStock(product_id=product.id, warehouse_id=warehouse_id, quantity=0)
+        company_id = getattr(product, "company_id", None)
+        row = models.ProductStock(product_id=product.id, warehouse_id=warehouse_id, company_id=company_id, quantity=0)
         db.add(row)
     if row.quantity + change < 0:
         raise HTTPException(status.HTTP_409_CONFLICT, "Insufficient stock: " + shortage_message(db, product, warehouse_id, -change))
     row.quantity += change
     product.quantity += change
-    db.add(models.StockMovement(product_id=product.id, warehouse_id=warehouse_id, change=change, reason=reason, reference=reference))
+    company_id = getattr(product, "company_id", None)
+    db.add(models.StockMovement(product_id=product.id, warehouse_id=warehouse_id, company_id=company_id, change=change, reason=reason, reference=reference))
