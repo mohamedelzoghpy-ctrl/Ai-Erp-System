@@ -167,7 +167,9 @@ def create_sales_order(payload: schemas.SalesOrderCreate, db: Session = Depends(
         product = _require(db, models.Product, item.product_id, "Product")
         price = item.unit_price if item.unit_price is not None else product.sale_price
         order.items.append(
-            models.SalesOrderItem(product_id=product.id, quantity=item.quantity, unit_price=price)
+            models.SalesOrderItem(
+                product_id=product.id, quantity=item.quantity, unit_price=price, unit_cost=product.cost_price
+            )
         )
         total += price * item.quantity
     order.total_amount = total

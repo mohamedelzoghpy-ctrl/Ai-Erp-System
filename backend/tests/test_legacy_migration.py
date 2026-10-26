@@ -245,7 +245,7 @@ def _verify_tenant_ownership(database_url: str) -> None:
             assert [(r.code, r.quantity, r.company_id) for r in stock_rows] == [("legacy", 25, company_id)]
             assert connection.execute(
                 text("SELECT version_num FROM alembic_version")
-            ).scalar_one() == "0012"
+            ).scalar_one() == "0013"
     finally:
         engine.dispose()
 

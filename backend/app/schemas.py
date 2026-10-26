@@ -345,6 +345,29 @@ class SalesByDay(BaseModel):
     total: Decimal
 
 
+class ProfitRow(BaseModel):
+    product_id: int
+    sku: str
+    name: str
+    quantity: int
+    revenue: Decimal
+    cost: Decimal
+    profit: Decimal
+    margin_pct: Optional[Decimal]
+
+
+class ProfitSummary(BaseModel):
+    date_from: datetime
+    date_to: datetime
+    sales: Decimal  # confirmed sales in the period
+    returns: Decimal  # customer returns made in the period
+    revenue: Decimal  # sales - returns
+    cost: Decimal  # cost of goods sold, net of returned goods
+    profit: Decimal
+    margin_pct: Optional[Decimal]
+    by_product: List[ProfitRow]
+
+
 class TopProduct(BaseModel):
     product_id: int
     sku: str

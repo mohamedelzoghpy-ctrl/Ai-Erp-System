@@ -211,3 +211,8 @@ always against a confirmed sale / received purchase order: `{order_id, items: [{
 - `/stock-transfers` (POST, list, get, `/{id}/pdf`): all-or-nothing transfer between two active warehouses; writes `transfer_out` / `transfer_in` movements.
 - Stock-takes now require `warehouse_id` and count that warehouse only.
 - Migration `0012` creates the tables and backfills `product_stock` from stock movements (creates a default warehouse "المخزن الرئيسي" if a company has stock but none).
+
+## Profit report and inventory valuation
+
+- `GET /reports/profit?date_from&date_to` (+ `/xlsx`, managers): gross profit = confirmed sales − customer returns made in the period − cost of the goods kept. Cost is the `unit_cost` snapshot stored on each sales line when it was sold (migration `0013`; existing lines were backfilled with the product's current cost), so editing a cost price later doesn't change past profit.
+- `GET /reports/inventory-valuation` now values the stock actually held in each warehouse (`product_stock`), not the product's home warehouse.

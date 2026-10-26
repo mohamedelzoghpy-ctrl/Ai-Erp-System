@@ -112,20 +112,21 @@ def low_stock_xlsx(db: Session = Depends(get_db), _: models.User = Depends(get_c
 
 # ---------------------------------------------------------------- inventory valuation
 def _valuation_rows(db: Session) -> List[schemas.InventoryValuationRow]:
-    P, W = models.Product, models.Warehouse
+    P, W, S = models.Product, models.Warehouse, models.ProductStock
     rows = (
         db.query(
-            P.warehouse_id,
+            S.warehouse_id,
             W.name,
             func.count(P.id),
-            func.coalesce(func.sum(P.quantity), 0),
-            func.coalesce(func.sum(P.quantity * P.cost_price), 0),
-            func.coalesce(func.sum(P.quantity * P.sale_price), 0),
+            func.coalesce(func.sum(S.quantity), 0),
+            func.coalesce(func.sum(S.quantity * P.cost_price), 0),
+            func.coalesce(func.sum(S.quantity * P.sale_price), 0),
         )
-        .outerjoin(W, W.id == P.warehouse_id)
-        .filter(P.is_active.is_(True))
-        .group_by(P.warehouse_id, W.name)
-        .order_by(P.warehouse_id)
+        .join(P, P.id == S.product_id)
+        .join(W, W.id == S.warehouse_id)
+        .filter(P.is_active.is_(True), S.quantity > 0)
+        .group_by(S.warehouse_id, W.name)
+        .order_by(S.warehouse_id)
         .all()
     )
     return [
@@ -150,12 +151,13 @@ def inventory_valuation(db: Session = Depends(get_db), _: models.User = Depends(
 @router.get("/inventory-valuation/xlsx")
 def inventory_valuation_xlsx(db: Session = Depends(get_db), _: models.User = Depends(require_manager)):
     rows = _valuation_rows(db)
-    P = models.Product
+    P, S = models.Product, models.ProductStock
     products = (
-        db.query(P, models.Warehouse.name)
-        .outerjoin(models.Warehouse, models.Warehouse.id == P.warehouse_id)
-        .filter(P.is_active.is_(True))
-        .order_by(P.name)
+        db.query(P, models.Warehouse.name, S.quantity)
+        .join(S, S.product_id == P.id)
+        .join(models.Warehouse, models.Warehouse.id == S.warehouse_id)
+        .filter(P.is_active.is_(True), S.quantity > 0)
+        .order_by(P.name, models.Warehouse.name)
         .all()
     )
     tables = [
@@ -180,14 +182,14 @@ def inventory_valuation_xlsx(db: Session = Depends(get_db), _: models.User = Dep
                 [
                     ("text", p.sku),
                     ("text", p.name),
-                    ("text", wname or "—"),
-                    ("int", p.quantity),
+                    ("text", wname),
+                    ("int", qty),
                     ("money", p.cost_price),
                     ("money", p.sale_price),
-                    ("money", p.cost_price * p.quantity),
-                    ("money", p.sale_price * p.quantity),
+                    ("money", p.cost_price * qty),
+                    ("money", p.sale_price * qty),
                 ]
-                for p, wname in products
+                for p, wname, qty in products
             ],
         ),
     ]
@@ -305,6 +307,143 @@ def sales_summary_xlsx(
     ]
     content = exports.build_tables_xlsx("تقرير المبيعات", _range_label(s), tables)
     return _xlsx_response(content, f"report-sales-{_file_range(s)}.xlsx")
+
+
+# ---------------------------------------------------------------- profit
+def _profit_summary(db: Session, date_from, date_to) -> schemas.ProfitSummary:
+    """Gross profit = sales - returns - cost of the goods actually kept.
+
+    Cost comes from the unit cost recorded on each sales line when it was sold, so later edits to a
+    product's cost price don't rewrite history. Returns are dated by when they were made.
+    """
+    start, end = _period(date_from, date_to)
+    SO, SI, P = models.SalesOrder, models.SalesOrderItem, models.Product
+    RT, RI = models.SalesReturn, models.SalesReturnItem
+
+    sold = (
+        db.query(
+            SI.product_id,
+            func.sum(SI.quantity),
+            func.sum(SI.quantity * SI.unit_price),
+            func.sum(SI.quantity * SI.unit_cost),
+        )
+        .join(SO, SO.id == SI.order_id)
+        .filter(SO.status == "confirmed", SO.updated_at >= start, SO.updated_at < end)
+        .group_by(SI.product_id)
+        .all()
+    )
+    returned = (
+        db.query(
+            RI.product_id,
+            func.sum(RI.quantity),
+            func.sum(RI.quantity * RI.unit_price),
+            func.sum(RI.quantity * SI.unit_cost),
+        )
+        .join(RT, RT.id == RI.return_id)
+        .join(SI, SI.id == RI.order_item_id)
+        .filter(RT.created_at >= start, RT.created_at < end)
+        .group_by(RI.product_id)
+        .all()
+    )
+    agg = {}
+    sales_total = returns_total = ZERO
+    for pid, qty, rev, cost in sold:
+        a = agg.setdefault(pid, [0, ZERO, ZERO])
+        a[0] += int(qty); a[1] += _money(rev); a[2] += _money(cost)
+        sales_total += _money(rev)
+    for pid, qty, rev, cost in returned:
+        a = agg.setdefault(pid, [0, ZERO, ZERO])
+        a[0] -= int(qty); a[1] -= _money(rev); a[2] -= _money(cost)
+        returns_total += _money(rev)
+
+    names = {
+        r.id: r for r in db.query(P.id, P.sku, P.name).filter(P.id.in_(list(agg) or [-1])).all()
+    }
+
+    def margin(profit, revenue):
+        return (profit * 100 / revenue).quantize(Decimal("0.1")) if revenue else None
+
+    rows = [
+        schemas.ProfitRow(
+            product_id=pid,
+            sku=names[pid].sku,
+            name=names[pid].name,
+            quantity=qty,
+            revenue=rev,
+            cost=cost,
+            profit=rev - cost,
+            margin_pct=margin(rev - cost, rev),
+        )
+        for pid, (qty, rev, cost) in agg.items()
+        if pid in names
+    ]
+    rows.sort(key=lambda r: (-r.profit, r.product_id))
+    revenue = sum((r.revenue for r in rows), ZERO)
+    cost = sum((r.cost for r in rows), ZERO)
+    return schemas.ProfitSummary(
+        date_from=start,
+        date_to=end - timedelta(microseconds=1),
+        sales=sales_total,
+        returns=returns_total,
+        revenue=revenue,
+        cost=cost,
+        profit=revenue - cost,
+        margin_pct=margin(revenue - cost, revenue),
+        by_product=rows,
+    )
+
+
+@router.get("/profit", response_model=schemas.ProfitSummary)
+def profit_summary(
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_manager),
+):
+    """Gross profit for a period (default: last 30 days), total and per product."""
+    return _profit_summary(db, date_from, date_to)
+
+
+@router.get("/profit/xlsx")
+def profit_xlsx(
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_manager),
+):
+    s = _profit_summary(db, date_from, date_to)
+    tables = [
+        (
+            "الملخص",
+            ["البند", "القيمة"],
+            [
+                [("text", "المبيعات"), ("money", s.sales)],
+                [("text", "المرتجعات"), ("money", s.returns)],
+                [("text", "صافي الإيراد"), ("money", s.revenue)],
+                [("text", "تكلفة البضاعة المباعة"), ("money", s.cost)],
+                [("text", "مجمل الربح"), ("money", s.profit)],
+                [("text", "هامش الربح %"), ("text", "—" if s.margin_pct is None else str(s.margin_pct))],
+            ],
+        ),
+        (
+            "حسب المنتج",
+            ["الكود", "المنتج", "الكمية", "الإيراد", "التكلفة", "الربح", "الهامش %"],
+            [
+                [
+                    ("text", r.sku),
+                    ("text", r.name),
+                    ("int", r.quantity),
+                    ("money", r.revenue),
+                    ("money", r.cost),
+                    ("money", r.profit),
+                    ("text", "—" if r.margin_pct is None else str(r.margin_pct)),
+                ]
+                for r in s.by_product
+            ],
+        ),
+    ]
+    content = exports.build_tables_xlsx("تقرير الأرباح", _range_label(s), tables)
+    return _xlsx_response(content, f"report-profit-{_file_range(s)}.xlsx")
 
 
 # ---------------------------------------------------------------- purchases

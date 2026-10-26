@@ -145,6 +145,27 @@ export interface SalesSummary {
   by_cashier: { username: string | null; orders: number; total: string }[];
 }
 
+export interface ProfitRow {
+  product_id: number;
+  sku: string;
+  name: string;
+  quantity: number;
+  revenue: string;
+  cost: string;
+  profit: string;
+  margin_pct: string | null;
+}
+
+export interface ProfitSummary {
+  sales: string;
+  returns: string;
+  revenue: string;
+  cost: string;
+  profit: string;
+  margin_pct: string | null;
+  by_product: ProfitRow[];
+}
+
 export interface PurchasesSummary {
   orders: number;
   total: string;

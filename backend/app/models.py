@@ -241,6 +241,8 @@ class SalesOrderItem(TenantOwned, Base):
     product_id = Column(Integer, ForeignKey("products.id"), nullable=False, index=True)
     quantity = Column(Integer, nullable=False)
     unit_price = Column(Numeric(12, 2), nullable=False)
+    # Product cost at the time of sale, so profit reports don't change when the cost price is edited later.
+    unit_cost = Column(Numeric(12, 2), nullable=False, default=0, server_default="0")
 
     order = relationship("SalesOrder", back_populates="items")
     product = relationship("Product")
