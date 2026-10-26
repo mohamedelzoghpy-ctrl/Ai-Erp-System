@@ -10,7 +10,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
-from .. import models, schemas
+from .. import models, schemas, stock
 from ..audit import audit
 from ..database import get_db
 from ..deps import get_current_user
@@ -85,14 +85,13 @@ def _create(kind: str, payload: schemas.ReturnCreate, db: Session, user: models.
     for pid in sorted(per_product):
         product = _locked_product(db, pid)
         change = c["sign"] * per_product[pid]
-        if product.quantity + change < 0:
+        if change < 0 and stock.available(db, pid, order.warehouse_id) + change < 0:
             db.rollback()
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
-                f"Insufficient stock to return '{product.name}': have {product.quantity}, returning {per_product[pid]}",
+                "Insufficient stock to return: " + stock.shortage_message(db, product, order.warehouse_id, -change),
             )
-        product.quantity += change
-        db.add(models.StockMovement(product_id=pid, warehouse_id=order.warehouse_id, change=change, reason=c["reason"], reference=f"{c['prefix']}-{ret.id}"))
+        stock.move_stock(db, product, order.warehouse_id, change, c["reason"], f"{c['prefix']}-{ret.id}")
     audit(db, user, "return", f"{kind}_return", ret, f"{c['prefix']}-{ret.id} · إجمالي {total} · مردود نقداً {ret.refund_amount} · أمر {order.id}")
     db.commit()
     db.refresh(ret)

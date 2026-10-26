@@ -54,10 +54,13 @@ export default function Pos() {
     if (list && !list.some((w) => String(w.id) === warehouse)) setWarehouse(list.length === 1 ? String(list[0].id) : "");
   }, [warehouses.data, warehouse]);
 
+  /** What is on the shelf in the selected warehouse (the API only sends it when asked for one warehouse). */
+  const avail = (p: Product) => p.warehouse_quantity ?? p.quantity;
+
   const total = cart.reduce((s, l) => s + l.quantity * (Number(l.price) || 0), 0);
   const paid = customer && paidInput !== "" ? Number(paidInput) : total;
   const change = !customer && tendered !== "" ? Number(tendered) - total : null;
-  const overStock = cart.filter((l) => l.quantity > l.product.quantity);
+  const overStock = cart.filter((l) => l.quantity > avail(l.product));
   const canPay = cart.length > 0 && !!warehouse && paid >= 0 && paid <= total + 1e-9 && overStock.length === 0 && cart.every((l) => l.quantity > 0 && Number(l.price) >= 0);
 
   const add = (p: Product) => {
@@ -77,7 +80,7 @@ export default function Pos() {
     const term = q.trim();
     if (!term) return;
     void search.run(async () => {
-      const r = await api.get<Product[]>(`/products?search=${encodeURIComponent(term)}&is_active=true&limit=10`);
+      const r = await api.get<Product[]>(`/products?search=${encodeURIComponent(term)}&is_active=true&limit=10${warehouse ? `&stock_warehouse_id=${warehouse}` : ""}`);
       const exact = r.filter((p) => p.sku.toLowerCase() === term.toLowerCase());
       if (exact.length === 1 || r.length === 1) add(exact[0] ?? r[0]);
       else {
@@ -120,6 +123,8 @@ export default function Pos() {
           aria-label="المخزن"
           onChange={(e) => {
             setWarehouse(e.target.value);
+            setCart([]); // availability is per warehouse: start a fresh cart
+            setHits([]);
             try {
               localStorage.setItem(WAREHOUSE_KEY, e.target.value);
             } catch {
@@ -161,7 +166,7 @@ export default function Pos() {
               {hits.map((p) => (
                 <li key={p.id}>
                   <button type="button" className="btn" style={{ width: "100%", textAlign: "start", marginBottom: 4 }} onClick={() => add(p)}>
-                    {p.name} ({p.sku}) — {money(p.sale_price)} — المتاح {num(p.quantity)}
+                    {p.name} ({p.sku}) — {money(p.sale_price)} — المتاح {num(avail(p))}
                   </button>
                 </li>
               ))}
@@ -187,9 +192,9 @@ export default function Pos() {
                     <tr key={l.product.id}>
                       <td>
                         {l.product.name}
-                        {l.quantity > l.product.quantity && (
+                        {l.quantity > avail(l.product) && (
                           <span className="low" style={{ display: "block", fontSize: 12 }}>
-                            المتاح {num(l.product.quantity)} فقط
+                            المتاح {num(avail(l.product))} فقط
                           </span>
                         )}
                       </td>

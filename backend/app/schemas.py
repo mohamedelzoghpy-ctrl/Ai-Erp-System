@@ -118,13 +118,21 @@ class ProductUpdate(BaseModel):
 
 class ProductOut(ProductBase, ORMModel):
     id: int
-    quantity: int
+    quantity: int  # total over all warehouses
+    warehouse_quantity: Optional[int] = None  # only when the list was asked for one warehouse (?stock_warehouse_id=)
     created_at: datetime
+
+
+class ProductStockOut(BaseModel):
+    warehouse_id: int
+    warehouse_name: str
+    quantity: int
 
 
 class StockAdjustment(BaseModel):
     change: int = Field(description="Positive to add stock, negative to remove.")
     reference: Optional[str] = None
+    warehouse_id: Optional[int] = Field(default=None, description="Defaults to the product's own warehouse.")
 
 
 class StockMovementOut(ORMModel):
@@ -335,6 +343,29 @@ class SalesByDay(BaseModel):
     day: str
     orders: int
     total: Decimal
+
+
+class ProfitRow(BaseModel):
+    product_id: int
+    sku: str
+    name: str
+    quantity: int
+    revenue: Decimal
+    cost: Decimal
+    profit: Decimal
+    margin_pct: Optional[Decimal]
+
+
+class ProfitSummary(BaseModel):
+    date_from: datetime
+    date_to: datetime
+    sales: Decimal  # confirmed sales in the period
+    returns: Decimal  # customer returns made in the period
+    revenue: Decimal  # sales - returns
+    cost: Decimal  # cost of goods sold, net of returned goods
+    profit: Decimal
+    margin_pct: Optional[Decimal]
+    by_product: List[ProfitRow]
 
 
 class TopProduct(BaseModel):
@@ -654,7 +685,7 @@ class ShiftOut(BaseModel):
 
 # ---------- Stock-take ----------
 class StocktakeCreate(BaseModel):
-    warehouse_id: Optional[int] = None
+    warehouse_id: int
     notes: Optional[str] = None
 
 
@@ -689,3 +720,35 @@ class StocktakeOut(BaseModel):
     lines_counted: int
     lines_with_difference: int
     lines: Optional[List[StocktakeLineOut]] = None  # only in the detail view
+
+
+# ---------- Warehouse transfers ----------
+class TransferItemIn(BaseModel):
+    product_id: int
+    quantity: int = Field(gt=0)
+
+
+class TransferCreate(BaseModel):
+    from_warehouse_id: int
+    to_warehouse_id: int
+    notes: Optional[str] = None
+    items: List[TransferItemIn] = Field(min_length=1, max_length=500)
+
+
+class TransferItemOut(ORMModel):
+    product_id: int
+    sku: Optional[str] = None
+    product_name: Optional[str] = None
+    quantity: int
+
+
+class TransferOut(ORMModel):
+    id: int
+    from_warehouse_id: int
+    from_warehouse_name: Optional[str] = None
+    to_warehouse_id: int
+    to_warehouse_name: Optional[str] = None
+    notes: Optional[str] = None
+    username: Optional[str] = None
+    created_at: datetime
+    items: List[TransferItemOut]

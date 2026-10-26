@@ -201,3 +201,18 @@ always against a confirmed sale / received purchase order: `{order_id, items: [{
   aging all include returns; the dashboard shows the period's returns next to sales.
 - Returns are final: no edit or void. `GET /sales-returns`, `/purchase-returns` (filters `order_id`, `party_id`; paginated) list them.
 - Sales/purchase summary reports are not reduced by returns; they are shown separately on the dashboard.
+
+## Per-warehouse stock and transfers
+
+- `Product.quantity` is the total; `product_stock` holds the quantity per warehouse (CHECK quantity >= 0).
+- All stock changes go through `app/stock.py::move_stock`; callers lock the product row first. Insufficient stock in a warehouse returns 409.
+- Sales and returns use the order's warehouse; purchase receipts add to the order's warehouse; opening stock goes to the product's home (or default) warehouse.
+- `GET /products?stock_warehouse_id=N` fills `warehouse_quantity`; `GET /products/{id}/stock` lists quantities by warehouse; `adjust-stock` accepts an optional `warehouse_id`.
+- `/stock-transfers` (POST, list, get, `/{id}/pdf`): all-or-nothing transfer between two active warehouses; writes `transfer_out` / `transfer_in` movements.
+- Stock-takes now require `warehouse_id` and count that warehouse only.
+- Migration `0012` creates the tables and backfills `product_stock` from stock movements (creates a default warehouse "المخزن الرئيسي" if a company has stock but none).
+
+## Profit report and inventory valuation
+
+- `GET /reports/profit?date_from&date_to` (+ `/xlsx`, managers): gross profit = confirmed sales − customer returns made in the period − cost of the goods kept. Cost is the `unit_cost` snapshot stored on each sales line when it was sold (migration `0013`; existing lines were backfilled with the product's current cost), so editing a cost price later doesn't change past profit.
+- `GET /reports/inventory-valuation` now values the stock actually held in each warehouse (`product_stock`), not the product's home warehouse.

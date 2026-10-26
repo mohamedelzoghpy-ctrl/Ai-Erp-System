@@ -234,9 +234,18 @@ def _verify_tenant_ownership(database_url: str) -> None:
                 25,
                 company_id,
             )
+            # per-warehouse stock was built from the movement history and adds up to the product's quantity
+            stock_rows = connection.execute(
+                text(
+                    "SELECT w.code, ps.quantity, ps.company_id FROM product_stock ps "
+                    "JOIN warehouses w ON w.id = ps.warehouse_id JOIN products p ON p.id = ps.product_id "
+                    "WHERE p.sku = 'LEGACY-SKU'"
+                )
+            ).all()
+            assert [(r.code, r.quantity, r.company_id) for r in stock_rows] == [("legacy", 25, company_id)]
             assert connection.execute(
                 text("SELECT version_num FROM alembic_version")
-            ).scalar_one() == "0011"
+            ).scalar_one() == "0013"
     finally:
         engine.dispose()
 

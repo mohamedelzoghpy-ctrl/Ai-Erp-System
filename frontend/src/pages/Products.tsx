@@ -3,7 +3,7 @@ import { api } from "../api";
 import { useAuth } from "../auth";
 import { dateTime, money, num, REASON_LABEL } from "../format";
 import { useAction, useFetch, usePagedList } from "../hooks";
-import type { Party, Product, StockMovement, Warehouse } from "../types";
+import type { Party, Product, StockMovement, ProductStockRow, Warehouse } from "../types";
 import { Alert, Empty, Field, Loading, Modal, nameOf, PageHeader, Pager } from "../ui";
 
 export default function Products() {
@@ -323,9 +323,21 @@ function AdjustForm({ product, onClose, onSaved }: { product: Product; onClose: 
 
 function MovementsModal({ product, onClose }: { product: Product; onClose: () => void }) {
   const moves = useFetch(() => api.get<StockMovement[]>(`/products/${product.id}/movements`), `m${product.id}`);
+  const where = useFetch(() => api.get<ProductStockRow[]>(`/products/${product.id}/stock`), `w${product.id}`);
   return (
     <Modal title={`حركة المخزون — ${product.name}`} onClose={onClose} wide>
-      <Alert>{moves.error}</Alert>
+      <Alert>{moves.error || where.error}</Alert>
+      {where.data && where.data.length > 0 && (
+        <p data-testid="stock-by-warehouse">
+          الكمية حسب المخزن:{" "}
+          {where.data.map((r, i) => (
+            <span key={r.warehouse_id}>
+              {i > 0 && " · "}
+              {r.warehouse_name}: <b>{num(r.quantity)}</b>
+            </span>
+          ))}
+        </p>
+      )}
       {moves.loading && !moves.data ? (
         <Loading />
       ) : moves.data && moves.data.length > 0 ? (

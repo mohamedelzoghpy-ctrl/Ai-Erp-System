@@ -25,6 +25,9 @@ export default function Layout() {
           <NavLink to="/warehouses" className={link}>
             المخازن
           </NavLink>
+          <NavLink to="/transfers" className={link}>
+            التحويلات
+          </NavLink>
           <NavLink to="/stocktakes" className={link}>
             الجرد
           </NavLink>

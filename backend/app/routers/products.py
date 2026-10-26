@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from ..pagination import paginate
 from ..audit import audit
 from ..deps import get_current_user, require_manager, user_role
-from .. import models, schemas
+from .. import models, schemas, stock
 from ..database import get_db
 
 router = APIRouter(prefix="/products", tags=["products & inventory"], dependencies=[Depends(get_current_user)])
@@ -40,20 +40,18 @@ def create_product(payload: schemas.ProductCreate, db: Session = Depends(get_db)
         if payload.quantity != 0:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Only a manager or admin can set an opening stock balance")
     _check_refs(db, payload.warehouse_id, payload.supplier_id)
-    product = models.Product(**payload.model_dump())
+    data = payload.model_dump()
+    opening = data.pop("quantity", 0)
+    product = models.Product(**data)
     db.add(product)
     try:
         db.flush()
-        if product.quantity:
-            db.add(
-                models.StockMovement(
-                    product_id=product.id,
-                    warehouse_id=product.warehouse_id,
-                    change=product.quantity,
-                    reason="adjustment",
-                    reference="opening balance",
-                )
-            )
+        if opening:
+            home = stock.home_warehouse_id(db, product)
+            if home is None:
+                db.rollback()
+                raise HTTPException(422, "Create a warehouse before adding opening stock")
+            stock.move_stock(db, product, home, opening, "adjustment", "opening balance")
         audit(db, user, "create", "product", product, f"{product.sku} · {product.name}")
         db.commit()
     except IntegrityError:
@@ -71,10 +69,12 @@ def list_products(
     supplier_id: Optional[int] = None,
     low_stock: bool = False,
     is_active: Optional[bool] = None,
+    stock_warehouse_id: Optional[int] = None,
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),
 ):
+    """`stock_warehouse_id` adds `warehouse_quantity` (what is on the shelf in that warehouse) to each row."""
     query = db.query(models.Product)
     if search:
         like = f"%{search}%"
@@ -87,7 +87,16 @@ def list_products(
         query = query.filter(models.Product.is_active == is_active)
     if low_stock:
         query = query.filter(models.Product.quantity <= models.Product.reorder_level)
-    return paginate(query, response, skip, limit, models.Product.id)
+    rows = paginate(query, response, skip, limit, models.Product.id)
+    if stock_warehouse_id is not None and rows:
+        have = dict(
+            db.query(models.ProductStock.product_id, models.ProductStock.quantity)
+            .filter(models.ProductStock.warehouse_id == stock_warehouse_id, models.ProductStock.product_id.in_([p.id for p in rows]))
+            .all()
+        )
+        for p in rows:
+            p.warehouse_quantity = have.get(p.id, 0)
+    return rows
 
 
 @router.get("/{product_id}", response_model=schemas.ProductOut)
@@ -134,26 +143,32 @@ def adjust_stock(product_id: int, payload: schemas.StockAdjustment, db: Session 
     """Manual correction (stock-take, damage, etc.). Never lets quantity go negative."""
     if payload.change == 0:
         raise HTTPException(422, "change must not be zero")
-    product = _product_or_404(db, product_id)
-    if product.quantity + payload.change < 0:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            f"Insufficient stock: have {product.quantity}, cannot remove {-payload.change}",
-        )
-    product.quantity += payload.change
-    db.add(
-        models.StockMovement(
-            product_id=product.id,
-            warehouse_id=product.warehouse_id,
-            change=payload.change,
-            reason="adjustment",
-            reference=payload.reference,
-        )
+    product = (
+        db.query(models.Product).filter(models.Product.id == product_id).with_for_update().one_or_none()
     )
+    if product is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Product {product_id} not found")
+    warehouse_id = payload.warehouse_id if payload.warehouse_id is not None else stock.home_warehouse_id(db, product)
+    if warehouse_id is None or db.get(models.Warehouse, warehouse_id) is None:
+        raise HTTPException(422, "Choose an existing warehouse for this adjustment")
+    stock.move_stock(db, product, warehouse_id, payload.change, "adjustment", payload.reference)
     audit(db, user, "adjust_stock", "product", product, f"{payload.change:+d} → {product.quantity}" + (f" ({payload.reference})" if payload.reference else ""))
     db.commit()
     db.refresh(product)
     return product
+
+
+@router.get("/{product_id}/stock", response_model=List[schemas.ProductStockOut])
+def product_stock(product_id: int, db: Session = Depends(get_db)):
+    """Where this product's stock sits, one row per warehouse that holds some."""
+    _product_or_404(db, product_id)
+    rows = (
+        db.query(models.ProductStock)
+        .filter(models.ProductStock.product_id == product_id, models.ProductStock.quantity > 0)
+        .order_by(models.ProductStock.warehouse_id)
+        .all()
+    )
+    return [schemas.ProductStockOut(warehouse_id=r.warehouse_id, warehouse_name=r.warehouse.name, quantity=r.quantity) for r in rows]
 
 
 @router.get("/{product_id}/movements", response_model=List[schemas.StockMovementOut])

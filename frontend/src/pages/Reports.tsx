@@ -2,13 +2,14 @@ import { useState } from "react";
 import { api, qs } from "../api";
 import { dayLabel, money, num } from "../format";
 import { useAction, useFetch } from "../hooks";
-import type { AgingReport, BalancesReport, DayTotal, InventoryValuationRow, LowStockItem, PurchasesSummary, SalesSummary } from "../types";
+import type { AgingReport, BalancesReport, DayTotal, InventoryValuationRow, LowStockItem, ProfitSummary, PurchasesSummary, SalesSummary } from "../types";
 import { Alert, Empty, Loading, PageHeader } from "../ui";
 
-type Tab = "sales" | "purchases" | "inventory" | "receivables" | "payables";
+type Tab = "sales" | "profit" | "purchases" | "inventory" | "receivables" | "payables";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "sales", label: "المبيعات" },
+  { id: "profit", label: "الأرباح" },
   { id: "purchases", label: "المشتريات" },
   { id: "inventory", label: "المخزون" },
   { id: "receivables", label: "مستحقات العملاء" },
@@ -47,7 +48,7 @@ export default function Reports() {
   };
 
   const exportFile = (path: string, name: string) => void download.run(() => api.download(path, name));
-  const usesRange = tab === "sales" || tab === "purchases";
+  const usesRange = tab === "sales" || tab === "profit" || tab === "purchases";
 
   return (
     <>
@@ -92,6 +93,7 @@ export default function Reports() {
       {usesRange && !rangeValid && <Alert>اختر فترة صحيحة: تاريخ البداية يجب ألا يتجاوز تاريخ النهاية.</Alert>}
 
       {tab === "sales" && rangeValid && <SalesTab range={range} from={from} to={to} onExport={exportFile} busy={download.busy} />}
+      {tab === "profit" && rangeValid && <ProfitTab range={range} from={from} to={to} onExport={exportFile} busy={download.busy} />}
       {tab === "purchases" && rangeValid && <PurchasesTab range={range} from={from} to={to} onExport={exportFile} busy={download.busy} />}
       {tab === "inventory" && <InventoryTab onExport={exportFile} busy={download.busy} />}
       {(tab === "receivables" || tab === "payables") && <BalancesTab key={tab} kind={tab} onExport={exportFile} busy={download.busy} />}
@@ -223,6 +225,46 @@ function SalesTab({ range, from, to, onExport, busy }: TabProps) {
               title="المبيعات حسب الكاشير"
               headers={["الكاشير", "الأوامر", "الإجمالي"]}
               rows={s.by_cashier.map((c) => [c.username ?? "غير مسجّل", num(c.orders), money(c.total)])}
+            />
+          </>
+        )
+      )}
+    </>
+  );
+}
+
+function ProfitTab({ range, from, to, onExport, busy }: TabProps) {
+  const q = qs({ date_from: from, date_to: to });
+  const data = useFetch(() => api.get<ProfitSummary>(`/reports/profit${q}`), `profit${q}`);
+  const s = data.data;
+  const pct = (v: string | null) => (v === null ? "—" : `${v}%`);
+
+  return (
+    <>
+      <div className="page-actions" style={{ marginBottom: 14 }}>
+        <ExportButton busy={busy} onClick={() => onExport(`/reports/profit/xlsx${range}`, `report-profit-${from}_${to}.xlsx`)}>
+          تصدير Excel
+        </ExportButton>
+      </div>
+      <Alert>{data.error}</Alert>
+      {data.loading && !s ? (
+        <Loading />
+      ) : (
+        s && (
+          <>
+            <div className="kpis">
+              <Kpi label="صافي الإيراد" value={money(s.revenue)} />
+              <Kpi label="تكلفة البضاعة المباعة" value={money(s.cost)} />
+              <Kpi label="مجمل الربح" value={money(s.profit)} />
+              <Kpi label="هامش الربح" value={pct(s.margin_pct)} />
+            </div>
+            <p className="muted">
+              المبيعات {money(s.sales)} − المرتجعات {money(s.returns)}. التكلفة محسوبة بسعر التكلفة وقت البيع.
+            </p>
+            <RankTable
+              title="الربح حسب المنتج"
+              headers={["المنتج", "الكمية", "الإيراد", "التكلفة", "الربح", "الهامش"]}
+              rows={s.by_product.map((r) => [`${r.name} (${r.sku})`, num(r.quantity), money(r.revenue), money(r.cost), money(r.profit), pct(r.margin_pct)])}
             />
           </>
         )

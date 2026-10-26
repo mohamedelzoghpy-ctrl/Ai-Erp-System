@@ -63,7 +63,9 @@ def checkout(payload: schemas.PosCheckout, db: Session = Depends(get_db), user: 
         if not product.is_active:
             raise HTTPException(422, f"Product '{product.name}' is inactive")
         price = item.unit_price if item.unit_price is not None else product.sale_price
-        order.items.append(models.SalesOrderItem(product_id=product.id, quantity=item.quantity, unit_price=price))
+        order.items.append(
+            models.SalesOrderItem(product_id=product.id, quantity=item.quantity, unit_price=price, unit_cost=product.cost_price)
+        )
         total += price * item.quantity
     order.total_amount = total
 

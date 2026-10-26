@@ -62,7 +62,8 @@ export interface Product {
   unit: string;
   cost_price: string;
   sale_price: string;
-  quantity: number;
+  quantity: number; // total over all warehouses
+  warehouse_quantity?: number | null; // in one warehouse, when asked with stock_warehouse_id
   reorder_level: number;
   is_active: boolean;
   warehouse_id: number | null;
@@ -142,6 +143,27 @@ export interface SalesSummary {
   top_products: { product_id: number; sku: string; name: string; quantity_sold: number; revenue: string }[];
   by_customer: { customer_id: number; customer_name: string; orders: number; total: string }[];
   by_cashier: { username: string | null; orders: number; total: string }[];
+}
+
+export interface ProfitRow {
+  product_id: number;
+  sku: string;
+  name: string;
+  quantity: number;
+  revenue: string;
+  cost: string;
+  profit: string;
+  margin_pct: string | null;
+}
+
+export interface ProfitSummary {
+  sales: string;
+  returns: string;
+  revenue: string;
+  cost: string;
+  profit: string;
+  margin_pct: string | null;
+  by_product: ProfitRow[];
 }
 
 export interface PurchasesSummary {
@@ -325,4 +347,22 @@ export interface Stocktake {
   lines_counted: number;
   lines_with_difference: number;
   lines: StocktakeLine[] | null;
+}
+
+export interface ProductStockRow {
+  warehouse_id: number;
+  warehouse_name: string;
+  quantity: number;
+}
+
+export interface StockTransfer {
+  id: number;
+  from_warehouse_id: number;
+  from_warehouse_name: string | null;
+  to_warehouse_id: number;
+  to_warehouse_name: string | null;
+  notes: string | null;
+  username: string | null;
+  created_at: string;
+  items: { product_id: number; sku: string | null; product_name: string | null; quantity: number }[];
 }

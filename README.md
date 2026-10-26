@@ -39,8 +39,10 @@ Set `VITE_BACKEND_URL` if the API runs elsewhere.
 - Purchase orders (stock in on receipt) and sales orders (stock out on confirmation, never oversells)
 - Stock movement history and manual adjustments
 - Dashboard and detailed reports with a custom date range: sales, purchases, inventory valuation, low stock
+- Profit report (gross profit and margin per product, cost taken at time of sale, net of returns)
 - Export invoices and purchase orders as PDF or Excel; export every report to Excel
 - Accounts: customer receipts and supplier payments, opening balances, account statements (PDF/Excel), receivables and payables reports
+- Per-warehouse stock and warehouse-to-warehouse transfers (with PDF transfer note)
 - Periodic stock-take (count sheet, differences, applied as stock adjustments)
 - Cashier shifts: open the drawer with a float, close against a cash count, expected vs counted difference
 - Sales and purchase returns (stock, balances, statements and aging stay consistent)
