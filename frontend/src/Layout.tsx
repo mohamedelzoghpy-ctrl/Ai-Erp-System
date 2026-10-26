@@ -18,7 +18,7 @@ export default function Layout() {
           <NavLink to="/" end className={link}>
             لوحة التحكم
           </NavLink>
-          <div className="section">المخزون</div>
+          <NavLink to="/products" className="section">المخزون</NavLink>
           <NavLink to="/products" className={link}>
             المنتجات
           </NavLink>
@@ -28,14 +28,14 @@ export default function Layout() {
           <NavLink to="/stocktakes" className={link}>
             الجرد
           </NavLink>
-          <div className="section">المشتريات</div>
+          <NavLink to="/suppliers" className="section">المشتريات</NavLink>
           <NavLink to="/suppliers" className={link}>
             الموردون
           </NavLink>
           <NavLink to="/purchase-orders" className={link}>
             أوامر الشراء
           </NavLink>
-          <div className="section">المبيعات</div>
+          <NavLink to="/pos" className="section">المبيعات</NavLink>
           <NavLink to="/returns" className={link}>
             المرتجعات
           </NavLink>
@@ -51,13 +51,13 @@ export default function Layout() {
           <NavLink to="/shifts" className={link}>
             الورديات
           </NavLink>
-          <div className="section">الحسابات</div>
+          <NavLink to="/payments" className="section">الحسابات</NavLink>
           <NavLink to="/payments" className={link}>
             المقبوضات والمدفوعات
           </NavLink>
           {isManager && (
             <>
-              <div className="section">التقارير</div>
+              <NavLink to="/reports" className="section">التقارير</NavLink>
               <NavLink to="/reports" className={link}>
                 التقارير المفصلة
               </NavLink>
@@ -68,7 +68,7 @@ export default function Layout() {
           )}
           {isManager && (
             <>
-              <div className="section">الشركة</div>
+              <NavLink to="/users" className="section">الشركة</NavLink>
               <NavLink to="/users" className={link}>
                 الموظفون
               </NavLink>

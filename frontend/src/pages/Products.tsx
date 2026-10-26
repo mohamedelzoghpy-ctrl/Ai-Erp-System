@@ -117,6 +117,7 @@ export default function Products() {
       {editing && (
         <ProductForm
           initial={editing === "new" ? null : editing}
+          isManager={isManager}
           warehouses={warehouses.data ?? []}
           suppliers={suppliers.data ?? []}
           onClose={() => setEditing(null)}
@@ -143,12 +144,14 @@ export default function Products() {
 
 function ProductForm({
   initial,
+  isManager,
   warehouses,
   suppliers,
   onClose,
   onSaved,
 }: {
   initial: Product | null;
+  isManager: boolean;
   warehouses: Warehouse[];
   suppliers: Party[];
   onClose: () => void;
@@ -176,16 +179,21 @@ function ProductForm({
       name: f.name.trim(),
       description: f.description.trim() || null,
       unit: f.unit.trim() || "قطعة",
-      cost_price: f.cost_price || "0",
       sale_price: f.sale_price || "0",
       reorder_level: Number(f.reorder_level) || 0,
       is_active: f.is_active,
       warehouse_id: f.warehouse_id ? Number(f.warehouse_id) : null,
       supplier_id: f.supplier_id ? Number(f.supplier_id) : null,
+      ...(isManager ? { cost_price: f.cost_price || "0" } : {}),
     };
     void run(async () => {
       if (initial) await api.patch(`/products/${initial.id}`, common);
-      else await api.post("/products", { ...common, sku: f.sku.trim(), quantity: Number(f.quantity) || 0 });
+      else
+        await api.post("/products", {
+          ...common,
+          sku: f.sku.trim(),
+          ...(isManager ? { quantity: Number(f.quantity) || 0 } : {}),
+        });
       onSaved();
     });
   };
@@ -202,7 +210,15 @@ function ProductForm({
             <input value={f.name} onChange={(e) => set("name", e.target.value)} required autoFocus={!!initial} />
           </Field>
           <Field label="سعر التكلفة">
-            <input type="number" min="0" step="0.01" value={f.cost_price} onChange={(e) => set("cost_price", e.target.value)} />
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={f.cost_price}
+              readOnly={!isManager}
+              title={isManager ? undefined : "تعديل سعر التكلفة للمدير فقط"}
+              onChange={(e) => set("cost_price", e.target.value)}
+            />
           </Field>
           <Field label="سعر البيع">
             <input type="number" min="0" step="0.01" value={f.sale_price} onChange={(e) => set("sale_price", e.target.value)} />
@@ -234,7 +250,7 @@ function ProductForm({
             </select>
           </Field>
         </div>
-        {!initial && (
+        {!initial && isManager && (
           <Field label="الرصيد الافتتاحي" hint="بعد الإنشاء تتغير الكمية فقط عبر المشتريات والمبيعات والتسوية">
             <input type="number" min="0" step="1" value={f.quantity} onChange={(e) => set("quantity", e.target.value)} />
           </Field>

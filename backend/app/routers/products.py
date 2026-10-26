@@ -1,5 +1,7 @@
 """Products and inventory (stock levels, adjustments, movement history)."""
 
+from decimal import Decimal
+
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
@@ -8,10 +10,9 @@ from sqlalchemy.orm import Session
 
 from ..pagination import paginate
 from ..audit import audit
-from ..deps import get_current_user
+from ..deps import get_current_user, require_manager, user_role
 from .. import models, schemas
 from ..database import get_db
-from ..deps import require_manager
 
 router = APIRouter(prefix="/products", tags=["products & inventory"], dependencies=[Depends(get_current_user)])
 
@@ -32,6 +33,12 @@ def _check_refs(db: Session, warehouse_id: Optional[int], supplier_id: Optional[
 
 @router.post("", response_model=schemas.ProductOut, status_code=status.HTTP_201_CREATED)
 def create_product(payload: schemas.ProductCreate, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    # Cost price and opening stock are manager-only (mirrors opening balances for parties).
+    if user_role(user) not in ("admin", "manager"):
+        if Decimal(str(payload.cost_price)) != 0:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Only a manager or admin can set a cost price")
+        if payload.quantity != 0:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Only a manager or admin can set an opening stock balance")
     _check_refs(db, payload.warehouse_id, payload.supplier_id)
     product = models.Product(**payload.model_dump())
     db.add(product)
@@ -92,6 +99,10 @@ def get_product(product_id: int, db: Session = Depends(get_db)):
 def update_product(product_id: int, payload: schemas.ProductUpdate, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     product = _product_or_404(db, product_id)
     data = payload.model_dump(exclude_unset=True)
+    # Cost price changes are manager-only (mirrors opening balances for parties).
+    if "cost_price" in data and user_role(user) not in ("admin", "manager"):
+        if Decimal(str(data["cost_price"])) != Decimal(str(product.cost_price)):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Only a manager or admin can change the cost price")
     _check_refs(db, data.get("warehouse_id"), data.get("supplier_id"))
     for key, value in data.items():
         setattr(product, key, value)
