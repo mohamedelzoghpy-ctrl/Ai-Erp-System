@@ -48,6 +48,7 @@ def _make_user(
                 role=role,
             )
         )
+        user.active_company_id = company_id
         if branch_ids is None:
             branch_ids = [
                 branch_id
@@ -91,6 +92,7 @@ def first_run_setup(payload: schemas.SetupAdmin, db: Session = Depends(get_db)):
     db.info["company_id"] = company.id
     user = _make_user(db, payload, role="admin")
     user.is_platform_admin = True
+    user.active_company_id = company.id
     db.commit()
     db.refresh(user)
     return user
@@ -172,6 +174,32 @@ def login(request: Request, form: OAuth2PasswordRequestForm = Depends(), db: Ses
 
 @router.get("/me", response_model=schemas.UserOut)
 def me(user: models.User = Depends(get_current_user)):
+    return user
+
+
+@router.get("/companies", response_model=List[schemas.CompanyOut])
+def my_companies(user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Companies the current user belongs to (for the company switcher)."""
+    memberships = db.query(models.UserCompanyMembership).filter(models.UserCompanyMembership.user_id == user.id).all()
+    ids = [m.company_id for m in memberships]
+    return db.query(models.Company).filter(models.Company.id.in_(ids), models.Company.is_active.is_(True)).all()
+
+
+@router.post("/switch-company", response_model=schemas.UserOut)
+def switch_company(payload: schemas.SwitchCompany, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    """Switch the active company for the current user (must be a member)."""
+    membership = db.query(models.UserCompanyMembership).filter(
+        models.UserCompanyMembership.user_id == user.id,
+        models.UserCompanyMembership.company_id == payload.company_id,
+    ).one_or_none()
+    if membership is None:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Not a member of that company")
+    company = db.get(models.Company, payload.company_id)
+    if company is None or not company.is_active:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Company not found")
+    user.active_company_id = payload.company_id
+    db.commit()
+    db.refresh(user)
     return user
 
 

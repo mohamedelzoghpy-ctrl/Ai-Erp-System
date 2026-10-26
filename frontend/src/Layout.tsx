@@ -9,6 +9,7 @@ import type { Company } from "./types";
 export default function Layout() {
   const { user, logout, isManager, isPlatformAdmin } = useAuth();
   const company = useFetch(() => api.get<Company>("/company"), "current-company");
+  const companies = useFetch(() => api.get<Company[]>("/auth/companies"), "my-companies");
   const link = ({ isActive }: { isActive: boolean }) => (isActive ? "active" : undefined);
   const [open, setOpen] = useState<Record<string, boolean>>({
     inv: true, pur: true, sal: true, acc: true, rep: true, comp: true,
@@ -24,6 +25,16 @@ export default function Layout() {
       {open[key] && children}
     </>
   );
+
+  const switchCompany = async (id: number) => {
+    if (id === company.data?.id) return;
+    try {
+      await api.post("/auth/switch-company", { company_id: id });
+      window.location.reload();
+    } catch (e) {
+      alert((e as Error).message);
+    }
+  };
 
   return (
     <div className="app">
@@ -82,6 +93,20 @@ export default function Layout() {
             {company.data?.name ? `${company.data.name} · ` : ""}
             {user?.full_name || user?.username} · {user ? ROLE_LABEL[user.role] : ""}
           </span>
+          {companies.data && companies.data.length > 1 && (
+            <select
+              value={company.data?.id ?? ""}
+              onChange={(e) => switchCompany(Number(e.target.value))}
+              style={{ marginInlineStart: 12 }}
+              aria-label="الشركة"
+            >
+              {companies.data.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          )}
           <button className="btn btn-sm" onClick={logout}>
             تسجيل الخروج
           </button>

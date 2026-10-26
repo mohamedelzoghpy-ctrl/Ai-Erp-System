@@ -251,6 +251,7 @@ class UserOut(ORMModel):
     role: str
     is_active: bool
     is_platform_admin: bool = False
+    active_company_id: Optional[int] = None
     created_at: datetime
 
 
@@ -275,6 +276,10 @@ class CompanyOut(ORMModel):
     max_warehouses_per_branch: Optional[int]
     is_active: bool
     created_at: datetime
+
+
+class SwitchCompany(BaseModel):
+    company_id: int
 
 
 class BranchCreate(BaseModel):

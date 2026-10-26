@@ -61,9 +61,9 @@ def test_users_belong_to_one_company_and_can_have_branch_and_warehouse_access():
         db.add(another_company)
         db.flush()
         db.add(models.UserCompanyMembership(user_id=user.id, company_id=another_company.id, role="staff"))
-        with pytest.raises(IntegrityError):
-            db.commit()
-        db.rollback()
+        db.commit()
+        db.refresh(user)
+        assert len(user.memberships) == 2
 
     engine.dispose()
 

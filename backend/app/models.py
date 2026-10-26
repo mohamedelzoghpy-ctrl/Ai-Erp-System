@@ -283,6 +283,7 @@ class User(Base):
     role = Column(String(20), nullable=False, default="staff", server_default="staff")  # admin | manager | staff
     is_active = Column(Boolean, nullable=False, default=True, server_default="true")
     is_platform_admin = Column(Boolean, nullable=False, default=False, server_default="false")
+    active_company_id = Column(Integer, ForeignKey("companies.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     memberships = relationship("UserCompanyMembership", back_populates="user", cascade="all, delete-orphan")
@@ -293,7 +294,6 @@ class User(Base):
 class UserCompanyMembership(Base):
     __tablename__ = "user_company_memberships"
     __table_args__ = (
-        UniqueConstraint("user_id", name="uq_user_company_membership"),
         CheckConstraint("role IN ('admin', 'manager', 'staff')", name="ck_membership_role"),
     )
 

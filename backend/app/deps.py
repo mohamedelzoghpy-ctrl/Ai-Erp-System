@@ -23,17 +23,35 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    membership = (
-        db.query(models.UserCompanyMembership)
-        .join(models.Company)
-        .filter(
-            models.UserCompanyMembership.user_id == user.id,
-            models.Company.is_active.is_(True),
+    membership = None
+    if getattr(user, "active_company_id", None):
+        membership = (
+            db.query(models.UserCompanyMembership)
+            .join(models.Company)
+            .filter(
+                models.UserCompanyMembership.user_id == user.id,
+                models.UserCompanyMembership.company_id == user.active_company_id,
+                models.Company.is_active.is_(True),
+            )
+            .one_or_none()
         )
-        .one_or_none()
-    )
+    if membership is None:
+        membership = (
+            db.query(models.UserCompanyMembership)
+            .join(models.Company)
+            .filter(
+                models.UserCompanyMembership.user_id == user.id,
+                models.Company.is_active.is_(True),
+            )
+            .order_by(models.UserCompanyMembership.id)
+            .first()
+        )
     if membership is None:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "User is not assigned to an active company")
+
+    if getattr(user, "active_company_id", None) != membership.company_id:
+        user.active_company_id = membership.company_id
+        db.commit()
 
     company_id = membership.company_id
     role = membership.role
