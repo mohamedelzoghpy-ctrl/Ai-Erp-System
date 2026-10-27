@@ -224,6 +224,8 @@ export default function Payments() {
       <div className="card" style={{ padding: 14, marginBottom: 16, display: "flex", gap: 8, flexWrap: "wrap" }}>
         <button className="btn btn-primary" onClick={() => setShowReceiptPicker(true)}>+ سند قبض</button>
         <button className="btn btn-primary" onClick={() => setShowPaymentPicker(true)}>+ سند صرف</button>
+        <button className="btn btn-primary" onClick={() => { const el = document.getElementById("safe-form"); el?.scrollIntoView({ behavior: "smooth" }); }}>+ إضافة خزينة</button>
+        <button className="btn btn-primary" onClick={() => { const el = document.getElementById("bank-form"); el?.scrollIntoView({ behavior: "smooth" }); }}>+ إضافة بنك</button>
       </div>
       <div className="card card-pad range-bar" style={{ marginBottom: 14 }}>
         <label className="range-field">
@@ -266,7 +268,7 @@ export default function Payments() {
               safes.reload();
               (e.target as HTMLFormElement).reset();
             })();
-          }} className="form-grid">
+          }} className="form-grid" id="safe-form">
             <Field label="اسم الخزينة"><input name="name" required /></Field>
             <Field label="الكود"><input name="code" dir="ltr" required /></Field>
             <Field label="الرصيد الافتتاحي"><input name="opening" type="number" step="0.01" defaultValue="0" /></Field>
@@ -296,7 +298,7 @@ export default function Payments() {
               banks.reload();
               (e.target as HTMLFormElement).reset();
             })();
-          }} className="form-grid">
+          }} className="form-grid" id="bank-form">
             <Field label="اسم البنك"><input name="name" required /></Field>
             <Field label="الكود"><input name="code" dir="ltr" required /></Field>
             <Field label="رقم الحساب"><input name="acct" dir="ltr" /></Field>
