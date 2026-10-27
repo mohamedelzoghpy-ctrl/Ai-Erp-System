@@ -160,7 +160,15 @@ async def import_products_xlsx(file: UploadFile = File(...), db: Session = Depen
     except Exception:
         raise HTTPException(422, "Invalid Excel file")
     ws = wb.active
-    header = [str(c.value).strip() if c.value is not None else "" for c in ws[1]]
+    # Find the header row (exported files have title/subtitle rows first).
+    header_row_idx = 1
+    for r in range(1, min(ws.max_row, 10) + 1):
+        vals = [str(c.value).strip() if c.value is not None else "" for c in ws[r]]
+        joined = " ".join(vals)
+        if "الكود" in joined or "SKU" in joined or "sku" in joined.lower():
+            header_row_idx = r
+            break
+    header = [str(c.value).strip() if c.value is not None else "" for c in ws[header_row_idx]]
 
     def col(name: str):
         for i, h in enumerate(header):
@@ -193,39 +201,46 @@ async def import_products_xlsx(file: UploadFile = File(...), db: Session = Depen
     updated = 0
     created = 0
     errors = []
-    for row in ws.iter_rows(min_row=2, values_only=True):
+    for row in ws.iter_rows(min_row=header_row_idx + 1, values_only=True):
         if not row or all(v is None for v in row):
             continue
-        sku = str(row[sku_i]).strip() if sku_i is not None and row[sku_i] is not None else ""
+        # Skip trailing totals row
+        first = str(row[sku_i]).strip() if (sku_i is not None and sku_i < len(row) and row[sku_i] is not None) else ""
+        if first in ("", "الإجمالي", "Total", "TOTAL"):
+            continue
+        sku = first
         if not sku:
             continue
-        name = str(row[name_i]).strip() if (name_i is not None and row[name_i] is not None) else sku
+        name = str(row[name_i]).strip() if (name_i is not None and name_i < len(row) and row[name_i] is not None) else sku
         product = db.query(models.Product).filter(models.Product.company_id == company_id, models.Product.sku == sku).one_or_none()
-        if product is None:
+        is_new = product is None
+        if is_new:
             product = models.Product(company_id=company_id, sku=sku, name=name, unit="قطعة", is_active=True)
             db.add(product)
             db.flush()
             created += 1
-        if name_i is not None and row[name_i] is not None:
+        else:
+            updated += 1
+        if name_i is not None and name_i < len(row) and row[name_i] is not None:
             product.name = str(row[name_i]).strip()
-        if unit_i is not None and row[unit_i] is not None:
+        if unit_i is not None and unit_i < len(row) and row[unit_i] is not None:
             product.unit = str(row[unit_i]).strip() or product.unit
-        if cost_i is not None and row[cost_i] is not None:
+        if cost_i is not None and cost_i < len(row) and row[cost_i] is not None:
             try:
                 product.cost_price = Decimal(str(row[cost_i]))
             except Exception:
                 errors.append(f"{sku}: invalid cost_price")
-        if sale_i is not None and row[sale_i] is not None:
+        if sale_i is not None and sale_i < len(row) and row[sale_i] is not None:
             try:
                 product.sale_price = Decimal(str(row[sale_i]))
             except Exception:
                 errors.append(f"{sku}: invalid sale_price")
-        if reorder_i is not None and row[reorder_i] is not None:
+        if reorder_i is not None and reorder_i < len(row) and row[reorder_i] is not None:
             try:
                 product.reorder_level = int(row[reorder_i])
             except Exception:
                 errors.append(f"{sku}: invalid reorder_level")
-        updated += 1
+        # (counted above)
     db.commit()
     return {"updated": updated, "created": created, "errors": errors}
 
