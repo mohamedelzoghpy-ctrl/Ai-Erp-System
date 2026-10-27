@@ -11,7 +11,7 @@ export default function Layout() {
   const { user, logout, isManager, isPlatformAdmin } = useAuth();
   const { t, lang, setLang } = useI18n();
   const company = useFetch(() => api.get<Company>("/company"), "current-company");
-  const companies = useFetch(() => api.get<Company[]>("/auth/companies"), "my-companies");
+  const companies = useFetch(() => (isPlatformAdmin ? api.get<Company[]>("/platform/companies") : api.get<Company[]>("/auth/companies")), "my-companies");
   const pending = useFetch(() => (isManager ? api.get<{ count: number }>("/stock-transfers/pending-count") : Promise.resolve({ count: 0 })), "pending-transfers");
   const link = ({ isActive }: { isActive: boolean }) => (isActive ? "active" : undefined);
   const [open, setOpen] = useState<Record<string, boolean>>({
@@ -117,7 +117,7 @@ export default function Layout() {
               )}
             </a>
           )}
-          {companies.data && companies.data.length > 1 && (
+          {(isPlatformAdmin || (companies.data && companies.data.length > 1)) && (
             <button
               className="btn btn-sm"
               style={{ marginInlineStart: 12 }}

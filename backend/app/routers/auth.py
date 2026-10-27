@@ -187,16 +187,20 @@ def my_companies(user: models.User = Depends(get_current_user), db: Session = De
 
 @router.post("/switch-company", response_model=schemas.UserOut)
 def switch_company(payload: schemas.SwitchCompany, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
-    """Switch the active company for the current user (must be a member)."""
+    """Switch the active company for the current user."""
+    company = db.get(models.Company, payload.company_id)
+    if company is None or not company.is_active:  # type: ignore
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Company not found")
     membership = db.query(models.UserCompanyMembership).filter(
         models.UserCompanyMembership.user_id == user.id,
         models.UserCompanyMembership.company_id == payload.company_id,
     ).one_or_none()
     if membership is None:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Not a member of that company")
-    company = db.get(models.Company, payload.company_id)
-    if company is None or not company.is_active:  # type: ignore
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Company not found")
+        if not user.is_platform_admin:  # type: ignore
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Not a member of that company")
+        # Platform admins can switch to any active company; auto-create membership.
+        membership = models.UserCompanyMembership(user_id=user.id, company_id=payload.company_id, role="admin")  # type: ignore
+        db.add(membership)
     user.active_company_id = payload.company_id  # type: ignore
     db.commit()
     db.refresh(user)
