@@ -152,6 +152,57 @@ def apply(stocktake_id: int, db: Session = Depends(get_db), user: models.User = 
     return _out(s, detail=True)
 
 
+@router.post("/{stocktake_id}/adjust", response_model=schemas.StocktakeOut)
+def adjust(stocktake_id: int, payload: schemas.StocktakeCounts, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    """Edit counts on an already-applied stock-take and apply the incremental difference. Managers/admins only."""
+    from ..deps import user_role
+    if user_role(user) not in ("admin", "manager"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only a manager or admin can edit an applied stock-take")
+    s = _get(db, stocktake_id, lock=True)
+    if s.status != "applied":
+        raise HTTPException(status.HTTP_409_CONFLICT, f"Stock-take is {s.status}, not applied")
+    by_product = {l.product_id: l for l in s.lines}
+    products = {
+        p.id: p
+        for p in db.query(models.Product).filter(models.Product.id.in_([c.product_id for c in payload.counts])).order_by(models.Product.id).with_for_update().all()
+    }
+    wid = s.warehouse_id
+    # validate
+    problems = []
+    for c in payload.counts:
+        l = by_product.get(c.product_id)
+        if l is None:
+            problems.append(f"product {c.product_id} not in this stock-take")
+            continue
+        if c.counted_qty is None:
+            continue
+        old = l.counted_qty if l.counted_qty is not None else l.system_qty
+        delta = c.counted_qty - old
+        target = wid if wid is not None else stock.home_warehouse_id(db, products[c.product_id])
+        if delta < 0 and stock.available(db, c.product_id, target) + delta < 0:
+            problems.append(f"{products[c.product_id].name}: current {stock.available(db, c.product_id, target)} adjustment {delta:+d}")
+    if problems:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Would make stock negative: " + "; ".join(problems))
+    changed = 0
+    for c in payload.counts:
+        l = by_product.get(c.product_id)
+        if l is None or c.counted_qty is None:
+            continue
+        old = l.counted_qty if l.counted_qty is not None else l.system_qty
+        delta = c.counted_qty - old
+        if delta == 0:
+            continue
+        target = wid if wid is not None else stock.home_warehouse_id(db, products[c.product_id])
+        stock.move_stock(db, products[c.product_id], target, delta, "stocktake_adjust", f"ST-{s.id}")
+        l.counted_qty = c.counted_qty
+        l.difference = c.counted_qty - l.system_qty
+        changed += 1
+    audit(db, user, "update", "stocktake", s, f"adjusted {changed} line(s) after approval")
+    db.commit()
+    db.refresh(s)
+    return _out(s, detail=True)
+
+
 @router.post("/{stocktake_id}/cancel", response_model=schemas.StocktakeOut)
 def cancel(stocktake_id: int, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     s = _get(db, stocktake_id, lock=True)

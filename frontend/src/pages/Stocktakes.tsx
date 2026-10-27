@@ -51,6 +51,7 @@ function DetailDialog({ id, onClose, onChanged }: { id: number; onClose: () => v
   const data = useFetch(() => api.get<Stocktake>(`/stocktakes/${id}`), `st-${id}`);
   const [draft, setDraft] = useState<Record<number, string>>({});
   const [confirmApply, setConfirmApply] = useState(false);
+  const [editing, setEditing] = useState(false);
   const act = useAction();
   const s = data.data;
   const open = s?.status === "open";
@@ -109,7 +110,7 @@ function DetailDialog({ id, onClose, onChanged }: { id: number; onClose: () => v
                         <td>{l.product_name}</td>
                         <td className="num">{num(l.system_qty)}</td>
                         <td className="num">
-                          {open ? (
+                          {open || editing ? (
                             <input
                               type="number"
                               min="0"
@@ -176,6 +177,30 @@ function DetailDialog({ id, onClose, onChanged }: { id: number; onClose: () => v
                   اعتماد الفروقات
                 </button>
               )}
+              {s.status === "applied" && isManager && !editing && (
+                <button className="btn" onClick={() => setEditing(true)}>
+                  تعديل (after approval)
+                </button>
+              )}
+              {editing && (
+                <>
+                  <button className="btn btn-primary" disabled={act.busy || Object.keys(draft).length === 0} onClick={() => void act.run(async () => {
+                    await api.post(`/stocktakes/${id}/adjust`, {
+                      counts: Object.entries(draft).map(([pid, v]) => ({ product_id: Number(pid), counted_qty: v === "" ? null : Number(v) })),
+                    });
+                    setEditing(false);
+                    setDraft({});
+                    data.reload();
+                    onChanged();
+                  })}>
+                    تطبيق التسوية
+                  </button>
+                  <button className="btn" onClick={() => { setEditing(false); setDraft({}); }}>
+                    إلغاء
+                  </button>
+                </>
+              )}
+
               {open && (
                 <button className="btn" disabled={act.busy} onClick={() => void call("cancel")}>
                   إلغاء الجرد
