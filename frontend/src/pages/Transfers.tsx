@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router-dom";
-import { api } from "../api";
+import { api, getToken } from "../api";
 import { useAuth } from "../auth";
 import { dateTime, num } from "../format";
 import { useAction, useFetch, usePagedList } from "../hooks";
@@ -198,6 +198,15 @@ function ViewTransfer({ t, onClose, onApprove, onReject }: { t: StockTransfer; o
         )}
         <button className="btn" disabled={dl.busy} onClick={() => void dl.run(() => api.download(`/stock-transfers/${t.id}/pdf`, `transfer-TR-${t.id}.pdf`))}>
           ⬇ سند التحويل PDF
+        </button>
+        <button className="btn" disabled={dl.busy} onClick={() => {
+          const url = `/api/stock-transfers/${t.id}/pdf?token=${encodeURIComponent(getToken() ?? "")}`;
+          const w = window.open(url, "_blank");
+          if (w) {
+            w.addEventListener("load", () => { try { w.print(); } catch { /* ignore */ } });
+          }
+        }}>
+          🖨 طباعة
         </button>
       </div>
     </Modal>
