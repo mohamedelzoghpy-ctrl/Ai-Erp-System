@@ -131,6 +131,22 @@ export default function Products() {
                 );
               })}
             </tbody>
+            <tfoot>
+              <tr style={{ fontWeight: 600 }}>
+                <td colSpan={5} style={{ textAlign: "end" }}>الإجمالي</td>
+                <td className="num">
+                  {num(rows.reduce((s, p) => s + Number(p.quantity), 0))}
+                </td>
+                <td className="num">
+                  {money(rows.reduce((s, p) => s + Number(p.quantity) * Number(p.sale_price), 0))}
+                </td>
+                <td className="num">
+                  {money(rows.reduce((s, p) => s + Number(p.quantity) * Number(p.cost_price), 0))}
+                </td>
+                <td />
+              </tr>
+            </tfoot>
+
           </table>
         ) : (
           <Empty>{search || warehouseId || lowOnly ? "لا نتائج مطابقة" : "لا توجد منتجات بعد. أضف منتجاً للبدء."}</Empty>
