@@ -43,7 +43,7 @@ export default function Users() {
                   </td>
                   <td>{u.full_name || "—"}</td>
                   <td>{ROLE_LABEL[u.role]}</td>
-                  <td>{u.is_active ? <span className="badge badge-confirmed">نشط</span> : <span className="badge badge-off">معطّل</span>}</td>
+                  <td>{u.is_active ? <span className="badge badge-confirmed">active</span> : <span className="badge badge-off">inactive</span>}</td>
                   <td>{dateTime(u.created_at)}</td>
                   <td className="actions">
                     <button className="btn btn-sm" onClick={() => setEditing(u)}>
@@ -139,7 +139,7 @@ function UserForm({ initial, isSelf, canAssignAdmin, onClose, onSaved }: { initi
         </div>
         {initial && (
           <label className="check">
-            <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} disabled={isSelf} /> نشط
+            <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} disabled={isSelf} /> active
           </label>
         )}
         {role === "staff" && (

@@ -146,7 +146,7 @@ export default function Products() {
                     <td dir="ltr">{p.sku}</td>
                     <td>
                       {p.name}
-                      {!p.is_active && <span className="badge badge-off" style={{ marginInlineStart: 8 }}>معطّل</span>}
+                      {!p.is_active && <span className="badge badge-off" style={{ marginInlineStart: 8 }}>inactive</span>}
                     </td>
                     <td>{nameOf(suppliers.data, p.supplier_id)}</td>
                     <td>{nameOf(warehouses.data, p.warehouse_id)}</td>
@@ -345,7 +345,7 @@ function ProductForm({
           <textarea rows={2} value={f.description} onChange={(e) => set("description", e.target.value)} />
         </Field>
         <label className="check">
-          <input type="checkbox" checked={f.is_active} onChange={(e) => set("is_active", e.target.checked)} /> نشط
+          <input type="checkbox" checked={f.is_active} onChange={(e) => set("is_active", e.target.checked)} /> active
         </label>
         <div className="form-actions">
           <button className="btn btn-primary" disabled={busy}>

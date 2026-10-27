@@ -178,7 +178,7 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
                 <tbody>{branches.data.map((branch) => (
                   <tr key={branch.id}>
                     <td>{branch.name}</td><td dir="ltr">{branch.code}</td><td>{branch.location || "—"}</td>
-                    <td>{branch.is_active ? "نشط" : "معطّل"}</td>
+                    <td>{branch.is_active ? "active" : "inactive"}</td>
                   </tr>
                 ))}</tbody>
               </table>
@@ -206,7 +206,7 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
                 <tbody>{companies.data.map((item) => (
                   <tr key={item.id}>
                     <td>{item.name}</td><td dir="ltr">{item.code}</td>
-                    <td>{item.max_warehouses_per_branch ?? "غير محدود"}</td><td>{item.is_active ? "نشطة" : "معطّلة"}</td>
+                    <td>{item.max_warehouses_per_branch ?? "غير محدود"}</td><td>{item.is_active ? "active" : "inactive"}</td>
                   </tr>
                 ))}</tbody>
               </table>
@@ -234,7 +234,7 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
                      <table>
                        <thead><tr><th>الاسم</th><th>الرمز</th><th>الموقع</th><th>الحالة</th></tr></thead>
                        <tbody>{selBranches.map((b) => (
-                         <tr key={b.id}><td>{b.name}</td><td dir="ltr">{b.code}</td><td>{b.location || "—"}</td><td>{b.is_active ? "نشط" : "معطّل"}</td></tr>
+                         <tr key={b.id}><td>{b.name}</td><td dir="ltr">{b.code}</td><td>{b.location || "—"}</td><td>{b.is_active ? "active" : "inactive"}</td></tr>
                        ))}</tbody>
                      </table>
                    </div>
@@ -251,7 +251,7 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
                      <table>
                        <thead><tr><th>الاسم</th><th>الكود</th><th>الفرع</th><th>الموقع</th><th>الحالة</th></tr></thead>
                        <tbody>{selWarehouses.map((w) => (
-                         <tr key={w.id}><td>{w.name}</td><td>{w.code}</td><td>{selBranches.find((b) => b.id === w.branch_id)?.name || "—"}</td><td>{w.location || "—"}</td><td>{w.is_active ? "نشط" : "معطّل"}</td></tr>
+                         <tr key={w.id}><td>{w.name}</td><td>{w.code}</td><td>{selBranches.find((b) => b.id === w.branch_id)?.name || "—"}</td><td>{w.location || "—"}</td><td>{w.is_active ? "active" : "inactive"}</td></tr>
                        ))}</tbody>
                      </table>
                    </div>

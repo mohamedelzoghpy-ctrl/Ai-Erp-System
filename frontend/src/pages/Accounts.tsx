@@ -258,7 +258,7 @@ export default function Payments() {
             <table>
               <thead><tr><th>الاسم</th><th>الكود</th><th className="num">الرصيد</th><th>الحالة</th></tr></thead>
               <tbody>{safes.data.map((s) => (
-                <tr key={s.id}><td>{s.name}</td><td dir="ltr">{s.code}</td><td className="num">{money(s.balance)}</td><td>{s.is_active ? "نشطة" : "معطّلة"}</td></tr>
+                <tr key={s.id}><td>{s.name}</td><td dir="ltr">{s.code}</td><td className="num">{money(s.balance)}</td><td>{s.is_active ? "active" : "inactive"}</td></tr>
               ))}</tbody>
             </table>
           </div>
@@ -272,7 +272,7 @@ export default function Payments() {
             <table>
               <thead><tr><th>الاسم</th><th>الكود</th><th>رقم الحساب</th><th className="num">الرصيد</th><th>الحالة</th></tr></thead>
               <tbody>{banks.data.map((b) => (
-                <tr key={b.id}><td>{b.name}</td><td dir="ltr">{b.code}</td><td dir="ltr">{b.account_number || "—"}</td><td className="num">{money(b.balance)}</td><td>{b.is_active ? "نشطة" : "معطّلة"}</td></tr>
+                <tr key={b.id}><td>{b.name}</td><td dir="ltr">{b.code}</td><td dir="ltr">{b.account_number || "—"}</td><td className="num">{money(b.balance)}</td><td>{b.is_active ? "active" : "inactive"}</td></tr>
               ))}</tbody>
             </table>
           </div>

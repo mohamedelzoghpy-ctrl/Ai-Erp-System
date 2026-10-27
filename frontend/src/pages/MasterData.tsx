@@ -21,7 +21,7 @@ function useCrud<T extends { id: number }>(path: string) {
 }
 
 function ActiveBadge({ active }: { active: boolean }) {
-  return active ? <span className="badge badge-confirmed">نشط</span> : <span className="badge badge-off">معطّل</span>;
+  return active ? <span className="badge badge-confirmed">active</span> : <span className="badge badge-off">inactive</span>;
 }
 
 // ---------------------------------------------------------------- Warehouses
@@ -183,7 +183,7 @@ function WarehouseForm({ initial, branches, onClose, onSaved }: { initial: Wareh
           <input value={location} onChange={(e) => setLocation(e.target.value)} />
         </Field>
         <label className="check">
-          <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} /> نشط
+          <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} /> active
         </label>
         <div className="form-actions">
           <button className="btn btn-primary" disabled={busy}>
@@ -249,7 +249,7 @@ function PartyScreen({ title, singular, path, kind }: { title: string; singular:
                 <td>${p.phone || "—"}</td>
                 <td>${p.email || "—"}</td>
                 <td>${money(p.balance)}</td>
-                <td>${p.is_active ? "نشط" : "معطّل"}</td>
+                <td>${p.is_active ? "active" : "inactive"}</td>
               </tr>`).join("");
             w.document.write(`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>${title}</title>
               <style>
@@ -424,7 +424,7 @@ function PartyForm({
           </Field>
         )}
         <label className="check">
-          <input type="checkbox" checked={f.is_active} onChange={(e) => set("is_active", e.target.checked)} /> نشط
+          <input type="checkbox" checked={f.is_active} onChange={(e) => set("is_active", e.target.checked)} /> active
         </label>
         <div className="form-actions">
           <button className="btn btn-primary" disabled={busy}>
