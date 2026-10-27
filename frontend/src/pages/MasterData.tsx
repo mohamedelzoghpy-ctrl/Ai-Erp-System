@@ -201,7 +201,7 @@ function WarehouseForm({ initial, branches, onClose, onSaved }: { initial: Wareh
 // ------------------------------------------------- Suppliers & customers
 function PartyScreen({ title, singular, path, kind }: { title: string; singular: string; path: string; kind: "customer" | "supplier" }) {
   const { isManager } = useAuth();
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const [search, setSearch] = useState("");
   const list = usePagedList<Party>(path, { search: search.trim() });
   const action = useAction();
@@ -213,7 +213,7 @@ function PartyScreen({ title, singular, path, kind }: { title: string; singular:
 
   const columns: Column<Party>[] = [
     { header: t("common.name") ?? "الاسم", cell: (p) => p.name },
-    { header: t("party.contactPerson") ?? "المسؤول", cell: (p) => p.contact_person || "—" },
+    ...(lang === "en" ? [] : [{ header: t("party.contactPerson") ?? "المسؤول", cell: (p: Party) => p.contact_person || "—" }]),
     { header: t("party.phone") ?? "الهاتف", cell: (p) => <span dir="ltr">{p.phone || "—"}</span> },
     { header: t("party.email") ?? "البريد", cell: (p) => <span dir="ltr">{p.email || "—"}</span> },
     {
