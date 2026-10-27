@@ -104,9 +104,18 @@ def list_products(
 def export_products_xlsx(db: Session = Depends(get_db)):
     products = db.query(models.Product).order_by(models.Product.id).all()
     rows = []
+    total_qty = 0
+    total_cost_value = 0
+    total_sale_value = 0
     for p in products:
         wh = db.get(models.Warehouse, p.warehouse_id) if p.warehouse_id else None
         sup = db.get(models.Supplier, p.supplier_id) if p.supplier_id else None
+        q = p.quantity or 0
+        cost_value = q * float(p.cost_price)
+        sale_value = q * float(p.sale_price)
+        total_qty += q
+        total_cost_value += cost_value
+        total_sale_value += sale_value
         rows.append([
             ("text", p.sku),
             ("text", p.name),
@@ -115,12 +124,28 @@ def export_products_xlsx(db: Session = Depends(get_db)):
             ("money", p.sale_price),
             ("int", p.quantity),
             ("int", p.reorder_level),
+            ("money", cost_value),
+            ("money", sale_value),
             ("text", wh.name if wh else ""),
             ("text", sup.name if sup else ""),
             ("text", "نعم" if p.is_active else "لا"),
         ])
+    rows.append([
+        ("text", "الإجمالي"),
+        ("text", ""),
+        ("text", ""),
+        ("money", 0),
+        ("money", 0),
+        ("int", total_qty),
+        ("int", 0),
+        ("money", total_cost_value),
+        ("money", total_sale_value),
+        ("text", ""),
+        ("text", ""),
+        ("text", ""),
+    ])
     content = exports.build_tables_xlsx(
-        "قائمة المنتجات", "", [("المنتجات", ["الكود", "الاسم", "الوحدة", "سعر التكلفة", "سعر البيع", "الكمية", "حد إعادة الطلب", "المخزن", "المورد", "نشط"], rows)]
+        "قائمة المنتجات", "", [("المنتجات", ["الكود", "الاسم", "الوحدة", "سعر التكلفة", "سعر البيع", "الكمية", "حد إعادة الطلب", "قيمة التكلفة", "قيمة البيع", "المخزن", "المورد", "نشط"], rows)]
     )
     return Response(content=content, media_type=exports.XLSX_MIME, headers={"Content-Disposition": 'attachment; filename="products.xlsx"', "Cache-Control": "no-store"})
 
