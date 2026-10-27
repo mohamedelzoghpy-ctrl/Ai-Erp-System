@@ -2,6 +2,7 @@ import { useState, useRef, type FormEvent } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api, getToken } from "../api";
 import { useAuth } from "../auth";
+import { useI18n } from "../i18n";
 import { dateTime, num } from "../format";
 import { useAction, useFetch, usePagedList } from "../hooks";
 import type { Product, StockTransfer, Warehouse } from "../types";
@@ -14,6 +15,7 @@ interface Line {
 
 function NewTransfer({ onClose, onDone }: { onClose: () => void; onDone: (t: StockTransfer) => void }) {
   const warehouses = useFetch(() => api.get<Warehouse[]>("/warehouses?is_active=true&limit=500"), "tr-wh");
+  const { t } = useI18n();
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [notes, setNotes] = useState("");
@@ -60,9 +62,9 @@ function NewTransfer({ onClose, onDone }: { onClose: () => void; onDone: (t: Sto
       <form onSubmit={submit}>
         <Alert>{act.error || warehouses.error}</Alert>
         <div className="grid-2">
-          <Field label="من مخزن">
-            <select value={from} onChange={(e) => changeFrom(e.target.value)} aria-label="من مخزن" required>
-              <option value="">— اختر —</option>
+          <Field label={t("transfers.from") + " " + t("common.warehouse")}>
+            <select value={from} onChange={(e) => changeFrom(e.target.value)} aria-label={t("transfers.from")} required>
+              <option value="">— {t("common.none")} —</option>
               {warehouses.data?.map((w) => (
                 <option key={w.id} value={w.id}>
                   {w.name}
@@ -371,6 +373,7 @@ function ViewTransfer({ t, onClose, onApprove, onReject, onEdit }: { t: StockTra
 export default function Transfers() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { isManager, user } = useAuth();
+  const { t } = useI18n();
   const [statusFilter, setStatusFilter] = useState(searchParams.get("status") ?? "");
   // keep URL in sync when filter changes
   // (simple: update on change)
@@ -382,34 +385,34 @@ export default function Transfers() {
   const [editing, setEditing] = useState<StockTransfer | null>(null);
   const act = useAction();
 
-  const approve = (t: StockTransfer) => {
+  const approve = (trf: StockTransfer) => {
     void act.run(async () => {
-      await api.post(`/stock-transfers/${t.id}/approve`);
+      await api.post(`/stock-transfers/${trf.id}/approve`);
       list.reload();
-      if (view?.id === t.id) setView(null);
+      if (view?.id === trf.id) setView(null);
     });
   };
-  const reject = (t: StockTransfer) => {
-    const reason = prompt("سبب الرفض (اختياري):") ?? undefined;
+  const reject = (trf: StockTransfer) => {
+    const reason = prompt(t("transfers.rejectionReason") + " (اختياري):") ?? undefined;
     void act.run(async () => {
-      await api.post(`/stock-transfers/${t.id}/reject${reason ? `?reason=${encodeURIComponent(reason)}` : ""}`);
+      await api.post(`/stock-transfers/${trf.id}/reject${reason ? `?reason=${encodeURIComponent(reason)}` : ""}`);
       list.reload();
-      if (view?.id === t.id) setView(null);
+      if (view?.id === trf.id) setView(null);
     });
   };
-  const remove = (t: StockTransfer) => {
-    if (!confirm(`حذف التحويل TR-${t.id}؟`)) return;
+  const remove = (trf: StockTransfer) => {
+    if (!confirm(`${t("common.delete")} TR-${trf.id}؟`)) return;
     void act.run(async () => {
-      await api.del(`/stock-transfers/${t.id}`);
+      await api.del(`/stock-transfers/${trf.id}`);
       list.reload();
     });
   };
 
   const statusBadge = (s: StockTransfer["status"]) => {
     const map: Record<string, { label: string; cls: string }> = {
-      pending: { label: "قيد الانتظار", cls: "badge badge-warn" },
-      approved: { label: "معتمد", cls: "badge badge-ok" },
-      rejected: { label: "مرفوض", cls: "badge badge-off" },
+      pending: { label: t("transfers.pending"), cls: "badge badge-warn" },
+      approved: { label: t("transfers.approved"), cls: "badge badge-ok" },
+      rejected: { label: t("transfers.rejected"), cls: "badge badge-off" },
     };
     const v = map[s] ?? { label: s, cls: "badge" };
     return <span className={v.cls}>{v.label}</span>;
@@ -417,13 +420,13 @@ export default function Transfers() {
 
   return (
     <>
-      <PageHeader title="التحويلات المخزنية">
+      <PageHeader title={t("transfers.title")}>
         {isManager && (
           <a
             className="btn"
             href="/transfers?status=pending"
             style={{ position: "relative", textDecoration: "none" }}
-            title="تحويلات قيد الانتظار"
+            title={t("transfers.pending")}
           >
             🔔
             {(pendingCount ?? 0) > 0 && (
@@ -446,16 +449,16 @@ export default function Transfers() {
           </a>
         )}
         <button className="btn btn-primary" onClick={() => setCreating(true)}>
-          تحويل جديد
+          {t("transfers.new")}
         </button>
       </PageHeader>
       <Alert>{list.error || act.error}</Alert>
       <div className="toolbar page-actions" style={{ marginBottom: 14 }}>
-        <select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setSearchParams(e.target.value ? { status: e.target.value } : {}); }} aria-label="الحالة">
-          <option value="">كل الحالات</option>
-          <option value="pending">قيد الانتظار</option>
-          <option value="approved">معتمد</option>
-          <option value="rejected">مرفوض</option>
+        <select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setSearchParams(e.target.value ? { status: e.target.value } : {}); }} aria-label={t("transfers.status")}>
+          <option value="">{t("transfers.allStatuses")}</option>
+          <option value="pending">{t("transfers.pending")}</option>
+          <option value="approved">{t("transfers.approved")}</option>
+          <option value="rejected">{t("transfers.rejected")}</option>
         </select>
       </div>
       <div className="card table-wrap">
@@ -466,12 +469,12 @@ export default function Transfers() {
             <thead>
               <tr>
                 <th>رقم</th>
-                <th>التاريخ</th>
-                <th>من</th>
-                <th>إلى</th>
-                <th className="num">الأصناف</th>
-                <th>الحالة</th>
-                <th>المستخدم</th>
+                <th>{t("common.date") ?? "التاريخ"}</th>
+                <th>{t("transfers.from")}</th>
+                <th>{t("transfers.to")}</th>
+                <th className="num">{t("transfers.items")}</th>
+                <th>{t("transfers.status")}</th>
+                <th>{t("transfers.user")}</th>
                 <th />
               </tr>
             </thead>
@@ -515,7 +518,7 @@ export default function Transfers() {
             </tbody>
           </table>
         ) : (
-          <Empty>لا توجد تحويلات.</Empty>
+          <Empty>{t("transfers.empty")}</Empty>
         )}
         <Pager list={list} />
       </div>
