@@ -25,7 +25,7 @@ function NewDialog({ onClose, onDone }: { onClose: () => void; onDone: (id: numb
     <Modal title="جرد جديد" onClose={onClose}>
       <form onSubmit={submit}>
         <Alert>{act.error || warehouses.error}</Alert>
-        <Field label="المخزن" hint="يُعدّ مخزن واحد في كل مرة، وتُقارن الكميات المعدودة بما يخصه فقط.">
+        <Field label="المخزن" hint="يُعدّ مخزن واحد في كل مرة، وتُقارن الكميات counted بما يخصه فقط.">
           <select value={wh} required onChange={(e) => setWh(e.target.value)} aria-label="مخزن الجرد">
             <option value="">— اختر المخزن —</option>
             {warehouses.data?.map((w) => (
@@ -97,7 +97,7 @@ function DetailDialog({ id, onClose, onChanged }: { id: number; onClose: () => v
                     <th>الكود</th>
                     <th>الصنف</th>
                     <th className="num">كمية النظام</th>
-                    <th className="num">المعدود</th>
+                    <th className="num">counted</th>
                     <th className="num">الفرق</th>
                   </tr>
                 </thead>
@@ -118,7 +118,7 @@ function DetailDialog({ id, onClose, onChanged }: { id: number; onClose: () => v
                               step="1"
                               style={{ width: 90 }}
                               value={v}
-                              aria-label={`المعدود ${l.product_name}`}
+                              aria-label={`counted ${l.product_name}`}
                               onChange={(e) => setDraft((d) => ({ ...d, [l.product_id]: e.target.value }))}
                             />
                           ) : l.counted_qty === null ? (
@@ -170,7 +170,7 @@ function DetailDialog({ id, onClose, onChanged }: { id: number; onClose: () => v
             <div className="actions" style={{ marginTop: 12 }}>
               {open && (
                 <button className="btn btn-primary" disabled={act.busy || !dirty || bad} onClick={() => void save()}>
-                  حفظ الكميات المعدودة
+                  حفظ الكميات counted
                 </button>
               )}
               {open && isManager && (
@@ -234,7 +234,7 @@ function DetailDialog({ id, onClose, onChanged }: { id: number; onClose: () => v
                   <p style="text-align:center;">${STATUS[s.status]} · ${dateTime(s.created_at)} · تم عدّ ${num(s.lines_counted)} من ${num(s.lines_total)} · فروقات: ${num(s.lines_with_difference)}</p>
                   <table>
                     <thead><tr>
-                      <th>الكود</th><th>الصنف</th><th>كمية النظام</th><th>المعدود</th><th>الفرق</th>
+                      <th>الكود</th><th>الصنف</th><th>كمية النظام</th><th>counted</th><th>الفرق</th>
                     </tr></thead>
                     <tbody>${rowsHtml}</tbody>
                   </table>
@@ -284,7 +284,7 @@ export default function Stocktakes() {
               <h1>قائمة عمليات الجرد</h1>
               <table>
                 <thead><tr>
-                  <th>number</th><th>date</th><th>warehouse</th><th>status</th><th>المعدود</th><th>فروقات</th>
+                  <th>number</th><th>date</th><th>warehouse</th><th>status</th><th>counted</th><th>فروقات</th>
                 </tr></thead>
                 <tbody>${rowsHtml}</tbody>
               </table>
@@ -311,7 +311,7 @@ export default function Stocktakes() {
                 <th>date</th>
                 <th>warehouse</th>
                 <th>status</th>
-                <th className="num">المعدود</th>
+                <th className="num">counted</th>
                 <th className="num">فروقات</th>
                 <th />
               </tr>
