@@ -113,7 +113,7 @@ export function StatementDialog({ kind, partyId, partyName, onClose }: { kind: P
   const data = useFetch(() => (valid ? api.get<Statement>(`${base}${q}`) : Promise.resolve(null)), `st-${kind}-${partyId}${q}${valid}`);
   const s = data.data;
   const chargeLabel = kind === "customer" ? "مدين" : "مشتريات (له)";
-  const payLabel = kind === "customer" ? "مقبوضات" : "مدفوعات";
+  const payLabel = kind === "customer" ? "دائن" : "مدفوعات";
 
   return (
     <Modal title={`كشف حساب — ${partyName}`} onClose={onClose} wide>
