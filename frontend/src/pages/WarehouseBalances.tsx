@@ -23,7 +23,55 @@ export default function WarehouseBalances() {
 
   return (
     <>
-      <PageHeader title="أرصدة المخازن" />
+      <PageHeader title="أرصدة المخازن">
+        {warehouseId && rows.length > 0 && (
+          <button className="btn" onClick={() => {
+            const w = window.open("", "_blank");
+            if (!w) return;
+            const rowsHtml = rows.map((p) => {
+              const q = p.warehouse_quantity ?? 0;
+              return `<tr>
+                <td>${p.sku}</td>
+                <td>${p.name}</td>
+                <td>${num(q)}</td>
+                <td>${money(p.cost_price)}</td>
+                <td>${money(p.sale_price)}</td>
+                <td>${money(q * Number(p.cost_price))}</td>
+                <td>${money(q * Number(p.sale_price))}</td>
+              </tr>`;
+            }).join("");
+            w.document.write(`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>أرصدة المخازن</title>
+              <style>
+                body { font-family: Tahoma, Arial, sans-serif; padding: 16px; }
+                h1 { text-align: center; }
+                table { width: 100%; border-collapse: collapse; }
+                th, td { border: 1px solid #999; padding: 6px 8px; text-align: center; }
+                th { background: #eee; }
+                tfoot td { font-weight: bold; background: #f3f4f6; }
+              </style></head><body>
+              <h1>أرصدة المخازن — ${selWarehouse?.name ?? ""}</h1>
+              <table>
+                <thead><tr>
+                  <th>الكود</th><th>اسم المنتج</th><th>الكمية</th><th>سعر التكلفة</th><th>سعر البيع</th><th>قيمة التكلفة</th><th>قيمة البيع</th>
+                </tr></thead>
+                <tbody>${rowsHtml}</tbody>
+                <tfoot><tr>
+                  <td colspan="2" style="text-align:end;font-weight:bold;">الإجمالي</td>
+                  <td>${num(totalQty)}</td>
+                  <td>—</td>
+                  <td>—</td>
+                  <td>${money(totalCost)}</td>
+                  <td>${money(totalSale)}</td>
+                </tr></tfoot>
+              </table>
+              <script>window.onload = () => { window.print(); };</script>
+              </body></html>`);
+            w.document.close();
+          }}>
+            🖨 طباعة
+          </button>
+        )}
+      </PageHeader>
       <Alert>{products.error || warehouses.error}</Alert>
 
       <div className="card" style={{ padding: 20, marginBottom: 16 }}>
