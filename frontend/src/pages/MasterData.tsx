@@ -46,6 +46,40 @@ export function Warehouses() {
             + مخزن جديد
           </button>
         )}
+        {list.data && list.data.length > 0 && (
+          <button className="btn" onClick={() => {
+            const w = window.open("", "_blank");
+            if (!w) return;
+            const rowsHtml = (list.data ?? []).map((wh) => `
+              <tr>
+                <td>${wh.name}</td>
+                <td>${wh.code}</td>
+                <td>${branches.data?.find((b) => b.id === wh.branch_id)?.name || "—"}</td>
+                <td>${wh.location || "—"}</td>
+                <td>${wh.is_active ? "نشط" : "معطّل"}</td>
+              </tr>`).join("");
+            w.document.write(`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>المخازن</title>
+              <style>
+                body { font-family: Tahoma, Arial, sans-serif; padding: 16px; }
+                h1 { text-align: center; }
+                table { width: 100%; border-collapse: collapse; }
+                th, td { border: 1px solid #999; padding: 6px 8px; text-align: center; }
+                th { background: #eee; }
+              </style></head><body>
+              <h1>قائمة المخازن</h1>
+              <table>
+                <thead><tr>
+                  <th>الاسم</th><th>الكود</th><th>الفرع</th><th>الموقع</th><th>الحالة</th>
+                </tr></thead>
+                <tbody>${rowsHtml}</tbody>
+              </table>
+              <script>window.onload = () => { window.print(); };</script>
+              </body></html>`);
+            w.document.close();
+          }}>
+            🖨 طباعة
+          </button>
+        )}
       </PageHeader>
       <Alert>{list.error || action.error}</Alert>
       <div className="card table-wrap">
