@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { api } from "../api";
 import { useAuth } from "../auth";
+import { useI18n } from "../i18n";
 import { dayLabel, money, num } from "../format";
 import { Link } from "react-router-dom";
 import { useFetch } from "../hooks";
@@ -19,6 +20,7 @@ function Kpi({ label, value, sub, warn }: { label: string; value: string; sub?: 
 
 export default function Dashboard() {
   const { isManager } = useAuth();
+  const { t } = useI18n();
   const [days, setDays] = useState(30);
 
   // Staff can only see the low-stock report; the financial reports need manager/admin.
@@ -36,12 +38,12 @@ export default function Dashboard() {
 
   return (
     <>
-      <PageHeader title="لوحة التحكم">
+      <PageHeader title={t("dashboard.title")}>
         {isManager && (
-          <select value={days} onChange={(e) => setDays(Number(e.target.value))} aria-label="الفترة">
-            <option value={7}>آخر 7 أيام</option>
-            <option value={30}>آخر 30 يوماً</option>
-            <option value={90}>آخر 90 يوماً</option>
+          <select value={days} onChange={(e) => setDays(Number(e.target.value))} aria-label={t("dashboard.period")}>
+            <option value={7}>{t("dashboard.last7")}</option>
+            <option value={30}>{t("dashboard.last30")}</option>
+            <option value={90}>{t("dashboard.last90")}</option>
           </select>
         )}
       </PageHeader>
@@ -49,7 +51,7 @@ export default function Dashboard() {
       <Alert>{dash.error || sales.error || valuation.error || low.error}</Alert>
       {isManager && d && (d.stale_shifts ?? 0) > 0 && (
         <Alert kind="info">
-          يوجد {num(d.stale_shifts)} وردية مفتوحة منذ وقت طويل. <Link to="/shifts">راجع الورديات وأغلقها</Link>
+          {num(d.stale_shifts)} {t("dashboard.staleShifts")}. <Link to="/shifts">{t("dashboard.reviewShifts")}</Link>
         </Alert>
       )}
 
@@ -59,16 +61,16 @@ export default function Dashboard() {
         ) : (
           d && (
             <div className="kpis">
-              <Kpi label={`المبيعات (آخر ${d.period_days} يوماً)`} value={money(d.sales_total)} sub={`${num(d.sales_orders_confirmed)} أمر مؤكد`} />
-              <Kpi label={`المشتريات (آخر ${d.period_days} يوماً)`} value={money(d.purchases_total)} sub={`${num(d.purchase_orders_received)} أمر مستلم`} />
-              <Kpi label="قيمة المخزون (بالتكلفة)" value={money(d.inventory_cost_value)} sub={`بسعر البيع: ${money(d.inventory_sale_value)}`} />
-              <Kpi label="تقدير الربحية" value={money(Number(d.inventory_sale_value) - Number(d.inventory_cost_value))} sub={`Margin: ${d.inventory_cost_value && Number(d.inventory_cost_value) > 0 ? (((Number(d.inventory_sale_value) - Number(d.inventory_cost_value)) / Number(d.inventory_cost_value)) * 100).toFixed(1) : 0}%`} />
-              <Kpi label="منتجات active" value={num(d.products)} sub={`${num(d.warehouses)} مخزن · ${num(d.suppliers)} مورد · ${num(d.customers)} عميل`} />
-              <Kpi label="المرتجعات" value={money(d.sales_returns_total)} sub={`مرتجع مشتريات: ${money(d.purchase_returns_total)}`} />
-              <Kpi label="مستحقات على العملاء" value={money(d.receivables_total)} sub="إجمالي الذمم المدينة" warn={Number(d.receivables_total) > 0} />
-              <Kpi label="مستحقات للموردين" value={money(d.payables_total)} sub="إجمالي الذمم الدائنة" />
-              <Kpi label="تحت حد إعادة الطلب" value={num(d.low_stock_products)} warn={d.low_stock_products > 0} />
-              <Kpi label="أوامر معلّقة (مسودة)" value={num(d.draft_sales_orders + d.draft_purchase_orders)} sub={`${num(d.draft_sales_orders)} بيع · ${num(d.draft_purchase_orders)} شراء`} />
+              <Kpi label={t("dashboard.sales") + ` (${t("dashboard.last30")})`} value={money(d.sales_total)} sub={`${num(d.sales_orders_confirmed)} ${t("dashboard.confirmedOrder")}`} />
+              <Kpi label={t("dashboard.purchases") + ` (${t("dashboard.last30")})`} value={money(d.purchases_total)} sub={`${num(d.purchase_orders_received)} ${t("dashboard.receivedOrder")}`} />
+              <Kpi label={t("dashboard.inventoryValue")} value={money(d.inventory_cost_value)} sub={`${t("dashboard.inventorySaleValue")}: ${money(d.inventory_sale_value)}`} />
+              <Kpi label={t("dashboard.profitEstimate")} value={money(Number(d.inventory_sale_value) - Number(d.inventory_cost_value))} sub={`Margin: ${d.inventory_cost_value && Number(d.inventory_cost_value) > 0 ? (((Number(d.inventory_sale_value) - Number(d.inventory_cost_value)) / Number(d.inventory_cost_value)) * 100).toFixed(1) : 0}%`} />
+              <Kpi label={t("dashboard.activeProducts")} value={num(d.products)} sub={`${num(d.warehouses)} ${t("dashboard.warehouses")} · ${num(d.suppliers)} ${t("dashboard.suppliers")} · ${num(d.customers)} ${t("dashboard.customers")}`} />
+              <Kpi label={t("dashboard.returns")} value={money(d.sales_returns_total)} sub={`${t("dashboard.purchaseReturn")}: ${money(d.purchase_returns_total)}`} />
+              <Kpi label={t("dashboard.receivables")} value={money(d.receivables_total)} sub={t("dashboard.totalReceivables")} warn={Number(d.receivables_total) > 0} />
+              <Kpi label={t("dashboard.payables")} value={money(d.payables_total)} sub={t("dashboard.totalPayables")} />
+              <Kpi label={t("dashboard.lowStock")} value={num(d.low_stock_products)} warn={d.low_stock_products > 0} />
+              <Kpi label={t("dashboard.draftOrders")} value={num(d.draft_sales_orders + d.draft_purchase_orders)} sub={`${num(d.draft_sales_orders)} ${t("dashboard.salesOrders")} · ${num(d.draft_purchase_orders)} ${t("dashboard.purchaseOrders")}`} />
             </div>
           )
         ))}
@@ -76,11 +78,11 @@ export default function Dashboard() {
       {isManager && (
         <div className="grid-2">
           <div className="card card-pad">
-            <h3>المبيعات اليومية (آخر 30 يوماً)</h3>
+            <h3>{t("dashboard.dailySales")}</h3>
             {series.length === 0 ? (
-              <Empty>لا توجد مبيعات مؤكدة في هذه الفترة</Empty>
+              <Empty>{t("dashboard.noConfirmedSales")}</Empty>
             ) : (
-              <div className="bars" role="img" aria-label="مبيعات يومية">
+              <div className="bars" role="img" aria-label={t("dashboard.dailySalesShort")}>
                 {series.map((x) => (
                   <div className="bar-col" key={x.day} title={`${dayLabel(x.day)}: ${money(x.total)}`}>
                     <div className="bar" style={{ height: `${(Number(x.total) / maxDay) * 100}%` }} />
@@ -91,15 +93,15 @@ export default function Dashboard() {
             )}
           </div>
           <div className="card card-pad">
-            <h3>الأكثر مبيعاً</h3>
+            <h3>{t("dashboard.topProducts")}</h3>
             {sales.data && sales.data.top_products.length > 0 ? (
               <div className="table-wrap">
                 <table>
                   <thead>
                     <tr>
-                      <th>المنتج</th>
-                      <th className="num">الكمية</th>
-                      <th className="num">الإيراد</th>
+                      <th>{t("dashboard.product")}</th>
+                      <th className="num">{t("dashboard.qty")}</th>
+                      <th className="num">{t("dashboard.revenue")}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -114,7 +116,7 @@ export default function Dashboard() {
                 </table>
               </div>
             ) : (
-              <Empty>لا بيانات</Empty>
+              <Empty>{t("dashboard.noData")}</Empty>
             )}
           </div>
         </div>
@@ -122,7 +124,7 @@ export default function Dashboard() {
 
       <div className="grid-2">
         <div className="card card-pad">
-          <h3>تنبيهات نقص المخزون</h3>
+          <h3>{t("dashboard.lowStockAlerts")}</h3>
           {low.loading && !low.data ? (
             <Loading />
           ) : low.data && low.data.length > 0 ? (
@@ -130,10 +132,10 @@ export default function Dashboard() {
               <table>
                 <thead>
                   <tr>
-                    <th>المنتج</th>
-                    <th className="num">المتاح</th>
-                    <th className="num">حد الطلب</th>
-                    <th className="num">العجز</th>
+                    <th>{t("dashboard.productCol")}</th>
+                    <th className="num">{t("dashboard.available")}</th>
+                    <th className="num">{t("dashboard.reorderLevel")}</th>
+                    <th className="num">{t("dashboard.shortfall")}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -151,28 +153,28 @@ export default function Dashboard() {
               </table>
             </div>
           ) : (
-            <Empty>كل المنتجات فوق حد إعادة الطلب ✓</Empty>
+            <Empty>{t("dashboard.allAboveReorder")}</Empty>
           )}
         </div>
 
         {isManager && (
           <div className="card card-pad">
-            <h3>قيمة المخزون لكل مخزن</h3>
+            <h3>{t("dashboard.inventoryByWarehouse")}</h3>
             {valuation.data && valuation.data.length > 0 ? (
               <div className="table-wrap">
                 <table>
                   <thead>
                     <tr>
-                      <th>المخزن</th>
-                      <th className="num">الوحدات</th>
-                      <th className="num">بالتكلفة</th>
-                      <th className="num">بسعر البيع</th>
+                      <th>{t("dashboard.warehouse")}</th>
+                      <th className="num">{t("dashboard.units")}</th>
+                      <th className="num">{t("dashboard.atCost")}</th>
+                      <th className="num">{t("dashboard.atSale")}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {valuation.data.map((r) => (
                       <tr key={r.warehouse_id ?? "none"}>
-                        <td>{r.warehouse_name ?? "بدون مخزن"}</td>
+                        <td>{r.warehouse_name ?? t("dashboard.noWarehouse")}</td>
                         <td className="num">{num(r.units)}</td>
                         <td className="num">{money(r.cost_value)}</td>
                         <td className="num">{money(r.sale_value)}</td>
@@ -182,7 +184,7 @@ export default function Dashboard() {
                 </table>
               </div>
             ) : (
-              <Empty>لا بيانات</Empty>
+              <Empty>{t("dashboard.noData")}</Empty>
             )}
           </div>
         )}
