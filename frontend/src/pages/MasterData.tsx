@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { api } from "../api";
 import { useAuth } from "../auth";
+import { useI18n } from "../i18n";
 import { useAction, useFetch, usePagedList } from "../hooks";
 import type { Branch, Party, Warehouse } from "../types";
 import { balanceNote, money } from "../format";
@@ -26,6 +27,7 @@ function ActiveBadge({ active }: { active: boolean }) {
 // ---------------------------------------------------------------- Warehouses
 export function Warehouses() {
   const { isManager } = useAuth();
+  const { t } = useI18n();
   const { list, action } = useCrud<Warehouse>("/warehouses");
   const branches = useFetch(() => api.get<Branch[]>("/company/branches"), "warehouse-branches");
   const [editing, setEditing] = useState<Warehouse | "new" | null>(null);
@@ -40,10 +42,10 @@ export function Warehouses() {
 
   return (
     <>
-      <PageHeader title="المخازن">
+      <PageHeader title={t("warehouses.title")}>
         {isManager && (
           <button className="btn btn-primary" onClick={() => setEditing("new")}>
-            + مخزن جديد
+            {t("warehouses.new")}
           </button>
         )}
         {list.data && list.data.length > 0 && (
@@ -56,9 +58,9 @@ export function Warehouses() {
                 <td>${wh.code}</td>
                 <td>${branches.data?.find((b) => b.id === wh.branch_id)?.name || "—"}</td>
                 <td>${wh.location || "—"}</td>
-                <td>${wh.is_active ? "نشط" : "معطّل"}</td>
+                <td>${wh.is_active ? t("warehouses.active") : t("warehouses.inactive")}</td>
               </tr>`).join("");
-            w.document.write(`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>المخازن</title>
+            w.document.write(`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>${t("warehouses.title")}</title>
               <style>
                 body { font-family: Tahoma, Arial, sans-serif; padding: 16px; }
                 h1 { text-align: center; }
@@ -69,7 +71,7 @@ export function Warehouses() {
               <h1>قائمة المخازن</h1>
               <table>
                 <thead><tr>
-                  <th>الاسم</th><th>الكود</th><th>الفرع</th><th>الموقع</th><th>الحالة</th>
+                  <th>${t("warehouses.name")}</th><th>${t("warehouses.code")}</th><th>${t("warehouses.branch")}</th><th>${t("warehouses.location")}</th><th>${t("warehouses.status")}</th>
                 </tr></thead>
                 <tbody>${rowsHtml}</tbody>
               </table>
@@ -77,7 +79,7 @@ export function Warehouses() {
               </body></html>`);
             w.document.close();
           }}>
-            🖨 طباعة
+            {t("warehouses.print")}
           </button>
         )}
       </PageHeader>
@@ -89,11 +91,11 @@ export function Warehouses() {
           <table>
             <thead>
               <tr>
-                <th>الاسم</th>
-                <th>الكود</th>
-                <th>الفرع</th>
-                <th>الموقع</th>
-                <th>الحالة</th>
+                <th>{t("warehouses.name")}</th>
+                <th>{t("warehouses.code")}</th>
+                <th>{t("warehouses.branch")}</th>
+                <th>{t("warehouses.location")}</th>
+                <th>{t("warehouses.status")}</th>
                 <th />
               </tr>
             </thead>
@@ -122,7 +124,7 @@ export function Warehouses() {
             </tbody>
           </table>
         ) : (
-          <Empty>لا توجد مخازن بعد. أضف مخزناً للبدء.</Empty>
+          <Empty>{t("warehouses.empty")}</Empty>
         )}
       </div>
       {editing && (
