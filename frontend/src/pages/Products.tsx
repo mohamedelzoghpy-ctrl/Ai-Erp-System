@@ -9,13 +9,12 @@ import { Alert, Empty, Field, Loading, Modal, nameOf, PageHeader, Pager } from "
 export default function Products() {
   const { isManager } = useAuth();
   const [search, setSearch] = useState("");
-  const [warehouseId, setWarehouseId] = useState("");
   const [lowOnly, setLowOnly] = useState(false);
   const [editing, setEditing] = useState<Product | "new" | null>(null);
   const [adjusting, setAdjusting] = useState<Product | null>(null);
   const [history, setHistory] = useState<Product | null>(null);
 
-  const products = usePagedList<Product>("/products", { search: search.trim(), warehouse_id: warehouseId, low_stock: lowOnly });
+  const products = usePagedList<Product>("/products", { search: search.trim(), low_stock: lowOnly });
   const warehouses = useFetch(() => api.get<Warehouse[]>("/warehouses?limit=500"), "wh");
   const suppliers = useFetch(() => api.get<Party[]>("/suppliers?limit=500"), "sup");
   const action = useAction();
@@ -106,14 +105,6 @@ export default function Products() {
 
       <div className="toolbar page-actions" style={{ marginBottom: 14 }}>
         <input placeholder="بحث بالاسم أو الكود…" value={search} onChange={(e) => setSearch(e.target.value)} />
-        <select value={warehouseId} onChange={(e) => setWarehouseId(e.target.value)} aria-label="المخزن">
-          <option value="">كل المخازن</option>
-          {warehouses.data?.map((w) => (
-            <option key={w.id} value={w.id}>
-              {w.name}
-            </option>
-          ))}
-        </select>
         <label className="check">
           <input type="checkbox" checked={lowOnly} onChange={(e) => setLowOnly(e.target.checked)} /> تحت حد إعادة الطلب فقط
         </label>
@@ -195,7 +186,7 @@ export default function Products() {
 
           </table>
         ) : (
-          <Empty>{search || warehouseId || lowOnly ? "لا نتائج مطابقة" : "لا توجد منتجات بعد. أضف منتجاً للبدء."}</Empty>
+          <Empty>{search || lowOnly ? "لا نتائج مطابقة" : "لا توجد منتجات بعد. أضف منتجاً للبدء."}</Empty>
         )}
         <Pager list={products} />
       </div>
