@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
 import { dateTime, num } from "../format";
@@ -204,8 +205,11 @@ function ViewTransfer({ t, onClose, onApprove, onReject }: { t: StockTransfer; o
 }
 
 export default function Transfers() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const { isManager } = useAuth();
-  const [statusFilter, setStatusFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState(searchParams.get("status") ?? "");
+  // keep URL in sync when filter changes
+  // (simple: update on change)
   const pending = useFetch(() => (isManager ? api.get<{ count: number }>("/stock-transfers/pending-count") : Promise.resolve({ count: 0 })), "pending-transfers");
   const pendingCount = pending.data?.count ?? 0;
   const list = usePagedList<StockTransfer>("/stock-transfers", { status: statusFilter || undefined });
@@ -282,7 +286,7 @@ export default function Transfers() {
       </PageHeader>
       <Alert>{list.error || act.error}</Alert>
       <div className="toolbar page-actions" style={{ marginBottom: 14 }}>
-        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} aria-label="الحالة">
+        <select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setSearchParams(e.target.value ? { status: e.target.value } : {}); }} aria-label="الحالة">
           <option value="">كل الحالات</option>
           <option value="pending">قيد الانتظار</option>
           <option value="approved">معتمد</option>
