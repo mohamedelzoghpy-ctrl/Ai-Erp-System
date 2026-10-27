@@ -43,7 +43,7 @@ export default function Products() {
           href={`/api/products/export/xlsx?token=${encodeURIComponent(getToken() ?? "")}`}
           download="products.xlsx"
         >
-          ⬇ تصدير Excel
+          ⬇ export excel
         </a>
         <label className="btn" style={{ cursor: "pointer" }}>
           ⬆ استيراد Excel
