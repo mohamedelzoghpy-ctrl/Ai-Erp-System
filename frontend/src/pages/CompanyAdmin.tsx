@@ -248,8 +248,6 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
             ) : <Empty>لا توجد فروع مسجلة.</Empty>}
           </div>
           <div className="card" style={{ padding: 20, marginBottom: 16 }}>
-            <h2>ربط المستخدمين بالشركات (تبديل شركة)</h2>
-            <p className="muted" style={{ marginTop: 0 }}>اختر شركة لعرض/إدارة أعضائها. المستخدم الذي ينتمي لأكثر من شركة سيظهر له مُبدِّل "الشركة" في الشريط العلوي.</p>
             <div className="form-grid" style={{ marginBottom: 12 }}>
               <Field label="الشركة">
                 <select value={selectedCompany ?? ""} onChange={(e) => { const v = Number(e.target.value); if (v) selectCompany(v); }}>
