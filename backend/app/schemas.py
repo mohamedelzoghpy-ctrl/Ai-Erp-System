@@ -294,6 +294,7 @@ class CompanyCreate(BaseModel):
     name: str = Field(min_length=1, max_length=150)
     code: str = Field(min_length=1, max_length=50)
     max_warehouses_per_branch: Optional[int] = Field(default=None, gt=0)
+    max_safes_per_branch: Optional[int] = Field(default=None, gt=0)
     admin_username: str = Field(min_length=3, max_length=60)
     admin_password: str = Field(min_length=8, max_length=128)
     admin_full_name: Optional[str] = None
@@ -302,6 +303,7 @@ class CompanyCreate(BaseModel):
 class CompanyUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=150)
     max_warehouses_per_branch: Optional[int] = Field(default=None, gt=0)
+    max_safes_per_branch: Optional[int] = Field(default=None, gt=0)
     is_active: Optional[bool] = None
 
 
@@ -310,6 +312,7 @@ class CompanyOut(ORMModel):
     name: str
     code: str
     max_warehouses_per_branch: Optional[int]
+    max_safes_per_branch: Optional[int]
     is_active: bool
     created_at: datetime
 

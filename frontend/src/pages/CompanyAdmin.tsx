@@ -24,6 +24,7 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
   const [editingCompany, setEditingCompany] = useState<Company | null>(null);
   const [editName, setEditName] = useState("");
   const [editLimit, setEditLimit] = useState("");
+  const [editSafeLimit, setEditSafeLimit] = useState("");
   const [editActive, setEditActive] = useState(true);
   const [editAdminName, setEditAdminName] = useState("");
   const [editAdminPassword, setEditAdminPassword] = useState("");
@@ -41,6 +42,7 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
   const [newWhLocation, setNewWhLocation] = useState("");
   const [selLimit, setSelLimit] = useState<string | null>(null);
   const [companyWarehouseLimit, setCompanyWarehouseLimit] = useState("");
+  const [companySafeLimit, setCompanySafeLimit] = useState("");
   useEffect(() => {
     if (!platform || !companies.data?.length) return;
     let cancelled = false;
@@ -131,6 +133,7 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
         name: companyName.trim(),
         code: companyCode.trim(),
         max_warehouses_per_branch: companyWarehouseLimit ? Number(companyWarehouseLimit) : null,
+        max_safes_per_branch: companySafeLimit ? Number(companySafeLimit) : null,
         admin_username: adminUsername.trim(),
         admin_full_name: adminUsername.trim() || null,
         admin_password: adminPassword,
@@ -140,6 +143,7 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
       setAdminUsername("");
       setAdminPassword("");
       setCompanyWarehouseLimit("");
+      setCompanySafeLimit("");
       companies.reload();
     });
   };
@@ -157,6 +161,7 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
               <Field label="اسم الشركة"><input value={companyName} onChange={(e) => setCompanyName(e.target.value)} required /></Field>
               <Field label="رمز الشركة"><input dir="ltr" value={companyCode} onChange={(e) => setCompanyCode(e.target.value)} required /></Field>
               <Field label="الحد الأقصى للمخازن لكل فرع" hint="اتركه فارغًا لعدد غير محدود"><input type="number" min={1} value={companyWarehouseLimit} onChange={(e) => setCompanyWarehouseLimit(e.target.value)} /></Field>
+              <Field label="الحد الأقصى للخزائن لكل فرع" hint="اتركه فارغًا لعدد غير محدود"><input type="number" min={1} value={companySafeLimit} onChange={(e) => setCompanySafeLimit(e.target.value)} /></Field>
               <Field label="كلمة مرور المدير"><input type="password" minLength={8} value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)} required /></Field>
               <Field label="اسم مستخدم المدير الأول"><input dir="ltr" minLength={3} value={adminUsername} onChange={(e) => setAdminUsername(e.target.value)} required /></Field>
             </div>
@@ -236,7 +241,7 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
                 <tbody>{companies.data.map((item) => (
                   <tr key={item.id}>
                     <td>{item.name}</td><td dir="ltr">{item.code}</td>
-                    <td>{item.max_warehouses_per_branch ?? "غير محدود"}</td><td>{item.is_active ? "active" : "inactive"} <button className="btn btn-sm" onClick={() => { setEditingCompany(item); setEditName(item.name); setEditLimit(item.max_warehouses_per_branch ? String(item.max_warehouses_per_branch) : ""); setEditActive(item.is_active); setEditAdminName(""); setEditAdminPassword(""); void api.get<{ full_name: string | null }>(`/platform/companies/${item.id}/admin`).then((u) => setEditAdminName(u.full_name || "")).catch(() => {}); }}>تعديل</button></td>
+                    <td>{item.max_warehouses_per_branch ?? "غير محدود"}</td><td>{item.is_active ? "active" : "inactive"} <button className="btn btn-sm" onClick={() => { setEditingCompany(item); setEditName(item.name); setEditLimit(item.max_warehouses_per_branch ? String(item.max_warehouses_per_branch) : ""); setEditSafeLimit(item.max_safes_per_branch ? String(item.max_safes_per_branch) : ""); setEditActive(item.is_active); setEditAdminName(""); setEditAdminPassword(""); void api.get<{ full_name: string | null }>(`/platform/companies/${item.id}/admin`).then((u) => setEditAdminName(u.full_name || "")).catch(() => {}); }}>تعديل</button></td>
                   </tr>
                 ))}</tbody>
               </table>
@@ -369,6 +374,7 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
               await api.patch(`/platform/companies/${editingCompany.id}`, {
                 name: editName.trim() || undefined,
                 max_warehouses_per_branch: editLimit.trim() ? Number(editLimit) : null,
+                max_safes_per_branch: editSafeLimit.trim() ? Number(editSafeLimit) : null,
                 is_active: editActive,
               });
               const adminPayload: Record<string, unknown> = {};
@@ -383,6 +389,7 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
           }} className="form-grid">
             <Field label="اسم الشركة"><input value={editName} onChange={(e) => setEditName(e.target.value)} required /></Field>
             <Field label="الحد الأقصى للمخازن لكل فرع" hint="اتركه فارغًا لعدد غير محدود"><input type="number" min={1} value={editLimit} onChange={(e) => setEditLimit(e.target.value)} /></Field>
+            <Field label="الحد الأقصى للخزائن لكل فرع" hint="اتركه فارغًا لعدد غير محدود"><input type="number" min={1} value={editSafeLimit} onChange={(e) => setEditSafeLimit(e.target.value)} /></Field>
             <Field label="الحالة">
               <select value={editActive ? "1" : "0"} onChange={(e) => setEditActive(e.target.value === "1")}>
                 <option value="1">active</option>

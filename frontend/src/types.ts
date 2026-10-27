@@ -19,6 +19,7 @@ export interface Company {
   name: string;
   code: string;
   max_warehouses_per_branch: number | null;
+  max_safes_per_branch: number | null;
   is_active: boolean;
   created_at: string;
 }

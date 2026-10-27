@@ -118,6 +118,7 @@ def create_company(
         name=payload.name.strip(),
         code=payload.code.strip().lower(),
         max_warehouses_per_branch=payload.max_warehouses_per_branch,
+        max_safes_per_branch=payload.max_safes_per_branch,
     )
     user = models.User(
         username=payload.admin_username.strip().lower(),
@@ -214,6 +215,8 @@ def update_platform_company(company_id: int, payload: schemas.CompanyUpdate, db:
     data = payload.model_dump(exclude_unset=True)
     if "max_warehouses_per_branch" in data:
         company.max_warehouses_per_branch = data["max_warehouses_per_branch"]
+    if "max_safes_per_branch" in data:
+        company.max_safes_per_branch = data["max_safes_per_branch"]
     if "name" in data and data["name"] is not None:
         company.name = data["name"]
     if "is_active" in data and data["is_active"] is not None:

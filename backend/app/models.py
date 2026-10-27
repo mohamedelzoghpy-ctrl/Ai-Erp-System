@@ -40,6 +40,7 @@ class Company(Base):
     name = Column(String(150), nullable=False)
     code = Column(String(50), nullable=False, unique=True, index=True)
     max_warehouses_per_branch = Column(Integer, nullable=True)
+    max_safes_per_branch = Column(Integer, nullable=True)
     is_active = Column(Boolean, nullable=False, default=True, server_default="true")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(
