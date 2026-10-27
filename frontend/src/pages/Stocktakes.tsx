@@ -164,6 +164,40 @@ function DetailDialog({ id, onClose, onChanged }: { id: number; onClose: () => v
               <button className="btn" disabled={dl.busy} onClick={() => void dl.run(() => api.download(`/stocktakes/${id}/xlsx`, `stocktake-${id}.xlsx`))}>
                 ⬇ ورقة Excel
               </button>
+              <button className="btn" onClick={() => {
+                if (!s) return;
+                const w = window.open("", "_blank");
+                if (!w) return;
+                const rowsHtml = (s.lines ?? []).map((l) => `
+                  <tr>
+                    <td>${l.sku ?? ""}</td>
+                    <td>${l.product_name ?? ""}</td>
+                    <td>${num(l.system_qty)}</td>
+                    <td>${l.counted_qty === null ? "—" : num(l.counted_qty)}</td>
+                    <td>${l.difference === null ? "—" : (l.difference > 0 ? `+${l.difference}` : l.difference)}</td>
+                  </tr>`).join("");
+                w.document.write(`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>جرد #${id}</title>
+                  <style>
+                    body { font-family: Tahoma, Arial, sans-serif; padding: 16px; }
+                    h1 { text-align: center; }
+                    table { width: 100%; border-collapse: collapse; }
+                    th, td { border: 1px solid #999; padding: 6px 8px; text-align: center; }
+                    th { background: #eee; }
+                  </style></head><body>
+                  <h1>جرد #${id} — ${s.warehouse_name ?? "كل المخازن"}</h1>
+                  <p style="text-align:center;">${STATUS[s.status]} · ${dateTime(s.created_at)} · تم عدّ ${num(s.lines_counted)} من ${num(s.lines_total)} · فروقات: ${num(s.lines_with_difference)}</p>
+                  <table>
+                    <thead><tr>
+                      <th>الكود</th><th>الصنف</th><th>كمية النظام</th><th>المعدود</th><th>الفرق</th>
+                    </tr></thead>
+                    <tbody>${rowsHtml}</tbody>
+                  </table>
+                  <script>window.onload = () => { window.print(); };</script>
+                  </body></html>`);
+                w.document.close();
+              }}>
+                🖨 طباعة
+              </button>
             </div>
           </>
         )
