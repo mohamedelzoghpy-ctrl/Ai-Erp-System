@@ -258,6 +258,41 @@ export default function Stocktakes() {
   return (
     <>
       <PageHeader title="الجرد">
+        {list.data && list.data.length > 0 && (
+          <button className="btn" onClick={() => {
+            const w = window.open("", "_blank");
+            if (!w) return;
+            const rowsHtml = (list.data ?? []).map((s) => `
+              <tr>
+                <td>#${s.id}</td>
+                <td>${dateTime(s.created_at)}</td>
+                <td>${s.warehouse_name ?? "كل المخازن"}</td>
+                <td>${STATUS[s.status]}</td>
+                <td>${num(s.lines_counted)} / ${num(s.lines_total)}</td>
+                <td>${num(s.lines_with_difference)}</td>
+              </tr>`).join("");
+            w.document.write(`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>الجرد</title>
+              <style>
+                body { font-family: Tahoma, Arial, sans-serif; padding: 16px; }
+                h1 { text-align: center; }
+                table { width: 100%; border-collapse: collapse; }
+                th, td { border: 1px solid #999; padding: 6px 8px; text-align: center; }
+                th { background: #eee; }
+              </style></head><body>
+              <h1>قائمة عمليات الجرد</h1>
+              <table>
+                <thead><tr>
+                  <th>رقم</th><th>التاريخ</th><th>المخزن</th><th>الحالة</th><th>المعدود</th><th>فروقات</th>
+                </tr></thead>
+                <tbody>${rowsHtml}</tbody>
+              </table>
+              <script>window.onload = () => { window.print(); };</script>
+              </body></html>`);
+            w.document.close();
+          }}>
+            🖨 طباعة
+          </button>
+        )}
         <button className="btn btn-primary" onClick={() => setCreating(true)}>
           جرد جديد
         </button>
