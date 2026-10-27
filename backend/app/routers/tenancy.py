@@ -216,6 +216,8 @@ def update_platform_company(company_id: int, payload: schemas.CompanyUpdate, db:
         company.max_warehouses_per_branch = data["max_warehouses_per_branch"]
     if "name" in data and data["name"] is not None:
         company.name = data["name"]
+    if "is_active" in data and data["is_active"] is not None:
+        company.is_active = data["is_active"]
     db.commit()
     db.refresh(company)
     audit(db, actor, "update", "company", company, f"{company.code}")

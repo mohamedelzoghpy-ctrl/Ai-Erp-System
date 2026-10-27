@@ -302,6 +302,7 @@ class CompanyCreate(BaseModel):
 class CompanyUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=150)
     max_warehouses_per_branch: Optional[int] = Field(default=None, gt=0)
+    is_active: Optional[bool] = None
 
 
 class CompanyOut(ORMModel):

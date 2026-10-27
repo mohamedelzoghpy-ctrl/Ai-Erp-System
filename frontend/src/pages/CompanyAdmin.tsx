@@ -206,7 +206,7 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
                 <tbody>{companies.data.map((item) => (
                   <tr key={item.id}>
                     <td>{item.name}</td><td dir="ltr">{item.code}</td>
-                    <td>{item.max_warehouses_per_branch ?? "غير محدود"}</td><td>{item.is_active ? "active" : "inactive"}</td>
+                    <td>{item.max_warehouses_per_branch ?? "غير محدود"}</td><td>{item.is_active ? "active" : "inactive"} <button className="btn btn-sm" onClick={() => void (async () => { try { await api.patch(`/platform/companies/${item.id}`, { is_active: !item.is_active }); companies.reload(); } catch {} })()}>تعديل</button></td>
                   </tr>
                 ))}</tbody>
               </table>
