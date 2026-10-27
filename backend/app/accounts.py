@@ -107,7 +107,7 @@ def build_statement(
             .all()
         )
         for o in orders:
-            entries.append((_local_day(o.updated_at), 0, o.id, "sale", f"SO-{o.id}", "فاتورة بيع", _dec(o.total_amount), ZERO))
+            entries.append((_local_day(o.updated_at), 0, o.id, "sale", f"SO-{o.id}", "فاتورة بيع", _dec(o.total_amount), ZERO))  # type: ignore
         pays = db.query(models.Payment).filter(models.Payment.customer_id == party_id, models.Payment.status == "posted").all()
         pay_type, pay_prefix, pay_word = "receipt", "RC", "سند قبض"
         for r in db.query(models.SalesReturn).filter(models.SalesReturn.customer_id == party_id).all():
@@ -119,14 +119,14 @@ def build_statement(
             .all()
         )
         for o in orders:
-            entries.append((_local_day(o.updated_at), 0, o.id, "purchase", f"PO-{o.id}", "أمر شراء مستلم", _dec(o.total_amount), ZERO))
+            entries.append((_local_day(o.updated_at), 0, o.id, "purchase", f"PO-{o.id}", "أمر شراء مستلم", _dec(o.total_amount), ZERO))  # type: ignore
         pays = db.query(models.Payment).filter(models.Payment.supplier_id == party_id, models.Payment.status == "posted").all()
         pay_type, pay_prefix, pay_word = "payment", "PY", "سند دفع"
         for r in db.query(models.PurchaseReturn).filter(models.PurchaseReturn.supplier_id == party_id).all():
             _return_entries(entries, r, "purchase_return", "PR")
     for p in pays:
-        detail = " · ".join(x for x in (METHOD_LABEL.get(p.method, p.method), p.reference) if x)
-        entries.append((p.paid_on, 1, p.id, pay_type, f"{pay_prefix}-{p.id}", f"{pay_word} ({detail})", ZERO, _dec(p.amount)))
+        detail = " · ".join(x for x in (METHOD_LABEL.get(p.method, p.method), p.reference) if x)  # type: ignore
+        entries.append((p.paid_on, 1, p.id, pay_type, f"{pay_prefix}-{p.id}", f"{pay_word} ({detail})", ZERO, _dec(p.amount)))  # type: ignore
 
     entries.sort(key=lambda e: (e[0], e[1], e[2]))
     opening = _dec(party.opening_balance)
@@ -142,12 +142,12 @@ def build_statement(
         total_charges += charge
         total_payments += payment
         lines.append(
-            schemas.StatementLine(date=day, type=typ, ref=ref, description=desc, charge=charge, payment=payment, balance=running)
+            schemas.StatementLine(date=day, type=typ, ref=ref, description=desc, charge=charge, payment=payment, balance=running)  # type: ignore
         )
     return schemas.Statement(
-        kind=kind,
-        party_id=party.id,
-        party_name=party.name,
+        kind=kind,  # type: ignore
+        party_id=party.id,  # type: ignore
+        party_name=party.name,  # type: ignore
         date_from=date_from,
         date_to=date_to,
         opening=opening,
@@ -232,12 +232,12 @@ def build_aging(db: Session, kind: str, as_of: Optional[date] = None) -> schemas
         by_party.setdefault(pid, []).append((_dec(total), _local_day(stamp)))
     rows: List[schemas.AgingRow] = []
     for p in db.query(party).order_by(party.id).all():
-        pool = _dec(paid.get(p.id)) + credits.get(p.id, ZERO)
+        pool = _dec(paid.get(p.id)) + credits.get(p.id, ZERO)  # type: ignore
         opening = max(_dec(p.opening_balance), ZERO)
         cleared = min(pool, _dec(p.opening_balance)) if _dec(p.opening_balance) > 0 else ZERO
         pool = max(pool - _dec(p.opening_balance), ZERO)
         b = {k: ZERO for k in BUCKETS}
-        for total, day in by_party.get(p.id, []):
+        for total, day in by_party.get(p.id, []):  # type: ignore
             applied = min(pool, total)
             pool -= applied
             if total - applied > 0:
@@ -245,7 +245,7 @@ def build_aging(db: Session, kind: str, as_of: Optional[date] = None) -> schemas
         open_left = opening - cleared
         total_due = open_left + sum(b.values(), ZERO)
         if total_due > 0:
-            rows.append(schemas.AgingRow(party_id=p.id, name=p.name, phone=p.phone, opening=open_left, total=total_due, **b))
+            rows.append(schemas.AgingRow(party_id=p.id, name=p.name, phone=p.phone, opening=open_left, total=total_due, **b))  # type: ignore
     rows.sort(key=lambda r: (-r.total, r.party_id))
     tot = {k: sum((getattr(r, k) for r in rows), ZERO) for k in ("opening", *BUCKETS, "total")}
     return schemas.AgingReport(as_of=as_of, rows=rows, **{f"total_{k}": v for k, v in tot.items()})

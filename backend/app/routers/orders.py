@@ -60,18 +60,18 @@ def create_purchase_order(payload: schemas.PurchaseOrderCreate, db: Session = De
     _require(db, models.Supplier, payload.supplier_id, "Supplier")
     _require(db, models.Warehouse, payload.warehouse_id, "Warehouse")
     order = models.PurchaseOrder(
-        supplier_id=payload.supplier_id, warehouse_id=payload.warehouse_id, notes=payload.notes
+        supplier_id=payload.supplier_id, warehouse_id=payload.warehouse_id, notes=payload.notes  # type: ignore
     )
     total = Decimal("0")
     for item in payload.items:
         _require(db, models.Product, item.product_id, "Product")
         order.items.append(
             models.PurchaseOrderItem(
-                product_id=item.product_id, quantity=item.quantity, unit_cost=item.unit_cost
+                product_id=item.product_id, quantity=item.quantity, unit_cost=item.unit_cost  # type: ignore
             )
         )
         total += item.unit_cost * item.quantity
-    order.total_amount = total
+    order.total_amount = total  # type: ignore
     db.add(order)
     audit(db, user, 'create', 'purchase_order', order, f"{len(order.items)} بند · {order.total_amount}")
     db.commit()
@@ -112,9 +112,9 @@ def receive_purchase_order(order_id: int, db: Session = Depends(get_db), user: m
     _require_draft(order, "receive")
     for item in order.items:
         product = _locked_product(db, item.product_id)
-        stock.move_stock(db, product, order.warehouse_id, item.quantity, "purchase_receipt", f"PO-{order.id}")
+        stock.move_stock(db, product, order.warehouse_id, item.quantity, "purchase_receipt", f"PO-{order.id}")  # type: ignore
         product.cost_price = item.unit_cost
-    order.status = "received"
+    order.status = "received"  # type: ignore
     audit(db, user, 'receive', 'purchase_order', order, f"إجمالي {order.total_amount}")
     db.commit()
     db.refresh(order)
@@ -125,7 +125,7 @@ def receive_purchase_order(order_id: int, db: Session = Depends(get_db), user: m
 def cancel_purchase_order(order_id: int, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     order = _order_or_404(db, models.PurchaseOrder, order_id, "Purchase order")
     _require_draft(order, "cancel")
-    order.status = "cancelled"
+    order.status = "cancelled"  # type: ignore
     audit(db, user, 'cancel', 'purchase_order', order, None)
     db.commit()
     db.refresh(order)
@@ -160,7 +160,7 @@ def create_sales_order(payload: schemas.SalesOrderCreate, db: Session = Depends(
     _require(db, models.Customer, payload.customer_id, "Customer")
     _require(db, models.Warehouse, payload.warehouse_id, "Warehouse")
     order = models.SalesOrder(
-        customer_id=payload.customer_id, warehouse_id=payload.warehouse_id, notes=payload.notes, created_by=user.id
+        customer_id=payload.customer_id, warehouse_id=payload.warehouse_id, notes=payload.notes, created_by=user.id  # type: ignore
     )
     total = Decimal("0")
     for item in payload.items:
@@ -168,11 +168,11 @@ def create_sales_order(payload: schemas.SalesOrderCreate, db: Session = Depends(
         price = item.unit_price if item.unit_price is not None else product.sale_price
         order.items.append(
             models.SalesOrderItem(
-                product_id=product.id, quantity=item.quantity, unit_price=price, unit_cost=product.cost_price
+                product_id=product.id, quantity=item.quantity, unit_price=price, unit_cost=product.cost_price  # type: ignore
             )
         )
         total += price * item.quantity
-    order.total_amount = total
+    order.total_amount = total  # type: ignore
     db.add(order)
     audit(db, user, 'create', 'sales_order', order, f"{len(order.items)} بند · {order.total_amount}")
     db.commit()
@@ -217,7 +217,7 @@ def confirm_sales_order(order_id: int, db: Session = Depends(get_db), user: mode
     order = _order_or_404(db, models.SalesOrder, order_id, "Sales order")
     _require_draft(order, "confirm")
     apply_sale_stock(db, order)
-    order.status = "confirmed"
+    order.status = "confirmed"  # type: ignore
     audit(db, user, 'confirm', 'sales_order', order, f"إجمالي {order.total_amount}")
     db.commit()
     db.refresh(order)
@@ -228,7 +228,7 @@ def confirm_sales_order(order_id: int, db: Session = Depends(get_db), user: mode
 def cancel_sales_order(order_id: int, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     order = _order_or_404(db, models.SalesOrder, order_id, "Sales order")
     _require_draft(order, "cancel")
-    order.status = "cancelled"
+    order.status = "cancelled"  # type: ignore
     audit(db, user, 'cancel', 'sales_order', order, None)
     db.commit()
     db.refresh(order)

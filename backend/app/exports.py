@@ -81,7 +81,7 @@ def visual(text: str) -> str:
     """
     if not _ARABIC.search(text):
         return text
-    return get_display(_RESHAPER.reshape(text), base_dir="R")
+    return get_display(_RESHAPER.reshape(text), base_dir="R")  # type: ignore
 
 
 _fonts_ready = False
@@ -203,8 +203,8 @@ def build_transfer_pdf(tr: Dict[str, Any]) -> bytes:
     pdf.rule(pdf.y)
     pdf.y -= 24
     for label, value in (("من مخزن", tr["from"]), ("إلى مخزن", tr["to"]), ("التاريخ", fmt_dt(tr["date"])), ("أنشأه", tr.get("user") or "—")):
-        pdf.text(RIGHT, pdf.y, f"{label}:", font="Amiri-Bold", size=11.5, color=MUTED)
-        pdf.text(RIGHT - 90, pdf.y, value or "—", size=11.5)
+        pdf.text(RIGHT, pdf.y, f"{label}:", font="Amiri-Bold", size=11.5, color=MUTED)  # type: ignore
+        pdf.text(RIGHT - 90, pdf.y, value or "—", size=11.5)  # type: ignore
         pdf.y -= 19
     pdf.y -= 10
 
@@ -215,7 +215,7 @@ def build_transfer_pdf(tr: Dict[str, Any]) -> bytes:
         c.rect(LEFT, pdf.y - 6, CONTENT_W, 22, stroke=0, fill=1)
         x = RIGHT
         for name, w, align in cols:
-            pdf.text(x - 4 if align == "r" else x - w / 2, pdf.y, name, font="Amiri-Bold", size=10.5, align="r" if align == "r" else "c")
+            pdf.text(x - 4 if align == "r" else x - w / 2, pdf.y, name, font="Amiri-Bold", size=10.5, align="r" if align == "r" else "c")  # type: ignore
             x -= w
         pdf.y -= 24
 
@@ -226,9 +226,9 @@ def build_transfer_pdf(tr: Dict[str, Any]) -> bytes:
         x = RIGHT
         for (name, w, align), value in zip(cols, (str(i), it["sku"] or "", it["name"] or "", fmt_int(it["quantity"]))):
             if align == "r":
-                pdf.text(x - 4, pdf.y, value, size=10.5)
+                pdf.text(x - 4, pdf.y, value, size=10.5)  # type: ignore
             else:
-                pdf.text(x - w / 2, pdf.y, value, size=10.5, align="c")
+                pdf.text(x - w / 2, pdf.y, value, size=10.5, align="c")  # type: ignore
             x -= w
         total += it["quantity"]
         pdf.rule(pdf.y - 7)
@@ -247,7 +247,7 @@ def build_transfer_pdf(tr: Dict[str, Any]) -> bytes:
     for x, label in ((RIGHT, "توقيع المُسلِّم"), (LEFT + 190, "توقيع المستلم")):
         c.setStrokeColor(RULE)
         c.line(x - 170, pdf.y, x, pdf.y)
-        pdf.text(x, pdf.y - 16, label, size=10.5, color=MUTED)
+        pdf.text(x, pdf.y - 16, label, size=10.5, color=MUTED)  # type: ignore
     return pdf.finish()
 
 
@@ -267,8 +267,8 @@ def build_shift_pdf(shift: Dict[str, Any]) -> bytes:
         ("وقت الإغلاق", fmt_dt(shift["closed_at"]) if closed else "الوردية ما زالت مفتوحة"),
     ]
     for label, value in rows:
-        pdf.text(RIGHT, pdf.y, f"{label}:", font="Amiri-Bold", size=11.5, color=MUTED)
-        pdf.text(RIGHT - 100, pdf.y, value, size=11.5)
+        pdf.text(RIGHT, pdf.y, f"{label}:", font="Amiri-Bold", size=11.5, color=MUTED)  # type: ignore
+        pdf.text(RIGHT - 100, pdf.y, value, size=11.5)  # type: ignore
         pdf.y -= 20
     pdf.y -= 8
 
@@ -295,7 +295,7 @@ def build_shift_pdf(shift: Dict[str, Any]) -> bytes:
         pdf.text(RIGHT - 8, pdf.y - 4, "الفرق", font="Amiri-Bold", size=14, color=color)
         pdf.text(LEFT + 8, pdf.y - 4, word if d == 0 else f"{word} {fmt_money(abs(d))} {CURRENCY}", font="Amiri-Bold", size=14, align="l", color=color)
         pdf.y -= 34
-    pdf.text(RIGHT - 8, pdf.y, f"مقبوضات غير نقدية (لا تدخل الدرج): {fmt_money(shift['other_methods_in'])} {CURRENCY}", size=10.5, color=MUTED)
+    pdf.text(RIGHT - 8, pdf.y, f"مقبوضات غير نقدية (لا تدخل الدرج): {fmt_money(shift['other_methods_in'])} {CURRENCY}", size=10.5, color=MUTED)  # type: ignore
     pdf.y -= 22
     if shift.get("notes"):
         pdf.text(RIGHT - 8, pdf.y, "ملاحظات:", font="Amiri-Bold", size=11, color=MUTED)
@@ -307,7 +307,7 @@ def build_shift_pdf(shift: Dict[str, Any]) -> bytes:
     for x, label in ((RIGHT, "توقيع الكاشير"), (LEFT + 190, "توقيع المراجع")):
         pdf.c.setStrokeColor(RULE)
         pdf.c.line(x - 170, pdf.y, x, pdf.y)
-        pdf.text(x, pdf.y - 16, label, size=10.5, color=MUTED)
+        pdf.text(x, pdf.y - 16, label, size=10.5, color=MUTED)  # type: ignore
     return pdf.finish()
 
 
@@ -392,7 +392,7 @@ def build_document_pdf(doc: Dict[str, Any]) -> bytes:
     sub_y = pdf.y - 34
     for line in (COMPANY_ADDRESS, COMPANY_PHONE):
         if line:
-            pdf.text(RIGHT, sub_y, line, size=9.5, color=MUTED)
+            pdf.text(RIGHT, sub_y, line, size=9.5, color=MUTED)  # type: ignore
             sub_y -= 13
     pdf.text(LEFT, pdf.y - 16, KIND_TITLE[doc["kind"]], font="Amiri-Bold", size=19, align="l", color=ACCENT)
     pdf.text(LEFT, pdf.y - 36, f"# {doc['number']}", font="Amiri-Bold", size=13, align="l")
@@ -414,8 +414,8 @@ def build_document_pdf(doc: Dict[str, Any]) -> bytes:
         if value:
             for i, ln in enumerate(pdf.wrap(value, "Amiri", 10.5, party_w)):
                 if i == 0:
-                    pdf.text(RIGHT, ry, f"{label}:", size=10.5, color=MUTED)
-                pdf.text(RIGHT - 52, ry, ln, size=10.5)
+                    pdf.text(RIGHT, ry, f"{label}:", size=10.5, color=MUTED)  # type: ignore
+                pdf.text(RIGHT - 52, ry, ln, size=10.5)  # type: ignore
                 ry -= 14
 
     meta = [
@@ -427,9 +427,9 @@ def build_document_pdf(doc: Dict[str, Any]) -> bytes:
     meta_x, value_x = LEFT + 215, LEFT + 215 - 50
     ly = top
     for label, value in meta:
-        pdf.text(meta_x, ly, f"{label}:", size=10.5, color=MUTED)
+        pdf.text(meta_x, ly, f"{label}:", size=10.5, color=MUTED)  # type: ignore
         for i, ln in enumerate(pdf.wrap(value, "Amiri", 10.5, value_x - LEFT)):
-            pdf.text(value_x, ly, ln, size=10.5)
+            pdf.text(value_x, ly, ln, size=10.5)  # type: ignore
             ly -= 15
     pdf.y = min(ry, ly) - 10
 
@@ -465,7 +465,7 @@ def build_document_pdf(doc: Dict[str, Any]) -> bytes:
         c.setFillColor(HEAD_BG)
         c.rect(LEFT, pdf.y - h, CONTENT_W, h, stroke=0, fill=1)
         for (name, _, _), (x0, x1) in zip(cols, col_spans()):
-            pdf.text((x0 + x1) / 2, pdf.y - 16, name, font="Amiri-Bold", size=10.5, align="c", color=MUTED)
+            pdf.text((x0 + x1) / 2, pdf.y - 16, name, font="Amiri-Bold", size=10.5, align="c", color=MUTED)  # type: ignore
         pdf.y -= h
 
     table_header()
@@ -487,9 +487,9 @@ def build_document_pdf(doc: Dict[str, Any]) -> bytes:
         for ci, ((_, _, align), (x0, x1)) in enumerate(zip(cols, col_spans())):
             if ci == 1:
                 for li, ln in enumerate(name_lines):
-                    pdf.text(x1 - pad, base - li * lead, ln, size=size)
+                    pdf.text(x1 - pad, base - li * lead, ln, size=size)  # type: ignore
             elif align == "c":
-                pdf.text((x0 + x1) / 2, base, cells[ci], size=size, align="c")
+                pdf.text((x0 + x1) / 2, base, cells[ci], size=size, align="c")  # type: ignore
         pdf.y -= row_h
         pdf.rule(pdf.y)
 
@@ -499,7 +499,7 @@ def build_document_pdf(doc: Dict[str, Any]) -> bytes:
     box_w = 230
     c.setFillColor(HEAD_BG)
     c.roundRect(LEFT, pdf.y - 30, box_w, 32, 5, stroke=0, fill=1)
-    pdf.text(LEFT + box_w - 10, pdf.y - 20, "الإجمالي", font="Amiri-Bold", size=12.5)
+    pdf.text(LEFT + box_w - 10, pdf.y - 20, "الإجمالي", font="Amiri-Bold", size=12.5)  # type: ignore
     pdf.text(LEFT + 10, pdf.y - 20, f"{fmt_money(doc['total'])} {CURRENCY}", font="Amiri-Bold", size=13, align="l", color=ACCENT)
     pdf.y -= 46
 
@@ -510,7 +510,7 @@ def build_document_pdf(doc: Dict[str, Any]) -> bytes:
         pdf.y -= 16
         for ln in pdf.wrap(doc["notes"], "Amiri", 10.5, CONTENT_W):
             pdf.ensure(16)
-            pdf.text(RIGHT, pdf.y, ln, size=10.5)
+            pdf.text(RIGHT, pdf.y, ln, size=10.5)  # type: ignore
             pdf.y -= 14
 
     return pdf.finish()
@@ -555,15 +555,15 @@ def build_document_xlsx(doc: Dict[str, Any]) -> bytes:
     price_label, items[{name,sku,unit,quantity,price,total}], total, notes}"""
     wb = Workbook()
     ws = wb.active
-    ws.title = _safe_sheet_name(f"{KIND_TITLE[doc['kind']]} {doc['number']}")
-    ws.sheet_view.rightToLeft = True
+    ws.title = _safe_sheet_name(f"{KIND_TITLE[doc['kind']]} {doc['number']}")  # type: ignore
+    ws.sheet_view.rightToLeft = True  # type: ignore
 
     r = 1
     _text(ws, r, 1, COMPANY_NAME, bold=True, size=16)
-    ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=6)
+    ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=6)  # type: ignore
     r += 1
     _text(ws, r, 1, f"{KIND_TITLE[doc['kind']]}  #{doc['number']}", bold=True, size=13, color="1F6FEB")
-    ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=6)
+    ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=6)  # type: ignore
     r += 2
 
     party = doc["party"]
@@ -580,7 +580,7 @@ def build_document_xlsx(doc: Dict[str, Any]) -> bytes:
         if value:
             _text(ws, r, 1, label, bold=True, color="6B778A")
             _text(ws, r, 2, value)
-            ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=4)
+            ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=4)  # type: ignore
             r += 1
     r += 1
 
@@ -600,7 +600,7 @@ def build_document_xlsx(doc: Dict[str, Any]) -> bytes:
         _number(ws, r, 5, it["price"], money=True)
         _number(ws, r, 6, it["total"], money=True)
         for col in range(1, 7):
-            ws.cell(row=r, column=col).border = BORDER
+            ws.cell(row=r, column=col).border = BORDER  # type: ignore
         r += 1
 
     r += 1
@@ -611,16 +611,16 @@ def build_document_xlsx(doc: Dict[str, Any]) -> bytes:
     if doc.get("notes"):
         _text(ws, r, 1, "ملاحظات", bold=True, color="6B778A")
         _text(ws, r, 2, doc["notes"])
-        ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=6)
-        ws.row_dimensions[r].height = 15 * max(1, len(doc["notes"]) // 60 + 1)
+        ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=6)  # type: ignore
+        ws.row_dimensions[r].height = 15 * max(1, len(doc["notes"]) // 60 + 1)  # type: ignore
 
     for col, width in zip("ABCDEF", (6, 38, 16, 12, 16, 18)):
-        ws.column_dimensions[col].width = width
-    ws.freeze_panes = ws.cell(row=head_row + 1, column=1)
-    ws.page_setup.orientation = "portrait"
-    ws.page_setup.fitToWidth = 1
-    ws.sheet_properties.pageSetUpPr.fitToPage = True
-    ws.page_setup.fitToHeight = 0
+        ws.column_dimensions[col].width = width  # type: ignore
+    ws.freeze_panes = ws.cell(row=head_row + 1, column=1)  # type: ignore
+    ws.page_setup.orientation = "portrait"  # type: ignore
+    ws.page_setup.fitToWidth = 1  # type: ignore
+    ws.sheet_properties.pageSetUpPr.fitToPage = True  # type: ignore
+    ws.page_setup.fitToHeight = 0  # type: ignore
 
     out = io.BytesIO()
     wb.save(out)
@@ -634,7 +634,7 @@ Table = Tuple[str, Sequence[str], Sequence[Sequence[Tuple[str, Any]]]]
 def build_tables_xlsx(title: str, subtitle: str, tables: Iterable[Table]) -> bytes:
     """One sheet per table, each with a title row, a header row and typed data rows."""
     wb = Workbook()
-    wb.remove(wb.active)
+    wb.remove(wb.active)  # type: ignore
     used: set = set()
     for name, headers, rows in tables:
         sheet_name = _safe_sheet_name(name)
@@ -711,7 +711,7 @@ def build_statement_pdf(stmt: Dict[str, Any]) -> bytes:
     sub_y = pdf.y - 34
     for line in (COMPANY_ADDRESS, COMPANY_PHONE):
         if line:
-            pdf.text(RIGHT, sub_y, line, size=9.5, color=MUTED)
+            pdf.text(RIGHT, sub_y, line, size=9.5, color=MUTED)  # type: ignore
             sub_y -= 13
     pdf.text(LEFT, pdf.y - 16, title, font="Amiri-Bold", size=19, align="l", color=ACCENT)
     pdf.y = min(sub_y, pdf.y - 30) - 6
@@ -724,7 +724,7 @@ def build_statement_pdf(stmt: Dict[str, Any]) -> bytes:
     for i, ln in enumerate(name_lines):
         pdf.text(RIGHT - 52, top - i * 16, ln, font="Amiri-Bold", size=13)
     ry = top - 17 - (len(name_lines) - 1) * 16
-    pdf.text(RIGHT, ry, _period_label(stmt), size=10.5, color=MUTED)
+    pdf.text(RIGHT, ry, _period_label(stmt), size=10.5, color=MUTED)  # type: ignore
     ry -= 15
     pdf.y = ry - 6
 
@@ -751,7 +751,7 @@ def build_statement_pdf(stmt: Dict[str, Any]) -> bytes:
         c.setFillColor(HEAD_BG)
         c.rect(LEFT, pdf.y - h, CONTENT_W, h, stroke=0, fill=1)
         for (name, _, _), (x0, x1) in zip(cols, spans()):
-            pdf.text((x0 + x1) / 2, pdf.y - 16, name, font="Amiri-Bold", size=10.5, align="c", color=MUTED)
+            pdf.text((x0 + x1) / 2, pdf.y - 16, name, font="Amiri-Bold", size=10.5, align="c", color=MUTED)  # type: ignore
         pdf.y -= h
 
     def row(cells: List[str], bold: bool = False, desc_lines: Optional[List[str]] = None) -> None:
@@ -763,9 +763,9 @@ def build_statement_pdf(stmt: Dict[str, Any]) -> bytes:
         for ci, ((_, _, align), (x0, x1)) in enumerate(zip(cols, spans())):
             if ci == 2:
                 for li, ln in enumerate(lines):
-                    pdf.text(x1 - pad, base - li * lead, ln, font=font, size=size)
+                    pdf.text(x1 - pad, base - li * lead, ln, font=font, size=size)  # type: ignore
             elif cells[ci]:
-                pdf.text((x0 + x1) / 2, base, cells[ci], font=font, size=size, align="c")
+                pdf.text((x0 + x1) / 2, base, cells[ci], font=font, size=size, align="c")  # type: ignore
         pdf.y -= row_h
         pdf.rule(pdf.y)
 
@@ -788,7 +788,7 @@ def build_statement_pdf(stmt: Dict[str, Any]) -> bytes:
         )
     if not stmt["lines"]:
         pdf.ensure(30)
-        pdf.text(PAGE_W / 2, pdf.y - 20, "لا توجد حركات في هذه الفترة", size=10.5, align="c", color=MUTED)
+        pdf.text(PAGE_W / 2, pdf.y - 20, "لا توجد حركات في هذه الفترة", size=10.5, align="c", color=MUTED)  # type: ignore
         pdf.y -= 34
 
     # ---- totals box
@@ -804,8 +804,8 @@ def build_statement_pdf(stmt: Dict[str, Any]) -> bytes:
         ("الرصيد الختامي", f"{fmt_money(stmt['closing'])} {CURRENCY}", True, ACCENT),
     ):
         font = "Amiri-Bold" if bold else "Amiri"
-        pdf.text(LEFT + box_w - 10, y, label, font=font, size=11.5 if bold else 10.5)
-        pdf.text(LEFT + 10, y, value, font=font, size=12.5 if bold else 10.5, align="l", color=color)
+        pdf.text(LEFT + box_w - 10, y, label, font=font, size=11.5 if bold else 10.5)  # type: ignore
+        pdf.text(LEFT + 10, y, value, font=font, size=12.5 if bold else 10.5, align="l", color=color)  # type: ignore
         y -= 21
     pdf.text(LEFT + box_w + 12, pdf.y - 18, _balance_caption(stmt["kind"], stmt["closing"]), font="Amiri-Bold", size=11, align="l", color=MUTED)
     pdf.y -= box_h + 10

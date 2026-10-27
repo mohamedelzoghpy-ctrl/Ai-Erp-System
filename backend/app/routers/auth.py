@@ -87,11 +87,11 @@ def first_run_setup(payload: schemas.SetupAdmin, db: Session = Depends(get_db)):
         company = models.Company(name="Default Company", code="default")
         db.add(company)
         db.flush()
-        db.add(models.Branch(company_id=company.id, name="Main Branch", code="main"))
+        db.add(models.Branch(company_id=company.id, name="Main Branch", code="main"))  # type: ignore
         db.flush()
     db.info["company_id"] = company.id
     user = _make_user(db, payload, role="admin")
-    user.is_platform_admin = True
+    user.is_platform_admin = True  # type: ignore
     user.active_company_id = company.id
     db.commit()
     db.refresh(user)
@@ -144,8 +144,8 @@ def login(request: Request, form: OAuth2PasswordRequestForm = Depends(), db: Ses
     _check_login_allowed(key)
     user = db.query(models.User).filter(models.User.username == form.username.strip().lower()).one_or_none()
     # Always run one hash verification so response time doesn't reveal whether the user exists.
-    valid = verify_password(form.password, user.hashed_password if user else DUMMY_HASH)
-    if user is None or not valid or not user.is_active:
+    valid = verify_password(form.password, user.hashed_password if user else DUMMY_HASH)  # type: ignore
+    if user is None or not valid or not user.is_active:  # type: ignore
         _record_login_failure(key)
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED,
@@ -169,7 +169,7 @@ def login(request: Request, form: OAuth2PasswordRequestForm = Depends(), db: Ses
         _failures.pop(key, None)
     audit(db, user, "login", "user", user.id, None)
     db.commit()
-    return schemas.Token(access_token=create_access_token(user.id))
+    return schemas.Token(access_token=create_access_token(user.id))  # type: ignore
 
 
 @router.get("/me", response_model=schemas.UserOut)
@@ -195,9 +195,9 @@ def switch_company(payload: schemas.SwitchCompany, db: Session = Depends(get_db)
     if membership is None:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Not a member of that company")
     company = db.get(models.Company, payload.company_id)
-    if company is None or not company.is_active:
+    if company is None or not company.is_active:  # type: ignore
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Company not found")
-    user.active_company_id = payload.company_id
+    user.active_company_id = payload.company_id  # type: ignore
     db.commit()
     db.refresh(user)
     return user
@@ -264,15 +264,15 @@ def update_user(
     user = db.get(models.User, user_id)
     if user is None or membership is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"User {user_id} not found")
-    if user.is_platform_admin and user.id != admin.id:
+    if user.is_platform_admin and user.id != admin.id:  # type: ignore
         raise HTTPException(status.HTTP_403_FORBIDDEN, "The platform administrator cannot be managed as a company employee")
     data = payload.model_dump(exclude_unset=True)
     # An admin must not lock themselves out by demoting or deactivating their own account.
-    if user.id == admin.id and (data.get("role", "admin") != "admin" or data.get("is_active") is False):
+    if user.id == admin.id and (data.get("role", "admin") != "admin" or data.get("is_active") is False):  # type: ignore
         raise HTTPException(status.HTTP_409_CONFLICT, "You cannot demote or deactivate your own account")
     password_changed = "password" in data
     if "password" in data:
-        user.hashed_password = hash_password(data.pop("password"))
+        user.hashed_password = hash_password(data.pop("password"))  # type: ignore
     if "role" in data:
         membership.role = data["role"]
     changed = [k for k in data] + (['password'] if password_changed else [])

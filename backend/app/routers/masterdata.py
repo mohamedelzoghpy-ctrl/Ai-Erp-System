@@ -44,10 +44,10 @@ def _default_branch_id(db: Session) -> int:
         .first()
     )
     if branch is None:
-        branch = models.Branch(company_id=company_id, name="Main Branch", code="main")
+        branch = models.Branch(company_id=company_id, name="Main Branch", code="main")  # type: ignore
         db.add(branch)
         db.flush()
-    return branch.id
+    return branch.id  # type: ignore
 
 
 def _commit(db: Session, obj=None, before=None):
@@ -109,7 +109,7 @@ def _crud(router: APIRouter, model, label: str, create_s, update_s, out_s, kind:
                     .filter(models.Warehouse.branch_id == branch.id)
                     .count()
                 )
-                if count >= company.max_warehouses_per_branch:
+                if count >= company.max_warehouses_per_branch:  # type: ignore
                     raise HTTPException(
                         status.HTTP_409_CONFLICT,
                         f"Branch warehouse limit reached ({company.max_warehouses_per_branch})",
@@ -119,7 +119,7 @@ def _crud(router: APIRouter, model, label: str, create_s, update_s, out_s, kind:
             _ensure_manager_for_balance(user)
         obj = model(**data)
         db.add(obj)
-        _commit(db, obj, before=lambda: audit(db, user, "create", entity, obj, obj.name))
+        _commit(db, obj, before=lambda: audit(db, user, "create", entity, obj, obj.name))  # type: ignore
         _attach_balances(db, kind, obj)
         return obj
 

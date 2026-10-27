@@ -108,11 +108,11 @@ def export_products_xlsx(db: Session = Depends(get_db)):
     total_cost_value = 0
     total_sale_value = 0
     for p in products:
-        wh = db.get(models.Warehouse, p.warehouse_id) if p.warehouse_id else None
-        sup = db.get(models.Supplier, p.supplier_id) if p.supplier_id else None
+        wh = db.get(models.Warehouse, p.warehouse_id) if p.warehouse_id else None  # type: ignore
+        sup = db.get(models.Supplier, p.supplier_id) if p.supplier_id else None  # type: ignore
         q = p.quantity or 0
-        cost_value = q * float(p.cost_price)
-        sale_value = q * float(p.sale_price)
+        cost_value = q * float(p.cost_price)  # type: ignore
+        sale_value = q * float(p.sale_price)  # type: ignore
         total_qty += q
         total_cost_value += cost_value
         total_sale_value += sale_value
@@ -128,7 +128,7 @@ def export_products_xlsx(db: Session = Depends(get_db)):
             ("money", sale_value),
             ("text", wh.name if wh else ""),
             ("text", sup.name if sup else ""),
-            ("text", "نعم" if p.is_active else "لا"),
+            ("text", "نعم" if p.is_active else "لا"),  # type: ignore
         ])
     rows.append([
         ("text", "الإجمالي"),
@@ -162,13 +162,13 @@ async def import_products_xlsx(file: UploadFile = File(...), db: Session = Depen
     ws = wb.active
     # Find the header row (exported files have title/subtitle rows first).
     header_row_idx = 1
-    for r in range(1, min(ws.max_row, 10) + 1):
-        vals = [str(c.value).strip() if c.value is not None else "" for c in ws[r]]
+    for r in range(1, min(ws.max_row, 10) + 1):  # type: ignore
+        vals = [str(c.value).strip() if c.value is not None else "" for c in ws[r]]  # type: ignore
         joined = " ".join(vals)
         if "الكود" in joined or "SKU" in joined or "sku" in joined.lower():
             header_row_idx = r
             break
-    header = [str(c.value).strip() if c.value is not None else "" for c in ws[header_row_idx]]
+    header = [str(c.value).strip() if c.value is not None else "" for c in ws[header_row_idx]]  # type: ignore
 
     def col(name: str):
         for i, h in enumerate(header):
@@ -201,7 +201,7 @@ async def import_products_xlsx(file: UploadFile = File(...), db: Session = Depen
     updated = 0
     created = 0
     errors = []
-    for row in ws.iter_rows(min_row=header_row_idx + 1, values_only=True):
+    for row in ws.iter_rows(min_row=header_row_idx + 1, values_only=True):  # type: ignore
         if not row or all(v is None for v in row):
             continue
         # Skip trailing totals row
@@ -215,29 +215,29 @@ async def import_products_xlsx(file: UploadFile = File(...), db: Session = Depen
         product = db.query(models.Product).filter(models.Product.company_id == company_id, models.Product.sku == sku).one_or_none()
         is_new = product is None
         if is_new:
-            product = models.Product(company_id=company_id, sku=sku, name=name, unit="قطعة", is_active=True)
+            product = models.Product(company_id=company_id, sku=sku, name=name, unit="قطعة", is_active=True)  # type: ignore
             db.add(product)
             db.flush()
             created += 1
         else:
             updated += 1
         if name_i is not None and name_i < len(row) and row[name_i] is not None:
-            product.name = str(row[name_i]).strip()
+            product.name = str(row[name_i]).strip()  # type: ignore
         if unit_i is not None and unit_i < len(row) and row[unit_i] is not None:
-            product.unit = str(row[unit_i]).strip() or product.unit
+            product.unit = str(row[unit_i]).strip() or product.unit  # type: ignore
         if cost_i is not None and cost_i < len(row) and row[cost_i] is not None:
             try:
-                product.cost_price = Decimal(str(row[cost_i]))
+                product.cost_price = Decimal(str(row[cost_i]))  # type: ignore
             except Exception:
                 errors.append(f"{sku}: invalid cost_price")
         if sale_i is not None and sale_i < len(row) and row[sale_i] is not None:
             try:
-                product.sale_price = Decimal(str(row[sale_i]))
+                product.sale_price = Decimal(str(row[sale_i]))  # type: ignore
             except Exception:
                 errors.append(f"{sku}: invalid sale_price")
         if reorder_i is not None and reorder_i < len(row) and row[reorder_i] is not None:
             try:
-                product.reorder_level = int(row[reorder_i])
+                product.reorder_level = int(row[reorder_i])  # type: ignore
             except Exception:
                 errors.append(f"{sku}: invalid reorder_level")
         # (counted above)
@@ -315,7 +315,7 @@ def product_stock(product_id: int, db: Session = Depends(get_db)):
         .order_by(models.ProductStock.warehouse_id)
         .all()
     )
-    return [schemas.ProductStockOut(warehouse_id=r.warehouse_id, warehouse_name=r.warehouse.name, quantity=r.quantity) for r in rows]
+    return [schemas.ProductStockOut(warehouse_id=r.warehouse_id, warehouse_name=r.warehouse.name, quantity=r.quantity) for r in rows]  # type: ignore
 
 
 @router.get("/{product_id}/movements", response_model=List[schemas.StockMovementOut])

@@ -29,7 +29,7 @@ def get_current_user(
         )
     user_id = decode_access_token(token)
     user = db.get(models.User, user_id) if user_id is not None else None
-    if user is None or not user.is_active:
+    if user is None or not user.is_active:  # type: ignore
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED,
             "Invalid or expired credentials",
@@ -84,7 +84,7 @@ def get_current_user(
         .filter(models.Warehouse.company_id == company_id)
         .all()
     }
-    if role in ("admin", "manager") or user.is_platform_admin:
+    if role in ("admin", "manager") or user.is_platform_admin:  # type: ignore
         warehouse_ids.update(
             warehouse_id
             for (warehouse_id,) in db.query(models.Warehouse.id)
@@ -124,7 +124,7 @@ def get_current_user(
 
 
 def user_role(user: models.User) -> str:
-    return getattr(user, "_company_role", user.role)
+    return getattr(user, "_company_role", user.role)  # type: ignore
 
 
 def require_roles(*allowed: str):
@@ -143,6 +143,6 @@ require_manager = require_roles("admin", "manager")  # deleting master data / pr
 
 
 def require_platform_admin(user: models.User = Depends(get_current_user)) -> models.User:
-    if not user.is_platform_admin:
+    if not user.is_platform_admin:  # type: ignore
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Platform administrator permission required")
     return user

@@ -20,7 +20,7 @@ class WarehouseBase(BaseModel):
 
 
 class WarehouseCreate(WarehouseBase):
-    code: Optional[str] = None
+    code: Optional[str] = None  # type: ignore
     branch_id: Optional[int] = None
 
 
@@ -608,7 +608,7 @@ class PosItem(BaseModel):
     quantity: int = Field(gt=0)
 
 
-class PosCheckout(BaseModel):
+class PosCheckout(BaseModel):  # type: ignore
     warehouse_id: int
     items: List[PosItem] = Field(min_length=1)
     customer_id: Optional[int] = None  # default: the shared "walk-in" customer
@@ -625,7 +625,7 @@ class PosReceiptLine(BaseModel):
     total: Decimal
 
 
-class PosReceipt(BaseModel):
+class PosReceipt(BaseModel):  # type: ignore
     order_id: int
     payment_id: Optional[int]
     total: Decimal

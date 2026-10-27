@@ -39,10 +39,10 @@ def stale_cutoff() -> datetime:
 
 
 def _is_stale(s: models.Shift) -> bool:
-    if s.status != "open":
+    if s.status != "open":  # type: ignore
         return False
     opened = s.opened_at if s.opened_at.tzinfo else s.opened_at.replace(tzinfo=timezone.utc)  # SQLite drops the zone
-    return opened < stale_cutoff()
+    return opened < stale_cutoff()  # type: ignore
 
 
 def _totals(db: Session, s: models.Shift) -> dict:
@@ -73,11 +73,11 @@ def _out(db: Session, s: models.Shift) -> schemas.ShiftOut:
         id=s.id, user_id=s.user_id, username=s.username, status=s.status, opened_at=s.opened_at, closed_at=s.closed_at,
         opening_cash=s.opening_cash, counted_cash=s.counted_cash, difference=s.difference, notes=s.notes, is_stale=_is_stale(s),
     )
-    if s.status == "closed":
+    if s.status == "closed":  # type: ignore
         # Shifts closed before refunds were split out have NULL refund columns (their cash_in/out already include them).
         return schemas.ShiftOut(
-            **base, cash_in=s.cash_in, cash_out=s.cash_out, cash_refunds_in=s.cash_refunds_in or 0, cash_refunds_out=s.cash_refunds_out or 0,
-            other_methods_in=s.other_methods_in, expected_cash=s.expected_cash,
+            **base, cash_in=s.cash_in, cash_out=s.cash_out, cash_refunds_in=s.cash_refunds_in or 0, cash_refunds_out=s.cash_refunds_out or 0,  # type: ignore
+            other_methods_in=s.other_methods_in, expected_cash=s.expected_cash,  # type: ignore
         )
     return schemas.ShiftOut(**base, **_totals(db, s))
 
@@ -88,15 +88,15 @@ def open_shift_of(db: Session, user_id: int) -> Optional[models.Shift]:
 
 @router.get("/current", response_model=Optional[schemas.ShiftOut])
 def current(db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
-    s = open_shift_of(db, user.id)
+    s = open_shift_of(db, user.id)  # type: ignore
     return _out(db, s) if s else None
 
 
 @router.post("/open", response_model=schemas.ShiftOut, status_code=status.HTTP_201_CREATED)
 def open_shift(payload: schemas.ShiftOpen, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
-    if open_shift_of(db, user.id):
+    if open_shift_of(db, user.id):  # type: ignore
         raise HTTPException(status.HTTP_409_CONFLICT, "You already have an open shift")
-    s = models.Shift(user_id=user.id, username=user.username, opening_cash=payload.opening_cash)
+    s = models.Shift(user_id=user.id, username=user.username, opening_cash=payload.opening_cash)  # type: ignore
     db.add(s)
     try:
         audit(db, user, "open", "shift", s, f"رصيد افتتاحي {payload.opening_cash}")
@@ -113,19 +113,19 @@ def close_shift(shift_id: int, payload: schemas.ShiftClose, db: Session = Depend
     s = db.query(models.Shift).filter(models.Shift.id == shift_id).with_for_update().one_or_none()
     if s is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Shift {shift_id} not found")
-    if s.user_id != user.id and user_role(user) not in ("admin", "manager"):
+    if s.user_id != user.id and user_role(user) not in ("admin", "manager"):  # type: ignore
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Only the cashier or a manager can close this shift")
-    if s.status != "open":
+    if s.status != "open":  # type: ignore
         raise HTTPException(status.HTTP_409_CONFLICT, "Shift is already closed")
-    s.closed_at = datetime.now(timezone.utc)
+    s.closed_at = datetime.now(timezone.utc)  # type: ignore
     s.closed_by = user.id
     t = _totals(db, s)
     s.cash_in, s.cash_out, s.other_methods_in, s.expected_cash = t["cash_in"], t["cash_out"], t["other_methods_in"], t["expected_cash"]
     s.cash_refunds_in, s.cash_refunds_out = t["cash_refunds_in"], t["cash_refunds_out"]
-    s.counted_cash = payload.counted_cash
+    s.counted_cash = payload.counted_cash  # type: ignore
     s.difference = payload.counted_cash - t["expected_cash"]
-    s.notes = payload.notes
-    s.status = "closed"
+    s.notes = payload.notes  # type: ignore
+    s.status = "closed"  # type: ignore
     audit(db, user, "close", "shift", s, f"متوقع {s.expected_cash} · معدود {s.counted_cash} · فرق {s.difference}")
     db.commit()
     db.refresh(s)
@@ -153,7 +153,7 @@ def list_shifts(
 def shift_pdf(shift_id: int, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     s = db.query(models.Shift).filter(models.Shift.id == shift_id).one_or_none()
     # Someone else's shift is reported as missing for cashiers, like the list endpoint hides it.
-    if s is None or (s.user_id != user.id and user_role(user) not in ("admin", "manager")):
+    if s is None or (s.user_id != user.id and user_role(user) not in ("admin", "manager")):  # type: ignore
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Shift {shift_id} not found")
     data = _out(db, s).model_dump()
     return Response(

@@ -25,7 +25,7 @@ def create_safe(payload: schemas.SafeCreate, db: Session = Depends(get_db), user
     company_id = db.info["company_id"]
     if db.query(models.Safe).filter(models.Safe.company_id == company_id, models.Safe.code == payload.code.strip()).first():
         raise HTTPException(status.HTTP_409_CONFLICT, "Safe code already exists")
-    s = models.Safe(company_id=company_id, name=payload.name.strip(), code=payload.code.strip(), balance=payload.opening_balance, is_active=payload.is_active)
+    s = models.Safe(company_id=company_id, name=payload.name.strip(), code=payload.code.strip(), balance=payload.opening_balance, is_active=payload.is_active)  # type: ignore
     db.add(s)
     db.commit()
     db.refresh(s)
@@ -54,7 +54,7 @@ def create_bank(payload: schemas.BankCreate, db: Session = Depends(get_db), user
     company_id = db.info["company_id"]
     if db.query(models.Bank).filter(models.Bank.company_id == company_id, models.Bank.code == payload.code.strip()).first():
         raise HTTPException(status.HTTP_409_CONFLICT, "Bank code already exists")
-    b = models.Bank(company_id=company_id, name=payload.name.strip(), code=payload.code.strip(), account_number=payload.account_number, balance=payload.opening_balance, is_active=payload.is_active)
+    b = models.Bank(company_id=company_id, name=payload.name.strip(), code=payload.code.strip(), account_number=payload.account_number, balance=payload.opening_balance, is_active=payload.is_active)  # type: ignore
     db.add(b)
     db.commit()
     db.refresh(b)

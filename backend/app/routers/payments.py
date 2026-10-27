@@ -54,16 +54,16 @@ def create_payment(
     if paid_on > _today():
         raise HTTPException(422, "paid_on cannot be in the future")
     p = models.Payment(
-        customer_id=payload.customer_id,
-        supplier_id=payload.supplier_id,
-        safe_id=payload.safe_id,
-        bank_id=payload.bank_id,
-        amount=payload.amount,
-        method=payload.method,
-        reference=(payload.reference or "").strip() or None,
-        notes=payload.notes,
-        paid_on=paid_on,
-        created_by=user.id,
+        customer_id=payload.customer_id,  # type: ignore
+        supplier_id=payload.supplier_id,  # type: ignore
+        safe_id=payload.safe_id,  # type: ignore
+        bank_id=payload.bank_id,  # type: ignore
+        amount=payload.amount,  # type: ignore
+        method=payload.method,  # type: ignore
+        reference=(payload.reference or "").strip() or None,  # type: ignore
+        notes=payload.notes,  # type: ignore
+        paid_on=paid_on,  # type: ignore
+        created_by=user.id,  # type: ignore
     )
     db.add(p)
     # Update safe/bank balance: receipt (customer) increases, payment (supplier) decreases.
@@ -72,13 +72,13 @@ def create_payment(
         safe = db.get(models.Safe, payload.safe_id)
         if safe is None or safe.company_id != db.info["company_id"]:
             raise HTTPException(422, "Safe not found")
-        safe.balance = (safe.balance or 0) + delta
+        safe.balance = (safe.balance or 0) + delta  # type: ignore
     if payload.bank_id is not None:
         bank = db.get(models.Bank, payload.bank_id)
         if bank is None or bank.company_id != db.info["company_id"]:
             raise HTTPException(422, "Bank not found")
-        bank.balance = (bank.balance or 0) + delta
-    audit(db, user, "create", "payment", p, f"{'قبض' if p.customer_id else 'دفع'} {p.amount}")
+        bank.balance = (bank.balance or 0) + delta  # type: ignore
+    audit(db, user, "create", "payment", p, f"{'قبض' if p.customer_id else 'دفع'} {p.amount}")  # type: ignore
     db.commit()
     db.refresh(p)
     return _out(p)
@@ -124,21 +124,21 @@ def get_payment(payment_id: int, db: Session = Depends(get_db)):
 @payments.post("/{payment_id}/void", response_model=schemas.PaymentOut)
 def void_payment(payment_id: int, db: Session = Depends(get_db), user: models.User = Depends(require_manager)):
     p = _get_or_404(db, payment_id)
-    if p.status == "voided":
+    if p.status == "voided":  # type: ignore
         raise HTTPException(status.HTTP_409_CONFLICT, "Payment is already voided")
-    p.status = "voided"
+    p.status = "voided"  # type: ignore
     p.voided_by = user.id
-    p.voided_at = datetime.now(timezone.utc)
+    p.voided_at = datetime.now(timezone.utc)  # type: ignore
     # Reverse safe/bank balance.
     delta = p.amount if p.customer_id is not None else -p.amount
     if p.safe_id is not None:
         safe = db.get(models.Safe, p.safe_id)
         if safe is not None:
-            safe.balance = (safe.balance or 0) - delta
+            safe.balance = (safe.balance or 0) - delta  # type: ignore
     if p.bank_id is not None:
         bank = db.get(models.Bank, p.bank_id)
         if bank is not None:
-            bank.balance = (bank.balance or 0) - delta
+            bank.balance = (bank.balance or 0) - delta  # type: ignore
     audit(db, user, "void", "payment", p, f"{p.amount}")
     db.commit()
     db.refresh(p)

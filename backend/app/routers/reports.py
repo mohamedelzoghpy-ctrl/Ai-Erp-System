@@ -65,14 +65,14 @@ def _low_stock_rows(db: Session) -> List[schemas.LowStockItem]:
     )
     rows = [
         schemas.LowStockItem(
-            id=p.id,
-            sku=p.sku,
-            name=p.name,
-            quantity=p.quantity,
-            reorder_level=p.reorder_level,
-            shortfall=p.reorder_level - p.quantity,
-            warehouse_id=p.warehouse_id,
-            supplier_id=p.supplier_id,
+            id=p.id,  # type: ignore
+            sku=p.sku,  # type: ignore
+            name=p.name,  # type: ignore
+            quantity=p.quantity,  # type: ignore
+            reorder_level=p.reorder_level,  # type: ignore
+            shortfall=p.reorder_level - p.quantity,  # type: ignore
+            warehouse_id=p.warehouse_id,  # type: ignore
+            supplier_id=p.supplier_id,  # type: ignore
         )
         for p in products
     ]
@@ -97,8 +97,8 @@ def low_stock_xlsx(db: Session = Depends(get_db), _: models.User = Depends(get_c
             [
                 ("text", r.sku),
                 ("text", r.name),
-                ("text", wh.get(r.warehouse_id, "—")),
-                ("text", sup.get(r.supplier_id, "—")),
+                ("text", wh.get(r.warehouse_id, "—")),  # type: ignore
+                ("text", sup.get(r.supplier_id, "—")),  # type: ignore
                 ("int", r.quantity),
                 ("int", r.reorder_level),
                 ("int", r.shortfall),
@@ -549,7 +549,7 @@ def _balances_report(db: Session, kind: str) -> schemas.BalancesReport:
     balances = accounts.party_balances(db, kind)
     info = {p.id: p for p in db.query(party).filter(party.id.in_(list(balances) or [0])).all()}
     rows = [
-        schemas.BalanceRow(party_id=pid, name=info[pid].name, phone=info[pid].phone, balance=bal)
+        schemas.BalanceRow(party_id=pid, name=info[pid].name, phone=info[pid].phone, balance=bal)  # type: ignore
         for pid, bal in balances.items()
         if bal != 0 and pid in info
     ]

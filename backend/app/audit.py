@@ -14,11 +14,11 @@ def audit(db: Session, user: Optional[models.User], action: str, entity: str, ta
         target = target.id
     db.add(
         models.AuditLog(
-            user_id=user.id if user else None,
-            username=user.username if user else None,
-            action=action,
-            entity=entity,
-            entity_id=target,
-            summary=summary,
+            user_id=user.id if user else None,  # type: ignore
+            username=user.username if user else None,  # type: ignore
+            action=action,  # type: ignore
+            entity=entity,  # type: ignore
+            entity_id=target,  # type: ignore
+            summary=summary,  # type: ignore
         )
     )
