@@ -195,6 +195,14 @@ export function StatementDialog({ kind, partyId, partyName, onClose }: { kind: P
 // ------------------------------------------------------------ payments list page
 export default function Payments() {
   const { isManager } = useAuth();
+  const safes = useFetch(() => api.get<{ id: number; name: string; code: string; balance: string; is_active: boolean }[]>("/safes"), "safes");
+  const banks = useFetch(() => api.get<{ id: number; name: string; code: string; account_number: string | null; balance: string; is_active: boolean }[]>("/banks"), "banks");
+  const customers = useFetch(() => api.get<{ id: number; name: string; balance?: string }[]>("/customers?limit=500"), "acc-customers");
+  const suppliers = useFetch(() => api.get<{ id: number; name: string; balance?: string }[]>("/suppliers?limit=500"), "acc-suppliers");
+  const [receiptParty, setReceiptParty] = useState<{ id: number; name: string; balance: string } | null>(null);
+  const [paymentParty, setPaymentParty] = useState<{ id: number; name: string; balance: string } | null>(null);
+  const [showReceiptPicker, setShowReceiptPicker] = useState(false);
+  const [showPaymentPicker, setShowPaymentPicker] = useState(false);
   const [kind, setKind] = useState<"" | "receipt" | "payment">("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
@@ -213,6 +221,10 @@ export default function Payments() {
   return (
     <>
       <PageHeader title="المقبوضات والمدفوعات" />
+      <div className="card" style={{ padding: 14, marginBottom: 16, display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <button className="btn btn-primary" onClick={() => setShowReceiptPicker(true)}>+ سند قبض</button>
+        <button className="btn btn-primary" onClick={() => setShowPaymentPicker(true)}>+ سند صرف</button>
+      </div>
       <div className="card card-pad range-bar" style={{ marginBottom: 14 }}>
         <label className="range-field">
           <span className="field-label">النوع</span>
@@ -233,6 +245,67 @@ export default function Payments() {
       </div>
       {!valid && <Alert>تاريخ البداية يجب ألا يتجاوز تاريخ النهاية.</Alert>}
       <Alert>{list.error || action.error}</Alert>
+      <div className="card" style={{ padding: 20, marginBottom: 16 }}>
+        <h2>الخزائن (Safes)</h2>
+        {safes.data && safes.data.length > 0 ? (
+          <div className="table-wrap" style={{ marginBottom: 12 }}>
+            <table>
+              <thead><tr><th>الاسم</th><th>الكود</th><th className="num">الرصيد</th><th>الحالة</th></tr></thead>
+              <tbody>{safes.data.map((s) => (
+                <tr key={s.id}><td>{s.name}</td><td dir="ltr">{s.code}</td><td className="num">{money(s.balance)}</td><td>{s.is_active ? "نشطة" : "معطّلة"}</td></tr>
+              ))}</tbody>
+            </table>
+          </div>
+        ) : <Empty>لا توجد خزائن.</Empty>}
+        {isManager && (
+          <form onSubmit={(e) => {
+            e.preventDefault();
+            const fd = new FormData(e.currentTarget);
+            void (async () => {
+              await api.post("/safes", { name: String(fd.get("name") || ""), code: String(fd.get("code") || ""), opening_balance: Number(fd.get("opening") || 0) });
+              safes.reload();
+              (e.target as HTMLFormElement).reset();
+            })();
+          }} className="form-grid">
+            <Field label="اسم الخزينة"><input name="name" required /></Field>
+            <Field label="الكود"><input name="code" dir="ltr" required /></Field>
+            <Field label="الرصيد الافتتاحي"><input name="opening" type="number" step="0.01" defaultValue="0" /></Field>
+            <button className="btn btn-primary" disabled={action.busy}>إضافة خزينة</button>
+          </form>
+        )}
+      </div>
+
+      <div className="card" style={{ padding: 20, marginBottom: 16 }}>
+        <h2>البنوك (Banks)</h2>
+        {banks.data && banks.data.length > 0 ? (
+          <div className="table-wrap" style={{ marginBottom: 12 }}>
+            <table>
+              <thead><tr><th>الاسم</th><th>الكود</th><th>رقم الحساب</th><th className="num">الرصيد</th><th>الحالة</th></tr></thead>
+              <tbody>{banks.data.map((b) => (
+                <tr key={b.id}><td>{b.name}</td><td dir="ltr">{b.code}</td><td dir="ltr">{b.account_number || "—"}</td><td className="num">{money(b.balance)}</td><td>{b.is_active ? "نشطة" : "معطّلة"}</td></tr>
+              ))}</tbody>
+            </table>
+          </div>
+        ) : <Empty>لا توجد بنوك.</Empty>}
+        {isManager && (
+          <form onSubmit={(e) => {
+            e.preventDefault();
+            const fd = new FormData(e.currentTarget);
+            void (async () => {
+              await api.post("/banks", { name: String(fd.get("name") || ""), code: String(fd.get("code") || ""), account_number: String(fd.get("acct") || "") || null, opening_balance: Number(fd.get("opening") || 0) });
+              banks.reload();
+              (e.target as HTMLFormElement).reset();
+            })();
+          }} className="form-grid">
+            <Field label="اسم البنك"><input name="name" required /></Field>
+            <Field label="الكود"><input name="code" dir="ltr" required /></Field>
+            <Field label="رقم الحساب"><input name="acct" dir="ltr" /></Field>
+            <Field label="الرصيد الافتتاحي"><input name="opening" type="number" step="0.01" defaultValue="0" /></Field>
+            <button className="btn btn-primary" disabled={action.busy}>إضافة بنك</button>
+          </form>
+        )}
+      </div>
+
       <p className="muted" style={{ marginTop: 0 }}>لتسجيل قبض أو دفعة جديدة افتح صفحة العميل أو المورد واضغط «قبض» / «دفع».</p>
       <div className="card table-wrap">
         {list.loading && !list.data ? (
@@ -279,6 +352,48 @@ export default function Payments() {
         )}
         <Pager list={list} />
       </div>
+      {showReceiptPicker && (
+        <Modal title="اختر العميل (سند قبض)" onClose={() => setShowReceiptPicker(false)}>
+          <div className="table-wrap">
+            <table>
+              <tbody>
+                {(customers.data ?? []).map((c) => (
+                  <tr key={c.id}>
+                    <td>{c.name}</td>
+                    <td className="actions">
+                      <button className="btn btn-sm" onClick={() => { setReceiptParty({ id: c.id, name: c.name, balance: c.balance ?? "0" }); setShowReceiptPicker(false); }}>اختيار</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Modal>
+      )}
+      {showPaymentPicker && (
+        <Modal title="اختر المورد (سند صرف)" onClose={() => setShowPaymentPicker(false)}>
+          <div className="table-wrap">
+            <table>
+              <tbody>
+                {(suppliers.data ?? []).map((s) => (
+                  <tr key={s.id}>
+                    <td>{s.name}</td>
+                    <td className="actions">
+                      <button className="btn btn-sm" onClick={() => { setPaymentParty({ id: s.id, name: s.name, balance: s.balance ?? "0" }); setShowPaymentPicker(false); }}>اختيار</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Modal>
+      )}
+      {receiptParty && (
+        <PaymentDialog kind="customer" partyId={receiptParty.id} partyName={receiptParty.name} balance={receiptParty.balance} onClose={() => setReceiptParty(null)} onSaved={() => { setReceiptParty(null); list.reload(); safes.reload(); banks.reload(); }} />
+      )}
+      {paymentParty && (
+        <PaymentDialog kind="supplier" partyId={paymentParty.id} partyName={paymentParty.name} balance={paymentParty.balance} onClose={() => setPaymentParty(null)} onSaved={() => { setPaymentParty(null); list.reload(); safes.reload(); banks.reload(); }} />
+      )}
     </>
   );
 }
