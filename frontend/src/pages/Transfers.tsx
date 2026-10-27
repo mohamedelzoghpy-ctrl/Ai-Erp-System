@@ -489,7 +489,7 @@ export default function Transfers() {
                     <button className="btn btn-sm" onClick={() => setView(t)}>
                       عرض
                     </button>
-                    {t.status === "pending" && (isManager || t.username === user?.username) && (
+                    {((t.status === "pending" && (isManager || t.username === user?.username)) || (t.status !== "pending" && isManager)) && (
                       <button className="btn btn-sm btn-danger" disabled={act.busy} onClick={() => remove(t)}>
                         حذف
                       </button>

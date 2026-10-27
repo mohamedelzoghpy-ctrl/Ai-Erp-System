@@ -180,15 +180,32 @@ def get_transfer(transfer_id: int, db: Session = Depends(get_db)):
 
 
 @router.delete("/{transfer_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_pending_transfer(transfer_id: int, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+def delete_transfer(transfer_id: int, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     from ..deps import user_role
     t = _get(db, transfer_id)
-    if t.status != "pending":
-        raise HTTPException(409, "Only pending transfers can be deleted")
-    if t.created_by != user.id and user_role(user) not in ("admin", "manager"):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Not allowed")
+    if t.status == "pending":
+        if t.created_by != user.id and user_role(user) not in ("admin", "manager"):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Not allowed")
+    elif t.status == "approved":
+        if user_role(user) not in ("admin", "manager"):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Only a manager or admin can delete an approved transfer")
+        # reverse stock movement
+        products = {p.id: p for p in db.query(models.Product).filter(models.Product.id.in_([i.product_id for i in t.items])).all()}
+        ref = f"TR-{t.id}"
+        for i in t.items:
+            p = products.get(i.product_id)
+            if p is None:
+                continue
+            try:
+                stock.move_stock(db, p, t.from_warehouse_id, i.quantity, "transfer_delete_revert", ref)
+                stock.move_stock(db, p, t.to_warehouse_id, -i.quantity, "transfer_delete_revert", ref)
+            except Exception:
+                pass
+    else:  # rejected
+        if user_role(user) not in ("admin", "manager"):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Only a manager or admin can delete a rejected transfer")
     db.delete(t)
-    audit(db, user, "delete", "stock_transfer", transfer_id, "deleted pending transfer")
+    audit(db, user, "delete", "stock_transfer", transfer_id, f"deleted {t.status} transfer")
     db.commit()
 
 
