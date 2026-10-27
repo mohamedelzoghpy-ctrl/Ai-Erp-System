@@ -159,7 +159,7 @@ export default function Products() {
                     <td className="num">{money(Number(p.quantity) * Number(p.cost_price))}</td>
                     <td className="actions">
                       <button className="btn btn-sm" onClick={() => setEditing(p)}>
-                        تعديل
+                        edit
                       </button>
                       <button className="btn btn-sm" onClick={() => setAdjusting(p)}>
                         تسوية
@@ -285,7 +285,7 @@ function ProductForm({
   };
 
   return (
-    <Modal title={initial ? "تعديل منتج" : "منتج جديد"} onClose={onClose} wide>
+    <Modal title={initial ? "edit منتج" : "منتج جديد"} onClose={onClose} wide>
       <form onSubmit={submit}>
         <Alert>{error}</Alert>
         <div className="form-grid">
@@ -302,7 +302,7 @@ function ProductForm({
               step="0.01"
               value={f.cost_price}
               readOnly={!isManager}
-              title={isManager ? undefined : "تعديل سعر التكلفة للمدير فقط"}
+              title={isManager ? undefined : "edit سعر التكلفة للمدير فقط"}
               onChange={(e) => set("cost_price", e.target.value)}
             />
           </Field>

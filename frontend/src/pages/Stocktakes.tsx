@@ -158,7 +158,7 @@ function DetailDialog({ id, onClose, onChanged }: { id: number; onClose: () => v
             )}
             {confirmApply && (
               <Alert kind="info">
-                سيتم تعديل كميات {num(s.lines_with_difference)} صنف بحسب الفروقات، ولا يمكن التراجع. هل تؤكد الاعتماد؟{" "}
+                سيتم edit كميات {num(s.lines_with_difference)} صنف بحسب الفروقات، ولا يمكن التراجع. هل تؤكد الاعتماد؟{" "}
                 <button className="btn btn-sm btn-primary" disabled={act.busy} onClick={() => void call("apply")}>
                   نعم، اعتمد
                 </button>{" "}
@@ -180,7 +180,7 @@ function DetailDialog({ id, onClose, onChanged }: { id: number; onClose: () => v
               )}
               {s.status === "applied" && isManager && !editing && (
                 <button className="btn" onClick={() => setEditing(true)}>
-                  تعديل (after approval)
+                  edit (after approval)
                 </button>
               )}
               {editing && (

@@ -216,7 +216,7 @@ export default function Pos() {
                           aria-label={`سعر ${l.product.name}`}
                           value={l.price}
                           readOnly={!isManager}
-                          title={isManager ? undefined : "تعديل السعر للمدير فقط"}
+                          title={isManager ? undefined : "edit السعر للمدير فقط"}
                           onChange={(e) => setCart((c) => c.map((x) => (x === l ? { ...x, price: e.target.value } : x)))}
                         />
                       </td>

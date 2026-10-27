@@ -47,7 +47,7 @@ export default function Users() {
                   <td>{dateTime(u.created_at)}</td>
                   <td className="actions">
                     <button className="btn btn-sm" onClick={() => setEditing(u)}>
-                      تعديل
+                      edit
                     </button>
                   </td>
                 </tr>
@@ -114,7 +114,7 @@ function UserForm({ initial, isSelf, canAssignAdmin, onClose, onSaved }: { initi
   };
 
   return (
-    <Modal title={initial ? "تعديل مستخدم" : "مستخدم جديد"} onClose={onClose}>
+    <Modal title={initial ? "edit مستخدم" : "مستخدم جديد"} onClose={onClose}>
       <form onSubmit={submit}>
         <Alert>{error}</Alert>
         <div className="form-grid">

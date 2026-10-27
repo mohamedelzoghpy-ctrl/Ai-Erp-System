@@ -111,7 +111,7 @@ export function Warehouses() {
                   </td>
                   <td className="actions">
                     <button className="btn btn-sm" onClick={() => setEditing(w)}>
-                      تعديل
+                      edit
                     </button>
                     {isManager && (
                       <button className="btn btn-sm btn-danger" onClick={() => remove(w)}>
@@ -161,7 +161,7 @@ function WarehouseForm({ initial, branches, onClose, onSaved }: { initial: Wareh
   };
 
   return (
-    <Modal title={initial ? "تعديل مخزن" : "مخزن جديد"} onClose={onClose}>
+    <Modal title={initial ? "edit مخزن" : "مخزن جديد"} onClose={onClose}>
       <form onSubmit={submit}>
         <Alert>{error}</Alert>
         <div className="form-grid">
@@ -303,7 +303,7 @@ function PartyScreen({ title, singular, path, kind }: { title: string; singular:
                       كشف حساب
                     </button>
                     <button className="btn btn-sm" onClick={() => setEditing(p)}>
-                      تعديل
+                      edit
                     </button>
                     {isManager && (
                       <button className="btn btn-sm btn-danger" onClick={() => remove(p)}>
@@ -398,7 +398,7 @@ function PartyForm({
   };
 
   return (
-    <Modal title={initial ? `تعديل ${singular}` : `${singular} جديد`} onClose={onClose}>
+    <Modal title={initial ? `edit ${singular}` : `${singular} جديد`} onClose={onClose}>
       <form onSubmit={submit}>
         <Alert>{error}</Alert>
         <Field label="الاسم">

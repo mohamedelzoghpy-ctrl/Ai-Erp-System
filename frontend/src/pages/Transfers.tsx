@@ -215,7 +215,7 @@ function EditTransfer({ t, onClose, onDone }: { t: StockTransfer; onClose: () =>
   };
 
   return (
-    <Modal title={`تعديل تحويل TR-${t.id}`} onClose={onClose} wide>
+    <Modal title={`edit تحويل TR-${t.id}`} onClose={onClose} wide>
       <form onSubmit={submit}>
         <Alert>{act.error || warehouses.error || products.error}</Alert>
         {products.loading && !products.data ? <Loading /> : (
@@ -275,7 +275,7 @@ function EditTransfer({ t, onClose, onDone }: { t: StockTransfer; onClose: () =>
               </select>
             </Field>
             <div className="actions">
-              <button className="btn btn-primary" disabled={!valid || act.busy}>حفظ التعديلات</button>
+              <button className="btn btn-primary" disabled={!valid || act.busy}>حفظ الeditات</button>
               <button type="button" className="btn" onClick={onClose}>إلغاء</button>
             </div>
           </>
@@ -329,7 +329,7 @@ function ViewTransfer({ t, onClose, onApprove, onReject, onEdit }: { t: StockTra
         )}
         {t.status === "approved" && onEdit && (
           <button className="btn btn-primary" onClick={() => onEdit(t)}>
-            تعديل
+            edit
           </button>
         )}
         <button className="btn" disabled={dl.busy} onClick={() => void dl.run(() => api.download(`/stock-transfers/${t.id}/pdf`, `transfer-TR-${t.id}.pdf`))}>

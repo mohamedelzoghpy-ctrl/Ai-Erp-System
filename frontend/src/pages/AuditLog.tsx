@@ -20,7 +20,7 @@ const ENTITY: Record<string, string> = {
 
 const ACTION: Record<string, string> = {
   create: "إنشاء",
-  update: "تعديل",
+  update: "edit",
   delete: "حذف",
   receive: "استلام",
   confirm: "تأكيد",

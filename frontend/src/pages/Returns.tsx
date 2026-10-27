@@ -99,7 +99,7 @@ export function ReturnDialog({ cfg, order, onClose, onDone }: { cfg: DialogCfg; 
         <Field label="ملاحظات / سبب الإرجاع">
           <textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
         </Field>
-        <p className="muted" style={{ fontSize: 13, marginTop: 0 }}>المرتجع نهائي ولا يمكن تعديله أو إلغاؤه بعد الحفظ؛ يتم تحديث المخزون والرصيد فوراً.</p>
+        <p className="muted" style={{ fontSize: 13, marginTop: 0 }}>المرتجع نهائي ولا يمكن editه أو إلغاؤه بعد الحفظ؛ يتم تحديث المخزون والرصيد فوراً.</p>
         <div className="form-actions">
           <button className="btn btn-primary" disabled={busy || !valid}>
             {busy ? "جارٍ الحفظ…" : "تسجيل المرتجع"}
