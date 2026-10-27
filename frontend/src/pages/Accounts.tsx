@@ -133,7 +133,7 @@ export function StatementDialog({ kind, partyId, partyName, onClose }: { kind: P
           <button className="btn btn-sm btn-primary" disabled={download.busy || !valid} onClick={() => void download.run(() => api.download(`${base}/xlsx${q}`, `statement-${partyId}.xlsx`))}>
             ⬇ Excel
           </button>
-          <button className="btn btn-sm" disabled={download.busy || !valid} onClick={() => void download.run(async () => {
+          <button className="btn btn-sm btn-primary" disabled={download.busy || !valid} onClick={() => void download.run(async () => {
             const url = `/api${base}/pdf${q}${q ? "&" : "?"}token=${encodeURIComponent(getToken() ?? "")}`;
             const res = await fetch(url);
             if (!res.ok) throw new Error("تعذّر تحميل السند");
