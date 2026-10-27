@@ -601,7 +601,7 @@ class ProductStock(TenantOwned, Base):
 
 
 class StockTransfer(TenantOwned, Base):
-    """Goods moved between two warehouses. Completed immediately; total stock is unchanged."""
+    """Goods moved between two warehouses. Created as 'pending', executed on approval."""
 
     __tablename__ = "stock_transfers"
     __table_args__ = (CheckConstraint("from_warehouse_id <> to_warehouse_id", name="ck_transfer_distinct_warehouses"),)
@@ -610,8 +610,12 @@ class StockTransfer(TenantOwned, Base):
     from_warehouse_id = Column(Integer, ForeignKey("warehouses.id"), nullable=False, index=True)
     to_warehouse_id = Column(Integer, ForeignKey("warehouses.id"), nullable=False, index=True)
     notes = Column(Text, nullable=True)
+    status = Column(String(20), nullable=False, server_default="pending", index=True)  # pending/approved/rejected
     created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     username = Column(String(60), nullable=True)
+    approved_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    approved_at = Column(DateTime(timezone=True), nullable=True)
+    rejection_reason = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     from_warehouse = relationship("Warehouse", foreign_keys=[from_warehouse_id])

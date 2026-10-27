@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { api } from "../api";
+import { useAuth } from "../auth";
 import { dateTime, num } from "../format";
 import { useAction, useFetch, usePagedList } from "../hooks";
 import type { Product, StockTransfer, Warehouse } from "../types";
@@ -153,7 +154,7 @@ function NewTransfer({ onClose, onDone }: { onClose: () => void; onDone: (t: Sto
   );
 }
 
-function ViewTransfer({ t, onClose }: { t: StockTransfer; onClose: () => void }) {
+function ViewTransfer({ t, onClose, onApprove, onReject }: { t: StockTransfer; onClose: () => void; onApprove?: (t: StockTransfer) => void; onReject?: (t: StockTransfer) => void }) {
   const dl = useAction();
   return (
     <Modal title={`تحويل TR-${t.id}`} onClose={onClose}>
@@ -181,8 +182,19 @@ function ViewTransfer({ t, onClose }: { t: StockTransfer; onClose: () => void })
           </tbody>
         </table>
       </div>
-      {t.notes && <p className="muted">{t.notes}</p>}
+      {t.notes && <p className="muted">ملاحظات: {t.notes}</p>}
+      {t.rejection_reason && <p className="muted" style={{ color: "var(--danger)" }}>سبب الرفض: {t.rejection_reason}</p>}
       <div className="actions">
+        {t.status === "pending" && onApprove && (
+          <button className="btn btn-primary" onClick={() => onApprove(t)}>
+            اعتماد
+          </button>
+        )}
+        {t.status === "pending" && onReject && (
+          <button className="btn btn-danger" onClick={() => onReject(t)}>
+            رفض
+          </button>
+        )}
         <button className="btn" disabled={dl.busy} onClick={() => void dl.run(() => api.download(`/stock-transfers/${t.id}/pdf`, `transfer-TR-${t.id}.pdf`))}>
           ⬇ سند التحويل PDF
         </button>
@@ -192,9 +204,46 @@ function ViewTransfer({ t, onClose }: { t: StockTransfer; onClose: () => void })
 }
 
 export default function Transfers() {
-  const list = usePagedList<StockTransfer>("/stock-transfers", {});
+  const { isManager } = useAuth();
+  const [statusFilter, setStatusFilter] = useState("");
+  const list = usePagedList<StockTransfer>("/stock-transfers", { status: statusFilter || undefined });
   const [creating, setCreating] = useState(false);
   const [view, setView] = useState<StockTransfer | null>(null);
+  const act = useAction();
+
+  const approve = (t: StockTransfer) => {
+    void act.run(async () => {
+      await api.post(`/stock-transfers/${t.id}/approve`);
+      list.reload();
+      if (view?.id === t.id) setView(null);
+    });
+  };
+  const reject = (t: StockTransfer) => {
+    const reason = prompt("سبب الرفض (اختياري):") ?? undefined;
+    void act.run(async () => {
+      await api.post(`/stock-transfers/${t.id}/reject${reason ? `?reason=${encodeURIComponent(reason)}` : ""}`);
+      list.reload();
+      if (view?.id === t.id) setView(null);
+    });
+  };
+  const remove = (t: StockTransfer) => {
+    if (!confirm(`حذف التحويل TR-${t.id}؟`)) return;
+    void act.run(async () => {
+      await api.del(`/stock-transfers/${t.id}`);
+      list.reload();
+    });
+  };
+
+  const statusBadge = (s: StockTransfer["status"]) => {
+    const map: Record<string, { label: string; cls: string }> = {
+      pending: { label: "قيد الانتظار", cls: "badge badge-warn" },
+      approved: { label: "معتمد", cls: "badge badge-ok" },
+      rejected: { label: "مرفوض", cls: "badge badge-off" },
+    };
+    const v = map[s] ?? { label: s, cls: "badge" };
+    return <span className={v.cls}>{v.label}</span>;
+  };
+
   return (
     <>
       <PageHeader title="التحويلات المخزنية">
@@ -202,7 +251,15 @@ export default function Transfers() {
           تحويل جديد
         </button>
       </PageHeader>
-      <Alert>{list.error}</Alert>
+      <Alert>{list.error || act.error}</Alert>
+      <div className="toolbar page-actions" style={{ marginBottom: 14 }}>
+        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} aria-label="الحالة">
+          <option value="">كل الحالات</option>
+          <option value="pending">قيد الانتظار</option>
+          <option value="approved">معتمد</option>
+          <option value="rejected">مرفوض</option>
+        </select>
+      </div>
       <div className="card table-wrap">
         {list.loading && !list.data ? (
           <Loading />
@@ -215,6 +272,7 @@ export default function Transfers() {
                 <th>من</th>
                 <th>إلى</th>
                 <th className="num">الأصناف</th>
+                <th>الحالة</th>
                 <th>المستخدم</th>
                 <th />
               </tr>
@@ -227,18 +285,34 @@ export default function Transfers() {
                   <td>{t.from_warehouse_name}</td>
                   <td>{t.to_warehouse_name}</td>
                   <td className="num">{num(t.items.length)}</td>
+                  <td>{statusBadge(t.status)}</td>
                   <td dir="ltr">{t.username ?? "—"}</td>
                   <td className="actions">
                     <button className="btn btn-sm" onClick={() => setView(t)}>
                       عرض
                     </button>
+                    {isManager && t.status === "pending" && (
+                      <>
+                        <button className="btn btn-sm btn-primary" disabled={act.busy} onClick={() => approve(t)}>
+                          اعتماد
+                        </button>
+                        <button className="btn btn-sm btn-danger" disabled={act.busy} onClick={() => reject(t)}>
+                          رفض
+                        </button>
+                      </>
+                    )}
+                    {t.status === "pending" && (t.username === null || true) && (
+                      <button className="btn btn-sm" disabled={act.busy} onClick={() => remove(t)}>
+                        حذف
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
         ) : (
-          <Empty>لا توجد تحويلات بعد.</Empty>
+          <Empty>لا توجد تحويلات.</Empty>
         )}
         <Pager list={list} />
       </div>
@@ -252,7 +326,7 @@ export default function Transfers() {
           }}
         />
       )}
-      {view && <ViewTransfer t={view} onClose={() => setView(null)} />}
+      {view && <ViewTransfer t={view} onClose={() => setView(null)} onApprove={isManager ? approve : undefined} onReject={isManager ? reject : undefined} />}
     </>
   );
 }

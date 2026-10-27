@@ -362,7 +362,11 @@ export interface StockTransfer {
   to_warehouse_id: number;
   to_warehouse_name: string | null;
   notes: string | null;
+  status: "pending" | "approved" | "rejected";
   username: string | null;
+  approved_by: number | null;
+  approved_at: string | null;
+  rejection_reason: string | null;
   created_at: string;
   items: { product_id: number; sku: string | null; product_name: string | null; quantity: number }[];
 }

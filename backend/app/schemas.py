@@ -797,6 +797,10 @@ class TransferOut(ORMModel):
     to_warehouse_id: int
     to_warehouse_name: Optional[str] = None
     notes: Optional[str] = None
+    status: str = "pending"
     username: Optional[str] = None
+    approved_by: Optional[int] = None
+    approved_at: Optional[datetime] = None
+    rejection_reason: Optional[str] = None
     created_at: datetime
     items: List[TransferItemOut]

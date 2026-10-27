@@ -12,6 +12,7 @@ export default function Layout() {
   const { t, lang, setLang } = useI18n();
   const company = useFetch(() => api.get<Company>("/company"), "current-company");
   const companies = useFetch(() => api.get<Company[]>("/auth/companies"), "my-companies");
+  const pending = useFetch(() => (isManager ? api.get<{ count: number }>("/stock-transfers/pending-count") : Promise.resolve({ count: 0 })), "pending-transfers");
   const link = ({ isActive }: { isActive: boolean }) => (isActive ? "active" : undefined);
   const [open, setOpen] = useState<Record<string, boolean>>({
     inv: true, pur: true, sal: true, acc: true, rep: true, comp: true,
@@ -107,6 +108,28 @@ export default function Layout() {
                 </option>
               ))}
             </select>
+          )}
+          {isManager && (
+            <a href="/transfers" style={{ marginInlineStart: 12, position: "relative", textDecoration: "none" }} title="تحويلات قيد الانتظار">
+              🔔
+              {(pending.data?.count ?? 0) > 0 && (
+                <span
+                  style={{
+                    position: "absolute",
+                    top: -6,
+                    insetInlineEnd: -6,
+                    background: "var(--danger, #dc2626)",
+                    color: "#fff",
+                    borderRadius: 999,
+                    fontSize: 11,
+                    padding: "1px 5px",
+                    lineHeight: 1,
+                  }}
+                >
+                  {pending.data?.count}
+                </span>
+              )}
+            </a>
           )}
           <button className="btn btn-sm" onClick={() => setLang(lang === "ar" ? "en" : "ar")} style={{ marginInlineStart: 12 }}>
             {lang === "ar" ? "EN" : "AR"}

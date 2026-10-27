@@ -79,6 +79,7 @@ def test_transfer_moves_stock_between_warehouses_and_keeps_the_total(api):
     p = make_product(api, "A", 10, w1["id"])
     t = ok(api.post("/stock-transfers", json={"from_warehouse_id": w1["id"], "to_warehouse_id": w2["id"], "notes": "restock shop",
                                               "items": [{"product_id": p["id"], "quantity": 3}, {"product_id": p["id"], "quantity": 1}]}), 201)
+    ok(api.post(f"/stock-transfers/{t['id']}/approve"))  # approval executes the movement
     assert [(i["product_id"], i["quantity"]) for i in t["items"]] == [(p["id"], 4)]  # duplicate lines merged
     assert t["from_warehouse_name"] == "Main" and t["to_warehouse_name"] == "Shop"
     assert by_wh(api, p["id"]) == {w1["id"]: 6, w2["id"]: 4} and total(api, p["id"]) == 10
@@ -128,6 +129,8 @@ def test_stocktake_counts_one_warehouse_and_adjusts_only_it(api):
     w1, w2 = make_warehouses(api)
     p = make_product(api, "A", 10, w1["id"])
     ok(api.post("/stock-transfers", json={"from_warehouse_id": w1["id"], "to_warehouse_id": w2["id"], "items": [{"product_id": p["id"], "quantity": 4}]}), 201)
+    _ts = ok(api.get("/stock-transfers?status=pending"))[0]
+    ok(api.post(f"/stock-transfers/{_ts['id']}/approve"))
     ok(api.post("/stocktakes", json={}), 422)  # a count needs a warehouse now
     st = ok(api.post("/stocktakes", json={"warehouse_id": w2["id"]}), 201)
     sheet = ok(api.get(f"/stocktakes/{st['id']}"))["lines"]
@@ -141,6 +144,8 @@ def test_staff_only_see_and_move_stock_of_their_own_warehouses(api):
     w1, w2 = make_warehouses(api)
     p = make_product(api, "A", 10, w1["id"])
     ok(api.post("/stock-transfers", json={"from_warehouse_id": w1["id"], "to_warehouse_id": w2["id"], "items": [{"product_id": p["id"], "quantity": 4}]}), 201)
+    _ts = ok(api.get("/stock-transfers?status=pending"))[0]
+    ok(api.post(f"/stock-transfers/{_ts['id']}/approve"))
     me = ok(api.get("/auth/me"))
     branch = ok(api.get("/warehouses"))[0]["branch_id"]
     ok(api.post("/company/employees", json={"username": "clerk", "password": "clerk-password", "role": "staff", "warehouse_ids": [w2["id"]]}), 201)
