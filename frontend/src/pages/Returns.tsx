@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { api } from "../api";
+import { useI18n } from "../i18n";
 import { dateTime, METHOD_LABEL, money, num } from "../format";
 import { useAction, usePagedList } from "../hooks";
 import type { Order, PaymentMethod, ReturnDoc } from "../types";
@@ -115,17 +116,18 @@ export function ReturnDialog({ cfg, order, onClose, onDone }: { cfg: DialogCfg; 
 
 /** List of all returns, one tab per direction. */
 export default function Returns() {
+  const { t } = useI18n();
   const [kind, setKind] = useState<"sales" | "purchase">("sales");
   const list = usePagedList<ReturnDoc>(kind === "sales" ? "/sales-returns" : "/purchase-returns", {});
   const [open, setOpen] = useState<ReturnDoc | null>(null);
 
   return (
     <>
-      <PageHeader title="المرتجعات" />
+      <PageHeader title={t("returns.title")} />
       <div className="tabs" role="tablist">
         {(["sales", "purchase"] as const).map((k) => (
           <button key={k} role="tab" aria-selected={kind === k} className={`tab${kind === k ? " active" : ""}`} onClick={() => setKind(k)}>
-            {k === "sales" ? "مرتجعات المبيعات" : "مرتجعات المشتريات"}
+            {k === "sales" ? t("returns.sales") : t("returns.purchases")}
           </button>
         ))}
       </div>
@@ -170,7 +172,7 @@ export default function Returns() {
             </tbody>
           </table>
         ) : (
-          <Empty>لا توجد مرتجعات.</Empty>
+          <Empty>{t("returns.empty")}</Empty>
         )}
         <Pager list={list} />
       </div>
@@ -179,10 +181,10 @@ export default function Returns() {
           <table>
             <thead>
               <tr>
-                <th>المنتج</th>
-                <th className="num">الكمية</th>
-                <th className="num">السعر</th>
-                <th className="num">القيمة</th>
+                <th>{t("returns.product")}</th>
+                <th className="num">{t("returns.qty")}</th>
+                <th className="num">{t("returns.price")}</th>
+                <th className="num">{t("returns.value")}</th>
               </tr>
             </thead>
             <tbody>
