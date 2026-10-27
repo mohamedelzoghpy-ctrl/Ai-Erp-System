@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { api } from "../api";
 import { useAuth } from "../auth";
+import { useI18n } from "../i18n";
 import { dateTime, num } from "../format";
 import { useAction, useFetch, usePagedList } from "../hooks";
 import type { Product, Stocktake, Warehouse } from "../types";
@@ -252,12 +253,13 @@ function DetailDialog({ id, onClose, onChanged }: { id: number; onClose: () => v
 }
 
 export default function Stocktakes() {
+  const { t } = useI18n();
   const list = usePagedList<Stocktake>("/stocktakes", {});
   const [creating, setCreating] = useState(false);
   const [viewId, setViewId] = useState<number | null>(null);
   return (
     <>
-      <PageHeader title="الجرد">
+      <PageHeader title={t("stocktakes.title")}>
         {list.data && list.data.length > 0 && (
           <button className="btn" onClick={() => {
             const w = window.open("", "_blank");
@@ -266,12 +268,12 @@ export default function Stocktakes() {
               <tr>
                 <td>#${s.id}</td>
                 <td>${dateTime(s.created_at)}</td>
-                <td>${s.warehouse_name ?? "كل المخازن"}</td>
+                <td>${s.warehouse_name ?? t("common.all")}</td>
                 <td>${STATUS[s.status]}</td>
                 <td>${num(s.lines_counted)} / ${num(s.lines_total)}</td>
                 <td>${num(s.lines_with_difference)}</td>
               </tr>`).join("");
-            w.document.write(`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>الجرد</title>
+            w.document.write(`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>${t("stocktakes.title")}</title>
               <style>
                 body { font-family: Tahoma, Arial, sans-serif; padding: 16px; }
                 h1 { text-align: center; }
@@ -290,11 +292,11 @@ export default function Stocktakes() {
               </body></html>`);
             w.document.close();
           }}>
-            🖨 طباعة
+            {t("stocktakes.print")}
           </button>
         )}
         <button className="btn btn-primary" onClick={() => setCreating(true)}>
-          جرد جديد
+          {t("stocktakes.new")}
         </button>
       </PageHeader>
       <Alert>{list.error}</Alert>
@@ -335,7 +337,7 @@ export default function Stocktakes() {
             </tbody>
           </table>
         ) : (
-          <Empty>لا توجد عمليات جرد بعد.</Empty>
+          <Empty>{t("stocktakes.empty")}</Empty>
         )}
         <Pager list={list} />
       </div>
