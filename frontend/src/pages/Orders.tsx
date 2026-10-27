@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { api } from "../api";
+import { useI18n } from "../i18n";
 import { ReturnDialog } from "./Returns";
 import { dateTime, money, num } from "../format";
 import { useAction, useFetch, usePagedList } from "../hooks";
@@ -77,6 +78,7 @@ function warehouseName(list: Warehouse[] | null, id: number): string {
 
 function OrdersScreen({ kind }: { kind: Kind }) {
   const cfg = CONFIG[kind];
+  const { t } = useI18n();
   const [status, setStatus] = useState("");
   const [creating, setCreating] = useState(false);
   const [viewId, setViewId] = useState<number | null>(null);
@@ -89,16 +91,16 @@ function OrdersScreen({ kind }: { kind: Kind }) {
 
   return (
     <>
-      <PageHeader title={cfg.title}>
-        <select value={status} onChange={(e) => setStatus(e.target.value)} aria-label="الحالة">
-          <option value="">كل الحالات</option>
+      <PageHeader title={kind === "purchase" ? t("orders.purchaseTitle") : t("orders.salesTitle")}>
+        <select value={status} onChange={(e) => setStatus(e.target.value)} aria-label={t("orders.status")}>
+          <option value="">{t("orders.all")}</option>
           <option value="draft">مسودة</option>
-          <option value={cfg.doneStatus}>{cfg.doneStatus === "received" ? "تم الاستلام" : "مؤكد"}</option>
+          <option value={cfg.doneStatus}>{cfg.doneStatus === "received" ? t("orders.receive") : t("orders.confirmSale")}</option>
           <option value="cancelled">ملغي</option>
         </select>
-        {kind === "sales" && <input value={cashier} onChange={(e) => setCashier(e.target.value)} placeholder="الكاشير (اسم المستخدم)" aria-label="الكاشير" style={{ width: 170 }} />}
+        {kind === "sales" && <input value={cashier} onChange={(e) => setCashier(e.target.value)} placeholder={t("orders.cashier") + " (اسم المستخدم)"} aria-label={t("orders.cashier")} style={{ width: 170 }} />}
         <button className="btn btn-primary" onClick={() => setCreating(true)}>
-          {cfg.newLabel}
+          {kind === "purchase" ? t("orders.newPurchase") : t("orders.newSale")}
         </button>
       </PageHeader>
 
@@ -147,7 +149,7 @@ function OrdersScreen({ kind }: { kind: Kind }) {
             </tbody>
           </table>
         ) : (
-          <Empty>{status || cashier ? "لا نتائج مطابقة" : "لا توجد أوامر بعد."}</Empty>
+          <Empty>{status || cashier ? "لا نتائج مطابقة" : t("orders.empty")}</Empty>
         )}
         <Pager list={orders} />
       </div>
