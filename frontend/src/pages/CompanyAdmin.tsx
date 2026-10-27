@@ -3,7 +3,7 @@ import { api } from "../api";
 import { useAuth } from "../auth";
 import { useAction, useFetch } from "../hooks";
 import type { Branch, Company } from "../types";
-import { Alert, Empty, Field, Loading, PageHeader } from "../ui";
+import { Alert, Empty, Field, Loading, Modal, PageHeader } from "../ui";
 
 export default function CompanyAdmin({ platform = false }: { platform?: boolean }) {
   const { isAdmin } = useAuth();
@@ -22,6 +22,10 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
   const [adminName, setAdminName] = useState("");
   const [adminPassword, setAdminPassword] = useState("");
   const [selectedCompany, setSelectedCompany] = useState<number | null>(null);
+  const [editingCompany, setEditingCompany] = useState<Company | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editLimit, setEditLimit] = useState("");
+  const [editActive, setEditActive] = useState(true);
   const [memberUsername, setMemberUsername] = useState("");
   const [memberRole, setMemberRole] = useState("staff");
   const [members, setMembers] = useState<{ user_id: number; username: string; full_name: string | null; role: string }[]>([]);
@@ -206,7 +210,7 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
                 <tbody>{companies.data.map((item) => (
                   <tr key={item.id}>
                     <td>{item.name}</td><td dir="ltr">{item.code}</td>
-                    <td>{item.max_warehouses_per_branch ?? "غير محدود"}</td><td>{item.is_active ? "active" : "inactive"} <button className="btn btn-sm" onClick={() => void (async () => { try { await api.patch(`/platform/companies/${item.id}`, { is_active: !item.is_active }); companies.reload(); } catch {} })()}>تعديل</button></td>
+                    <td>{item.max_warehouses_per_branch ?? "غير محدود"}</td><td>{item.is_active ? "active" : "inactive"} <button className="btn btn-sm" onClick={() => { setEditingCompany(item); setEditName(item.name); setEditLimit(item.max_warehouses_per_branch ? String(item.max_warehouses_per_branch) : ""); setEditActive(item.is_active); }}>تعديل</button></td>
                   </tr>
                 ))}</tbody>
               </table>
@@ -329,6 +333,33 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
           </div>
 
         </>
+      )}
+
+      {editingCompany && (
+        <Modal title={`تعديل شركة — ${editingCompany.name}`} onClose={() => setEditingCompany(null)}>
+          <form onSubmit={(e) => {
+            e.preventDefault();
+            void run(async () => {
+              await api.patch(`/platform/companies/${editingCompany.id}`, {
+                name: editName.trim() || undefined,
+                max_warehouses_per_branch: editLimit.trim() ? Number(editLimit) : null,
+                is_active: editActive,
+              });
+              setEditingCompany(null);
+              companies.reload();
+            });
+          }} className="form-grid">
+            <Field label="اسم الشركة"><input value={editName} onChange={(e) => setEditName(e.target.value)} required /></Field>
+            <Field label="الحد الأقصى للمخازن لكل فرع" hint="اتركه فارغًا لعدد غير محدود"><input type="number" min={1} value={editLimit} onChange={(e) => setEditLimit(e.target.value)} /></Field>
+            <Field label="الحالة">
+              <select value={editActive ? "1" : "0"} onChange={(e) => setEditActive(e.target.value === "1")}>
+                <option value="1">active</option>
+                <option value="0">inactive</option>
+              </select>
+            </Field>
+            <button className="btn btn-primary" disabled={busy}>حفظ</button>
+          </form>
+        </Modal>
       )}
     </>
   );
