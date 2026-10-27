@@ -468,7 +468,7 @@ export default function Transfers() {
           <table>
             <thead>
               <tr>
-                <th>رقم</th>
+                <th>number</th>
                 <th>{t("common.date") ?? "التاريخ"}</th>
                 <th>{t("transfers.from")}</th>
                 <th>{t("transfers.to")}</th>
