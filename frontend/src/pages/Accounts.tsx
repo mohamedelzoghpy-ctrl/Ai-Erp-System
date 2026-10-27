@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { api, qs } from "../api";
+import { api, getToken, qs } from "../api";
 import { useAuth } from "../auth";
 import { useI18n } from "../i18n";
 import { balanceNote, dateOnly, METHOD_LABEL, money } from "../format";
@@ -132,6 +132,24 @@ export function StatementDialog({ kind, partyId, partyName, onClose }: { kind: P
           </button>
           <button className="btn btn-sm btn-primary" disabled={download.busy || !valid} onClick={() => void download.run(() => api.download(`${base}/xlsx${q}`, `statement-${partyId}.xlsx`))}>
             ⬇ Excel
+          </button>
+          <button className="btn btn-sm" disabled={download.busy || !valid} onClick={() => void download.run(async () => {
+            const url = `/api${base}/pdf${q}${q ? "&" : "?"}token=${encodeURIComponent(getToken() ?? "")}`;
+            const res = await fetch(url);
+            if (!res.ok) throw new Error("تعذّر تحميل السند");
+            const blob = await res.blob();
+            const objUrl = URL.createObjectURL(blob);
+            const iframe = document.createElement("iframe");
+            iframe.style.position = "fixed"; iframe.style.right = "0"; iframe.style.bottom = "0";
+            iframe.style.width = "0"; iframe.style.height = "0"; iframe.style.border = "0";
+            iframe.src = objUrl;
+            document.body.appendChild(iframe);
+            iframe.onload = () => {
+              try { iframe.contentWindow?.focus(); iframe.contentWindow?.print(); } catch { window.open(objUrl, "_blank"); }
+              setTimeout(() => { document.body.removeChild(iframe); URL.revokeObjectURL(objUrl); }, 60_000);
+            };
+          })}>
+            🖨 print
           </button>
         </div>
       </div>
