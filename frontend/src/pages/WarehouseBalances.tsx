@@ -1,11 +1,13 @@
 import { useState } from "react";
 import { api } from "../api";
+import { useI18n } from "../i18n";
 import { money, num } from "../format";
 import { useFetch } from "../hooks";
 import type { Product, Warehouse } from "../types";
 import { Alert, Empty, Field, Loading, PageHeader } from "../ui";
 
 export default function WarehouseBalances() {
+  const { t } = useI18n();
   const warehouses = useFetch(() => api.get<Warehouse[]>("/warehouses?is_active=true&limit=500"), "wb-wh");
   const [warehouseId, setWarehouseId] = useState("");
 
@@ -23,7 +25,7 @@ export default function WarehouseBalances() {
 
   return (
     <>
-      <PageHeader title="أرصدة المخازن">
+      <PageHeader title={t("warehouseBalances.title")}>
         {warehouseId && rows.length > 0 && (
           <button className="btn" onClick={() => {
             const w = window.open("", "_blank");
@@ -40,7 +42,7 @@ export default function WarehouseBalances() {
                 <td>${money(q * Number(p.sale_price))}</td>
               </tr>`;
             }).join("");
-            w.document.write(`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>أرصدة المخازن</title>
+            w.document.write(`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>${t("warehouseBalances.title")}</title>
               <style>
                 body { font-family: Tahoma, Arial, sans-serif; padding: 16px; }
                 h1 { text-align: center; }
@@ -49,14 +51,14 @@ export default function WarehouseBalances() {
                 th { background: #eee; }
                 tfoot td { font-weight: bold; background: #f3f4f6; }
               </style></head><body>
-              <h1>أرصدة المخازن — ${selWarehouse?.name ?? ""}</h1>
+              <h1>${t("warehouseBalances.title")} — ${selWarehouse?.name ?? ""}</h1>
               <table>
                 <thead><tr>
-                  <th>الكود</th><th>اسم المنتج</th><th>الكمية</th><th>سعر التكلفة</th><th>سعر البيع</th><th>قيمة التكلفة</th><th>قيمة البيع</th>
+                  <th>${t("warehouseBalances.code")}</th><th>${t("warehouseBalances.productName")}</th><th>${t("warehouseBalances.qty")}</th><th>${t("warehouseBalances.costPrice")}</th><th>${t("warehouseBalances.salePrice")}</th><th>${t("warehouseBalances.costValue")}</th><th>${t("warehouseBalances.saleValue")}</th>
                 </tr></thead>
                 <tbody>${rowsHtml}</tbody>
                 <tfoot><tr>
-                  <td colspan="2" style="text-align:end;font-weight:bold;">الإجمالي</td>
+                  <td colspan="2" style="text-align:end;font-weight:bold;">${t("warehouseBalances.total")}</td>
                   <td>${num(totalQty)}</td>
                   <td>—</td>
                   <td>—</td>
@@ -68,7 +70,7 @@ export default function WarehouseBalances() {
               </body></html>`);
             w.document.close();
           }}>
-            🖨 طباعة
+            {t("warehouseBalances.print")}
           </button>
         )}
       </PageHeader>
@@ -76,9 +78,9 @@ export default function WarehouseBalances() {
 
       <div className="card" style={{ padding: 20, marginBottom: 16 }}>
         <div className="form-grid">
-          <Field label="المخزن">
-            <select value={warehouseId} onChange={(e) => setWarehouseId(e.target.value)} aria-label="المخزن">
-              <option value="">— اختر مخزناً —</option>
+          <Field label={t("common.warehouse")}>
+            <select value={warehouseId} onChange={(e) => setWarehouseId(e.target.value)} aria-label={t("common.warehouse")}>
+              <option value="">— {t("warehouseBalances.selectWarehouse")} —</option>
               {warehouses.data?.map((w) => (
                 <option key={w.id} value={w.id}>{w.name} ({w.code})</option>
               ))}
@@ -100,13 +102,13 @@ export default function WarehouseBalances() {
             <table>
               <thead>
                 <tr>
-                  <th>الكود</th>
-                  <th>اسم المنتج</th>
-                  <th className="num">الكمية</th>
-                  <th className="num">سعر التكلفة</th>
-                  <th className="num">سعر البيع</th>
-                  <th className="num">قيمة التكلفة</th>
-                  <th className="num">قيمة البيع</th>
+                  <th>{t("warehouseBalances.code")}</th>
+                  <th>{t("warehouseBalances.productName")}</th>
+                  <th className="num">{t("warehouseBalances.qty")}</th>
+                  <th className="num">{t("warehouseBalances.costPrice")}</th>
+                  <th className="num">{t("warehouseBalances.salePrice")}</th>
+                  <th className="num">{t("warehouseBalances.costValue")}</th>
+                  <th className="num">{t("warehouseBalances.saleValue")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -125,7 +127,7 @@ export default function WarehouseBalances() {
                   );
                 })}
                 <tr style={{ fontWeight: 700, background: "#f7f9fb" }}>
-                  <td colSpan={2}>الإجمالي</td>
+                  <td colSpan={2}>{t("warehouseBalances.total")}</td>
                   <td className="num">{num(totalQty)}</td>
                   <td className="num">—</td>
                   <td className="num">—</td>
@@ -135,7 +137,7 @@ export default function WarehouseBalances() {
               </tbody>
             </table>
           ) : (
-            <Empty>لا توجد منتجات في هذا المخزن.</Empty>
+            <Empty>{t("warehouseBalances.noProducts")}</Empty>
           )}
         </div>
       )}
