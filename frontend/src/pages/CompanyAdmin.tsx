@@ -146,51 +146,55 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
         </div>
       )}
 
-      <div className="card" style={{ padding: 20, marginBottom: 16 }}>
-        <h2>{currentCompany.data?.name || "الشركة الحالية"}</h2>
-        <p className="muted">
-          {currentCompany.data
-            ? `الرمز: ${currentCompany.data.code} · ${currentCompany.data.max_warehouses_per_branch ? `الحد ${currentCompany.data.max_warehouses_per_branch} مخازن لكل فرع` : "عدد المخازن لكل فرع غير محدود"}`
-            : ""}
-        </p>
-        {isAdmin && (
-          <form onSubmit={saveSettings}>
-            <Field label="الحد الأقصى للمخازن في كل فرع" hint="اتركه فارغًا للسماح بعدد غير محدود">
-              <input
-                type="number"
-                min={1}
-                value={limit ?? String(currentCompany.data?.max_warehouses_per_branch ?? "")}
-                onChange={(e) => setLimit(e.target.value)}
-              />
-            </Field>
-            <button className="btn btn-primary" disabled={busy}>حفظ الإعدادات</button>
-          </form>
-        )}
-      </div>
+      {!platform && (
+        <>
+          <div className="card" style={{ padding: 20, marginBottom: 16 }}>
+            <h2>{currentCompany.data?.name || "الشركة الحالية"}</h2>
+            <p className="muted">
+              {currentCompany.data
+                ? `الرمز: ${currentCompany.data.code} · ${currentCompany.data.max_warehouses_per_branch ? `الحد ${currentCompany.data.max_warehouses_per_branch} مخازن لكل فرع` : "عدد المخازن لكل فرع غير محدود"}`
+                : ""}
+            </p>
+            {isAdmin && (
+              <form onSubmit={saveSettings}>
+                <Field label="الحد الأقصى للمخازن في كل فرع" hint="اتركه فارغًا للسماح بعدد غير محدود">
+                  <input
+                    type="number"
+                    min={1}
+                    value={limit ?? String(currentCompany.data?.max_warehouses_per_branch ?? "")}
+                    onChange={(e) => setLimit(e.target.value)}
+                  />
+                </Field>
+                <button className="btn btn-primary" disabled={busy}>حفظ الإعدادات</button>
+              </form>
+            )}
+          </div>
 
-      <div className="card table-wrap" style={{ marginBottom: 16 }}>
-        <h2 style={{ padding: 16 }}>الفروع</h2>
-        {branches.loading && !branches.data ? <Loading /> : branches.data?.length ? (
-          <table>
-            <thead><tr><th>الاسم</th><th>الرمز</th><th>الموقع</th><th>الحالة</th></tr></thead>
-            <tbody>{branches.data.map((branch) => (
-              <tr key={branch.id}>
-                <td>{branch.name}</td><td dir="ltr">{branch.code}</td><td>{branch.location || "—"}</td>
-                <td>{branch.is_active ? "نشط" : "معطّل"}</td>
-              </tr>
-            ))}</tbody>
-          </table>
-        ) : <Empty>لا توجد فروع بعد.</Empty>}
-      </div>
+          <div className="card table-wrap" style={{ marginBottom: 16 }}>
+            <h2 style={{ padding: 16 }}>الفروع</h2>
+            {branches.loading && !branches.data ? <Loading /> : branches.data?.length ? (
+              <table>
+                <thead><tr><th>الاسم</th><th>الرمز</th><th>الموقع</th><th>الحالة</th></tr></thead>
+                <tbody>{branches.data.map((branch) => (
+                  <tr key={branch.id}>
+                    <td>{branch.name}</td><td dir="ltr">{branch.code}</td><td>{branch.location || "—"}</td>
+                    <td>{branch.is_active ? "نشط" : "معطّل"}</td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            ) : <Empty>لا توجد فروع بعد.</Empty>}
+          </div>
 
-      <div className="card" style={{ padding: 20, marginBottom: 16 }}>
-        <h2>إضافة فرع</h2>
-        <form onSubmit={addBranch} className="form-grid">
-          <Field label="اسم الفرع"><input value={branchName} onChange={(e) => setBranchName(e.target.value)} required /></Field>
-          <Field label="رمز الفرع"><input dir="ltr" value={branchCode} onChange={(e) => setBranchCode(e.target.value)} required /></Field>
-          <button className="btn btn-primary" disabled={busy}>إضافة الفرع</button>
-        </form>
-      </div>
+          <div className="card" style={{ padding: 20, marginBottom: 16 }}>
+            <h2>إضافة فرع</h2>
+            <form onSubmit={addBranch} className="form-grid">
+              <Field label="اسم الفرع"><input value={branchName} onChange={(e) => setBranchName(e.target.value)} required /></Field>
+              <Field label="رمز الفرع"><input dir="ltr" value={branchCode} onChange={(e) => setBranchCode(e.target.value)} required /></Field>
+              <button className="btn btn-primary" disabled={busy}>إضافة الفرع</button>
+            </form>
+          </div>
+        </>
+      )}
 
       {platform && (
         <>
