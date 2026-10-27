@@ -524,8 +524,8 @@ export default function Transfers() {
           }}
         />
       )}
-      {view && <ViewTransfer t={view} onClose={() => setView(null)} onApprove={isManager ? approve : undefined} onReject={isManager ? reject : undefined} onEdit={isManager ? (t) => setEditing(t) : undefined} />}
-      {editing && <EditTransfer t={editing} onClose={() => setEditing(null)} onDone={() => { setEditing(null); list.reload(); setView(null); }} />}
+      {view && <ViewTransfer t={view} onClose={() => setView(null)} onApprove={isManager ? approve : undefined} onReject={isManager ? reject : undefined} onEdit={isManager ? (t) => { setView(null); setEditing(t); } : undefined} />}
+      {editing && <EditTransfer t={editing} onClose={() => setEditing(null)} onDone={() => { setEditing(null); list.reload(); }} />}
     </>
   );
 }
