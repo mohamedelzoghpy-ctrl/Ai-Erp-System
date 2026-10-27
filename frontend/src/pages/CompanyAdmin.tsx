@@ -160,8 +160,8 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
             <div className="form-grid">
               <Field label="اسم الشركة"><input value={companyName} onChange={(e) => setCompanyName(e.target.value)} required /></Field>
               <Field label="رمز الشركة"><input dir="ltr" value={companyCode} onChange={(e) => setCompanyCode(e.target.value)} required /></Field>
-              <Field label="الحد الأقصى للمخازن لكل فرع" hint="اتركه فارغًا لعدد غير محدود"><input type="number" min={1} value={companyWarehouseLimit} onChange={(e) => setCompanyWarehouseLimit(e.target.value)} /></Field>
-              <Field label="الحد الأقصى للخزائن لكل فرع" hint="اتركه فارغًا لعدد غير محدود"><input type="number" min={1} value={companySafeLimit} onChange={(e) => setCompanySafeLimit(e.target.value)} /></Field>
+              <Field label="الحد الأقصى للمخازن لكل فرع"><input type="number" min={1} value={companyWarehouseLimit} onChange={(e) => setCompanyWarehouseLimit(e.target.value)} /></Field>
+              <Field label="الحد الأقصى للخزائن لكل فرع"><input type="number" min={1} value={companySafeLimit} onChange={(e) => setCompanySafeLimit(e.target.value)} /></Field>
               <Field label="اسم مستخدم المدير الأول"><input dir="ltr" minLength={3} value={adminUsername} onChange={(e) => setAdminUsername(e.target.value)} required /></Field>
               <Field label="كلمة مرور المدير"><input type="password" minLength={8} value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)} required /></Field>
             </div>
@@ -181,7 +181,7 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
             </p>
             {isAdmin && (
               <form onSubmit={saveSettings}>
-                <Field label="الحد الأقصى للمخازن في كل فرع" hint="اتركه فارغًا للسماح بعدد غير محدود">
+                <Field label="الحد الأقصى للمخازن في كل فرع">
                   <input
                     type="number"
                     min={1}
@@ -342,7 +342,7 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
 
           <div className="card" style={{ padding: 20, marginBottom: 16 }}>
             <h2>5. حفظ الإعدادات (الشركة المختارة)</h2>
-            <p className="muted" style={{ marginTop: 0 }}>حد المخازن لكل فرع. اتركه فارغًا لعدد غير محدود.</p>
+            <p className="muted" style={{ marginTop: 0 }}>حد المخازن لكل فرع.</p>
             {selectedCompany ? (
               <form onSubmit={(e) => {
                 e.preventDefault();
@@ -388,8 +388,8 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
             });
           }} className="form-grid">
             <Field label="اسم الشركة"><input value={editName} onChange={(e) => setEditName(e.target.value)} required /></Field>
-            <Field label="الحد الأقصى للمخازن لكل فرع" hint="اتركه فارغًا لعدد غير محدود"><input type="number" min={1} value={editLimit} onChange={(e) => setEditLimit(e.target.value)} /></Field>
-            <Field label="الحد الأقصى للخزائن لكل فرع" hint="اتركه فارغًا لعدد غير محدود"><input type="number" min={1} value={editSafeLimit} onChange={(e) => setEditSafeLimit(e.target.value)} /></Field>
+            <Field label="الحد الأقصى للمخازن لكل فرع"><input type="number" min={1} value={editLimit} onChange={(e) => setEditLimit(e.target.value)} /></Field>
+            <Field label="الحد الأقصى للخزائن لكل فرع"><input type="number" min={1} value={editSafeLimit} onChange={(e) => setEditSafeLimit(e.target.value)} /></Field>
             <Field label="الحالة">
               <select value={editActive ? "1" : "0"} onChange={(e) => setEditActive(e.target.value === "1")}>
                 <option value="1">active</option>
