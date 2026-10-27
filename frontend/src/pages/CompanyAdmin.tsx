@@ -169,6 +169,21 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
         </div>
       )}
 
+          <div className="card table-wrap" style={{ marginBottom: 16 }}>
+            <h2 style={{ padding: 16 }}>الشركات المسجلة</h2>
+            {companies.loading && !companies.data ? <Loading /> : companies.data?.length ? (
+              <table>
+                <thead><tr><th>الشركة</th><th>الرمز</th><th>حد المخازن لكل فرع</th><th>الحالة</th></tr></thead>
+                <tbody>{companies.data.map((item) => (
+                  <tr key={item.id}>
+                    <td>{item.name}</td><td dir="ltr">{item.code}</td>
+                    <td>{item.max_warehouses_per_branch ?? "غير محدود"}</td><td>{item.is_active ? "active" : "inactive"} <button className="btn btn-sm" onClick={() => { setEditingCompany(item); setEditName(item.name); setEditLimit(item.max_warehouses_per_branch ? String(item.max_warehouses_per_branch) : ""); setEditSafeLimit(item.max_safes_per_branch ? String(item.max_safes_per_branch) : ""); setEditActive(item.is_active); setEditAdminName(""); setEditAdminPassword(""); void api.get<{ full_name: string | null }>(`/platform/companies/${item.id}/admin`).then((u) => setEditAdminName(u.full_name || "")).catch(() => {}); }}>تعديل</button></td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            ) : <Empty>لا توجد شركات.</Empty>}
+          </div>
+
       {!platform && (
         <>
           <div className="card" style={{ padding: 20, marginBottom: 16 }}>
@@ -231,20 +246,6 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
                 ))}</tbody>
               </table>
             ) : <Empty>لا توجد فروع مسجلة.</Empty>}
-          </div>
-          <div className="card table-wrap" style={{ marginBottom: 16 }}>
-            <h2 style={{ padding: 16 }}>الشركات المسجلة</h2>
-            {companies.loading && !companies.data ? <Loading /> : companies.data?.length ? (
-              <table>
-                <thead><tr><th>الشركة</th><th>الرمز</th><th>حد المخازن لكل فرع</th><th>الحالة</th></tr></thead>
-                <tbody>{companies.data.map((item) => (
-                  <tr key={item.id}>
-                    <td>{item.name}</td><td dir="ltr">{item.code}</td>
-                    <td>{item.max_warehouses_per_branch ?? "غير محدود"}</td><td>{item.is_active ? "active" : "inactive"} <button className="btn btn-sm" onClick={() => { setEditingCompany(item); setEditName(item.name); setEditLimit(item.max_warehouses_per_branch ? String(item.max_warehouses_per_branch) : ""); setEditSafeLimit(item.max_safes_per_branch ? String(item.max_safes_per_branch) : ""); setEditActive(item.is_active); setEditAdminName(""); setEditAdminPassword(""); void api.get<{ full_name: string | null }>(`/platform/companies/${item.id}/admin`).then((u) => setEditAdminName(u.full_name || "")).catch(() => {}); }}>تعديل</button></td>
-                  </tr>
-                ))}</tbody>
-              </table>
-            ) : <Empty>لا توجد شركات.</Empty>}
           </div>
           <div className="card" style={{ padding: 20, marginBottom: 16 }}>
             <h2>ربط المستخدمين بالشركات (تبديل شركة)</h2>
