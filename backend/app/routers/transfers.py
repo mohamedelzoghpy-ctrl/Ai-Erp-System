@@ -192,6 +192,97 @@ def delete_pending_transfer(transfer_id: int, db: Session = Depends(get_db), use
     db.commit()
 
 
+@router.put("/{transfer_id}/edit", response_model=schemas.TransferOut)
+def edit_transfer(transfer_id: int, payload: schemas.TransferCreate, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    from ..deps import user_role
+    if user_role(user) not in ("admin", "manager"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only a manager or admin can edit an approved transfer")
+    t = _get(db, transfer_id)
+    if t.status != "approved":
+        raise HTTPException(409, f"Only approved transfers can be edited (current: {t.status})")
+    if payload.from_warehouse_id == payload.to_warehouse_id:
+        raise HTTPException(422, "Source and destination warehouses must differ")
+    for wid in (payload.from_warehouse_id, payload.to_warehouse_id):
+        w = db.get(models.Warehouse, wid)
+        if w is None or not w.is_active:
+            raise HTTPException(422, f"Warehouse {wid} is invalid or inactive")
+    # merge new items
+    new_wanted = {}
+    for it in payload.items:
+        new_wanted[it.product_id] = new_wanted.get(it.product_id, 0) + it.quantity
+    # old items
+    old_wanted = {}
+    for i in t.items:
+        old_wanted[i.product_id] = old_wanted.get(i.product_id, 0) + i.quantity
+
+    # fetch products
+    all_pids = sorted(set(new_wanted) | set(old_wanted))
+    products = {}
+    for pid in all_pids:
+        p = db.query(models.Product).filter(models.Product.id == pid).with_for_update().one_or_none()
+        if p is None:
+            raise HTTPException(422, f"Product {pid} does not exist")
+        products[pid] = p
+
+    # validate stock for new items in NEW source warehouse
+    new_src = payload.from_warehouse_id
+    new_dst = payload.to_warehouse_id
+    old_src = t.from_warehouse_id
+    old_dst = t.to_warehouse_id
+    shortages = []
+    for pid, qty in new_wanted.items():
+        # available = current + what we'll get back from reversing old (if same warehouse)
+        base_avail = stock.available(db, pid, new_src)
+        if old_src == new_src:
+            base_avail += old_wanted.get(pid, 0)  # reversed back
+        if base_avail < qty:
+            shortages.append(stock.shortage_message(db, products[pid], new_src, qty))
+    if shortages:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Insufficient stock: " + "; ".join(shortages))
+
+    ref = f"TR-{t.id}"
+    # reverse old movement
+    for pid, qty in old_wanted.items():
+        stock.move_stock(db, products[pid], old_src, qty, "transfer_edit_revert", ref)
+        stock.move_stock(db, products[pid], old_dst, -qty, "transfer_edit_revert", ref)
+    # apply new movement
+    try:
+        for pid, qty in new_wanted.items():
+            stock.move_stock(db, products[pid], new_src, -qty, "transfer_edit", ref)
+            stock.move_stock(db, products[pid], new_dst, qty, "transfer_edit", ref)
+    except Exception:
+        # restore old
+        for pid, qty in new_wanted.items():
+            try:
+                stock.move_stock(db, products[pid], new_src, qty, "transfer_edit_revert", ref)
+                stock.move_stock(db, products[pid], new_dst, -qty, "transfer_edit_revert", ref)
+            except Exception:
+                pass
+        for pid, qty in old_wanted.items():
+            try:
+                stock.move_stock(db, products[pid], old_src, -qty, "transfer_edit", ref)
+                stock.move_stock(db, products[pid], old_dst, qty, "transfer_edit", ref)
+            except Exception:
+                pass
+        raise
+
+    # update transfer
+    t.from_warehouse_id = new_src
+    t.to_warehouse_id = new_dst
+    if payload.notes is not None:
+        t.notes = payload.notes
+    if payload.valuation:
+        t.valuation = payload.valuation
+    t.items.clear()
+    db.flush()
+    for pid, qty in new_wanted.items():
+        t.items.append(models.StockTransferItem(product_id=pid, quantity=qty))
+    audit(db, user, "update", "stock_transfer", t, f"edited after approval · {len(new_wanted)} صنف")
+    db.commit()
+    db.refresh(t)
+    return t
+
+
 @router.get("/{transfer_id}/pdf")
 def transfer_pdf(transfer_id: int, db: Session = Depends(get_db)):
     t = _get(db, transfer_id)

@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useState, useRef, type FormEvent } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api, getToken } from "../api";
 import { useAuth } from "../auth";
@@ -145,7 +145,7 @@ function NewTransfer({ onClose, onDone }: { onClose: () => void; onDone: (t: Sto
           <input value={notes} onChange={(e) => setNotes(e.target.value)} />
         </Field>
         <Field label="تقييم التحويل">
-          <select value={valuation} onChange={(e) => setValuation(e.target.value)} aria-label="تقييم التحويل">
+          <select value={valuation} onChange={(e) => setValuation(e.target.value as "cost" | "sale")} aria-label="تقييم التحويل">
             <option value="cost">سعر التكلفة</option>
             <option value="sale">سعر البيع</option>
           </select>
@@ -163,7 +163,127 @@ function NewTransfer({ onClose, onDone }: { onClose: () => void; onDone: (t: Sto
   );
 }
 
-function ViewTransfer({ t, onClose, onApprove, onReject }: { t: StockTransfer; onClose: () => void; onApprove?: (t: StockTransfer) => void; onReject?: (t: StockTransfer) => void }) {
+function EditTransfer({ t, onClose, onDone }: { t: StockTransfer; onClose: () => void; onDone: () => void }) {
+  const warehouses = useFetch(() => api.get<Warehouse[]>("warehouses?is_active=true&limit=500"), "edit-tr-wh");
+  const products = useFetch(() => api.get<Product[]>("products?limit=1000&is_active=true"), "edit-tr-prod");
+  const [from, setFrom] = useState(String(t.from_warehouse_id));
+  const [to, setTo] = useState(String(t.to_warehouse_id));
+  const [notes, setNotes] = useState(t.notes ?? "");
+  const [valuation, setValuation] = useState(t.valuation ?? "cost");
+  const [lines, setLines] = useState<Line[]>([]);
+  const [picked, setPicked] = useState<Product | null>(null);
+  const act = useAction();
+  const initialized = useRef(false);
+
+  // initialize lines once products load
+  if (products.data && !initialized.current) {
+    const byId = new Map(products.data.map((p) => [p.id, p]));
+    const init: Line[] = [];
+    for (const it of t.items) {
+      const p = byId.get(it.product_id);
+      if (p) init.push({ product: p, quantity: String(it.quantity) });
+    }
+    setLines(init);
+    initialized.current = true;
+  }
+
+  const valid =
+    !!from && !!to && from !== to && lines.length > 0 &&
+    lines.every((l) => Number.isInteger(Number(l.quantity)) && Number(l.quantity) > 0);
+
+  const addPicked = (p: Product | null) => {
+    setPicked(null);
+    if (!p) return;
+    setLines((ls) => (ls.some((l) => l.product.id === p.id) ? ls : [...ls, { product: p, quantity: "1" }]));
+  };
+  const changeFrom = (v: string) => { setFrom(v); setLines([]); };
+
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    void act.run(async () => {
+      await api.put(`/stock-transfers/${t.id}/edit`, {
+        from_warehouse_id: Number(from),
+        to_warehouse_id: Number(to),
+        notes: notes || null,
+        valuation,
+        items: lines.map((l) => ({ product_id: l.product.id, quantity: Number(l.quantity) })),
+      });
+      onDone();
+    });
+  };
+
+  return (
+    <Modal title={`تعديل تحويل TR-${t.id}`} onClose={onClose} wide>
+      <form onSubmit={submit}>
+        <Alert>{act.error || warehouses.error || products.error}</Alert>
+        {products.loading && !products.data ? <Loading /> : (
+          <>
+            <div className="grid-2">
+              <Field label="من مخزن">
+                <select value={from} onChange={(e) => changeFrom(e.target.value)} required>
+                  <option value="">— اختر —</option>
+                  {warehouses.data?.map((w) => (<option key={w.id} value={w.id}>{w.name}</option>))}
+                </select>
+              </Field>
+              <Field label="إلى مخزن">
+                <select value={to} onChange={(e) => setTo(e.target.value)} required>
+                  <option value="">— اختر —</option>
+                  {warehouses.data?.filter((w) => String(w.id) !== from).map((w) => (<option key={w.id} value={w.id}>{w.name}</option>))}
+                </select>
+              </Field>
+            </div>
+            <Field label="إضافة صنف">
+              <Lookup<Product>
+                key={`${from}-${lines.length}`}
+                path="/products"
+                params={{ is_active: true, ...(from ? { stock_warehouse_id: Number(from) } : {}) }}
+                value={picked}
+                onChange={addPicked}
+                label={(p) => `${p.name} (${p.sku}) — متاح ${num(p.warehouse_quantity ?? 0)}`}
+                text={(p) => p.name}
+                placeholder="ابحث عن صنف…"
+              />
+            </Field>
+            {lines.length > 0 && (
+              <div className="table-wrap">
+                <table>
+                  <thead><tr><th>الصنف</th><th className="num">الكمية</th><th /></tr></thead>
+                  <tbody>
+                    {lines.map((l) => (
+                      <tr key={l.product.id}>
+                        <td>{l.product.name} ({l.product.sku})</td>
+                        <td className="num">
+                          <input type="number" min="1" step="1" style={{ width: 90 }} value={l.quantity}
+                            onChange={(e) => setLines((ls) => ls.map((x) => x.product.id === l.product.id ? { ...x, quantity: e.target.value } : x))} />
+                        </td>
+                        <td className="actions">
+                          <button type="button" className="btn btn-sm btn-danger" onClick={() => setLines((ls) => ls.filter((x) => x.product.id !== l.product.id))}>حذف</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <Field label="ملاحظات"><input value={notes} onChange={(e) => setNotes(e.target.value)} /></Field>
+            <Field label="تقييم التحويل">
+              <select value={valuation} onChange={(e) => setValuation(e.target.value as "cost" | "sale")}>
+                <option value="cost">سعر التكلفة</option>
+                <option value="sale">سعر البيع</option>
+              </select>
+            </Field>
+            <div className="actions">
+              <button className="btn btn-primary" disabled={!valid || act.busy}>حفظ التعديلات</button>
+              <button type="button" className="btn" onClick={onClose}>إلغاء</button>
+            </div>
+          </>
+        )}
+      </form>
+    </Modal>
+  );
+}
+function ViewTransfer({ t, onClose, onApprove, onReject, onEdit }: { t: StockTransfer; onClose: () => void; onApprove?: (t: StockTransfer) => void; onReject?: (t: StockTransfer) => void; onEdit?: (t: StockTransfer) => void }) {
+
   const dl = useAction();
   return (
     <Modal title={`تحويل TR-${t.id}`} onClose={onClose}>
@@ -203,6 +323,11 @@ function ViewTransfer({ t, onClose, onApprove, onReject }: { t: StockTransfer; o
         {t.status === "pending" && onReject && (
           <button className="btn btn-danger" onClick={() => onReject(t)}>
             رفض
+          </button>
+        )}
+        {t.status === "approved" && onEdit && (
+          <button className="btn" onClick={() => onEdit(t)}>
+            تعديل
           </button>
         )}
         <button className="btn" disabled={dl.busy} onClick={() => void dl.run(() => api.download(`/stock-transfers/${t.id}/pdf`, `transfer-TR-${t.id}.pdf`))}>
@@ -254,6 +379,7 @@ export default function Transfers() {
   const list = usePagedList<StockTransfer>("/stock-transfers", { status: statusFilter || undefined });
   const [creating, setCreating] = useState(false);
   const [view, setView] = useState<StockTransfer | null>(null);
+  const [editing, setEditing] = useState<StockTransfer | null>(null);
   const act = useAction();
 
   const approve = (t: StockTransfer) => {
@@ -398,7 +524,8 @@ export default function Transfers() {
           }}
         />
       )}
-      {view && <ViewTransfer t={view} onClose={() => setView(null)} onApprove={isManager ? approve : undefined} onReject={isManager ? reject : undefined} />}
+      {view && <ViewTransfer t={view} onClose={() => setView(null)} onApprove={isManager ? approve : undefined} onReject={isManager ? reject : undefined} onEdit={isManager ? (t) => setEditing(t) : undefined} />}
+      {editing && <EditTransfer t={editing} onClose={() => setEditing(null)} onDone={() => { setEditing(null); list.reload(); setView(null); }} />}
     </>
   );
 }
