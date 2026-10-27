@@ -153,7 +153,7 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
 
       {platform && (
         <div className="card" style={{ padding: 20, marginBottom: 16 }}>
-          <h2>إضافة شركة ومديرها الأول</h2>
+          <h2>إضافة شركة</h2>
           <form onSubmit={addCompany}>
             <div className="form-grid">
               <Field label="اسم الشركة"><input value={companyName} onChange={(e) => setCompanyName(e.target.value)} required /></Field>
