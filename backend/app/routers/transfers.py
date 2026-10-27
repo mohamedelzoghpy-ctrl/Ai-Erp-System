@@ -39,6 +39,7 @@ def create_transfer(payload: schemas.TransferCreate, db: Session = Depends(get_d
     transfer = models.StockTransfer(
         from_warehouse_id=payload.from_warehouse_id, to_warehouse_id=payload.to_warehouse_id,
         notes=payload.notes, created_by=user.id, username=user.username, status="pending",
+        valuation=payload.valuation or "cost",
     )
     db.add(transfer)
     db.flush()  # the id is the movement reference
@@ -111,6 +112,8 @@ def approve_transfer(transfer_id: int, payload: Optional[schemas.TransferCreate]
             t.to_warehouse_id = payload.to_warehouse_id
         if payload.notes is not None:
             t.notes = payload.notes
+        if payload.valuation:
+            t.valuation = payload.valuation
         # replace items
         t.items.clear()
         db.flush()
@@ -192,10 +195,23 @@ def delete_pending_transfer(transfer_id: int, db: Session = Depends(get_db), use
 @router.get("/{transfer_id}/pdf")
 def transfer_pdf(transfer_id: int, db: Session = Depends(get_db)):
     t = _get(db, transfer_id)
+    # enrich items with product prices for valuation
+    pids = [i.product_id for i in t.items]
+    products = {p.id: p for p in db.query(models.Product).filter(models.Product.id.in_(pids)).all()} if pids else {}
+    use_sale = (t.valuation or "cost") == "sale"
+    total_value = 0.0
+    item_rows = []
+    for i in t.items:
+        p = products.get(i.product_id)
+        price = float(p.sale_price if (use_sale and p) else (p.cost_price if p else 0))
+        total_value += price * i.quantity
+        item_rows.append({"sku": i.sku, "name": i.product_name, "quantity": i.quantity, "price": price})
     content = exports.build_transfer_pdf(
         {
             "id": t.id, "date": t.created_at, "from": t.from_warehouse_name, "to": t.to_warehouse_name, "notes": t.notes, "user": t.username,
-            "items": [{"sku": i.sku, "name": i.product_name, "quantity": i.quantity} for i in t.items],
+            "valuation": t.valuation or "cost",
+            "total_value": total_value,
+            "items": item_rows,
         }
     )
     return Response(

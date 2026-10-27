@@ -610,6 +610,7 @@ class StockTransfer(TenantOwned, Base):
     from_warehouse_id = Column(Integer, ForeignKey("warehouses.id"), nullable=False, index=True)
     to_warehouse_id = Column(Integer, ForeignKey("warehouses.id"), nullable=False, index=True)
     notes = Column(Text, nullable=True)
+    valuation = Column(String(10), nullable=False, server_default="cost")  # cost / sale
     status = Column(String(20), nullable=False, server_default="pending", index=True)  # pending/approved/rejected
     created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     username = Column(String(60), nullable=True)

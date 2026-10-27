@@ -785,6 +785,7 @@ class TransferCreate(BaseModel):
     from_warehouse_id: int
     to_warehouse_id: int
     notes: Optional[str] = None
+    valuation: Optional[str] = "cost"  # cost / sale
     items: List[TransferItemIn] = Field(min_length=1, max_length=500)
 
 
@@ -803,6 +804,7 @@ class TransferOut(ORMModel):
     to_warehouse_name: Optional[str] = None
     notes: Optional[str] = None
     status: str = "pending"
+    valuation: str = "cost"
     username: Optional[str] = None
     approved_by: Optional[int] = None
     approved_at: Optional[datetime] = None

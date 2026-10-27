@@ -17,6 +17,7 @@ function NewTransfer({ onClose, onDone }: { onClose: () => void; onDone: (t: Sto
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [notes, setNotes] = useState("");
+  const [valuation, setValuation] = useState("cost");
   const [lines, setLines] = useState<Line[]>([]);
   const [picked, setPicked] = useState<Product | null>(null);
   const act = useAction();
@@ -47,6 +48,7 @@ function NewTransfer({ onClose, onDone }: { onClose: () => void; onDone: (t: Sto
         from_warehouse_id: Number(from),
         to_warehouse_id: Number(to),
         notes: notes || null,
+        valuation,
         items: lines.map((l) => ({ product_id: l.product.id, quantity: Number(l.quantity) })),
       });
       onDone(t);
@@ -142,6 +144,12 @@ function NewTransfer({ onClose, onDone }: { onClose: () => void; onDone: (t: Sto
         <Field label="ملاحظات">
           <input value={notes} onChange={(e) => setNotes(e.target.value)} />
         </Field>
+        <Field label="تقييم التحويل">
+          <select value={valuation} onChange={(e) => setValuation(e.target.value)} aria-label="تقييم التحويل">
+            <option value="cost">سعر التكلفة</option>
+            <option value="sale">سعر البيع</option>
+          </select>
+        </Field>
         <div className="actions">
           <button className="btn btn-primary" disabled={!valid || act.busy}>
             تنفيذ التحويل
@@ -163,6 +171,7 @@ function ViewTransfer({ t, onClose, onApprove, onReject }: { t: StockTransfer; o
       <p>
         من <b>{t.from_warehouse_name}</b> إلى <b>{t.to_warehouse_name}</b> · {dateTime(t.created_at)} · {t.username ?? "—"}
       </p>
+      <p className="muted">تقييم التحويل: {t.valuation === "sale" ? "سعر البيع" : "سعر التكلفة"}</p>
       <div className="table-wrap">
         <table>
           <thead>
