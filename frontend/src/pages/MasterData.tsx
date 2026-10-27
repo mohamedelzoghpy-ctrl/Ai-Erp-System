@@ -201,6 +201,7 @@ function WarehouseForm({ initial, branches, onClose, onSaved }: { initial: Wareh
 // ------------------------------------------------- Suppliers & customers
 function PartyScreen({ title, singular, path, kind }: { title: string; singular: string; path: string; kind: "customer" | "supplier" }) {
   const { isManager } = useAuth();
+  const { t } = useI18n();
   const [search, setSearch] = useState("");
   const list = usePagedList<Party>(path, { search: search.trim() });
   const action = useAction();
@@ -211,19 +212,19 @@ function PartyScreen({ title, singular, path, kind }: { title: string; singular:
   const rows = list.data ?? [];
 
   const columns: Column<Party>[] = [
-    { header: "الاسم", cell: (p) => p.name },
-    { header: "المسؤول", cell: (p) => p.contact_person || "—" },
-    { header: "الهاتف", cell: (p) => <span dir="ltr">{p.phone || "—"}</span> },
-    { header: "البريد", cell: (p) => <span dir="ltr">{p.email || "—"}</span> },
+    { header: t("common.name") ?? "الاسم", cell: (p) => p.name },
+    { header: t("party.contactPerson") ?? "المسؤول", cell: (p) => p.contact_person || "—" },
+    { header: t("party.phone") ?? "الهاتف", cell: (p) => <span dir="ltr">{p.phone || "—"}</span> },
+    { header: t("party.email") ?? "البريد", cell: (p) => <span dir="ltr">{p.email || "—"}</span> },
     {
-      header: "الرصيد",
+      header: t("party.balance") ?? "الرصيد",
       cell: (p) => (
         <span title={balanceNote(kind, p.balance)} style={Number(p.balance) > 0 ? { color: "var(--danger, #b42318)", fontWeight: 600 } : undefined}>
           {money(p.balance)}
         </span>
       ),
     },
-    { header: "الحالة", cell: (p) => <ActiveBadge active={p.is_active} /> },
+    { header: t("common.status") ?? "الحالة", cell: (p) => <ActiveBadge active={p.is_active} /> },
   ];
 
   const remove = (p: Party) => {
@@ -439,5 +440,11 @@ function PartyForm({
   );
 }
 
-export const Suppliers = () => <PartyScreen title="الموردون" singular="مورد" path="/suppliers" kind="supplier" />;
-export const Customers = () => <PartyScreen title="العملاء" singular="عميل" path="/customers" kind="customer" />;
+export const Suppliers = () => {
+  const { t } = useI18n();
+  return <PartyScreen title={t("suppliers.title")} singular={t("suppliers.singular")} path="/suppliers" kind="supplier" />;
+};
+export const Customers = () => {
+  const { t } = useI18n();
+  return <PartyScreen title={t("customers.title")} singular={t("customers.singular")} path="/customers" kind="customer" />;
+};
