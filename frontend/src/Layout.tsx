@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import { useAuth } from "./auth";
+import { useI18n } from "./i18n";
 import { ROLE_LABEL } from "./format";
 import { api } from "./api";
 import { useFetch } from "./hooks";
@@ -8,6 +9,7 @@ import type { Company } from "./types";
 
 export default function Layout() {
   const { user, logout, isManager, isPlatformAdmin } = useAuth();
+  const { t, lang, setLang } = useI18n();
   const company = useFetch(() => api.get<Company>("/company"), "current-company");
   const companies = useFetch(() => api.get<Company[]>("/auth/companies"), "my-companies");
   const link = ({ isActive }: { isActive: boolean }) => (isActive ? "active" : undefined);
@@ -39,51 +41,49 @@ export default function Layout() {
   return (
     <div className="app">
       <aside className="sidebar">
-        <div className="brand">نظام ERP</div>
+        <div className="brand">{t("app.name")}</div>
         <nav className="nav">
-          <NavLink to="/" end className={link}>
-            لوحة التحكم
-          </NavLink>
-          {section("inv", "المخزون", (
+          <NavLink to="/" end className={link}>{t("nav.dashboard")}</NavLink>
+          {section("inv", t("nav.inventory"), (
             <>
-              <NavLink to="/products" className={link}>المنتجات</NavLink>
-              <NavLink to="/warehouses" className={link}>المخازن</NavLink>
-              <NavLink to="/transfers" className={link}>التحويلات</NavLink>
-              <NavLink to="/stocktakes" className={link}>الجرد</NavLink>
+              <NavLink to="/products" className={link}>{t("nav.products")}</NavLink>
+              <NavLink to="/warehouses" className={link}>{t("nav.warehouses")}</NavLink>
+              <NavLink to="/transfers" className={link}>{t("nav.transfers")}</NavLink>
+              <NavLink to="/stocktakes" className={link}>{t("nav.stocktakes")}</NavLink>
             </>
           ))}
-          {section("pur", "المشتريات", (
+          {section("pur", t("nav.purchasing"), (
             <>
-              <NavLink to="/suppliers" className={link}>الموردون</NavLink>
-              <NavLink to="/purchase-orders" className={link}>أوامر الشراء</NavLink>
+              <NavLink to="/suppliers" className={link}>{t("nav.suppliers")}</NavLink>
+              <NavLink to="/purchase-orders" className={link}>{t("nav.purchaseOrders")}</NavLink>
             </>
           ))}
-          {section("sal", "المبيعات", (
+          {section("sal", t("nav.sales"), (
             <>
-              <NavLink to="/returns" className={link}>المرتجعات</NavLink>
-              <NavLink to="/pos" className={link}>نقطة البيع</NavLink>
-              <NavLink to="/customers" className={link}>العملاء</NavLink>
-              <NavLink to="/sales-orders" className={link}>أوامر البيع</NavLink>
-              <NavLink to="/shifts" className={link}>الورديات</NavLink>
+              <NavLink to="/returns" className={link}>{t("nav.returns")}</NavLink>
+              <NavLink to="/pos" className={link}>{t("nav.pos")}</NavLink>
+              <NavLink to="/customers" className={link}>{t("nav.customers")}</NavLink>
+              <NavLink to="/sales-orders" className={link}>{t("nav.salesOrders")}</NavLink>
+              <NavLink to="/shifts" className={link}>{t("nav.shifts")}</NavLink>
             </>
           ))}
-          {section("acc", "الحسابات", (
-            <NavLink to="/payments" className={link}>المقبوضات والمدفوعات</NavLink>
+          {section("acc", t("nav.accounts"), (
+            <NavLink to="/payments" className={link}>{t("nav.payments")}</NavLink>
           ))}
-          {isManager && section("rep", "التقارير", (
+          {isManager && !isPlatformAdmin && section("rep", t("nav.reports"), (
             <>
-              <NavLink to="/reports" className={link}>التقارير المفصلة</NavLink>
-              <NavLink to="/audit" className={link}>سجل النشاط</NavLink>
+              <NavLink to="/reports" className={link}>{t("nav.reportsDetailed")}</NavLink>
+              <NavLink to="/audit" className={link}>{t("nav.audit")}</NavLink>
             </>
           ))}
-          {isManager && !isPlatformAdmin && section("comp", "الشركة", (
+          {isManager && !isPlatformAdmin && section("comp", t("nav.company"), (
             <>
-              <NavLink to="/users" className={link}>الموظفون</NavLink>
-              <NavLink to="/company" className={link}>الفروع والإعدادات</NavLink>
+              <NavLink to="/users" className={link}>{t("nav.employees")}</NavLink>
+              <NavLink to="/company" className={link}>{t("nav.branchesSettings")}</NavLink>
             </>
           ))}
           {isPlatformAdmin && (
-            <NavLink to="/platform/companies" className={link}>إدارة الشركات</NavLink>
+            <NavLink to="/platform/companies" className={link}>{t("nav.companies")}</NavLink>
           )}
         </nav>
       </aside>
@@ -91,7 +91,7 @@ export default function Layout() {
         <header className="topbar">
           <span className="who">
             {company.data?.name ? `${company.data.name} · ` : ""}
-            {user?.full_name || user?.username} · {user ? ROLE_LABEL[user.role] : ""}
+            {user?.full_name || user?.username} · {user ? (lang === "ar" ? ROLE_LABEL[user.role] : (user.role === "admin" ? "Admin" : user.role === "manager" ? "Manager" : "Staff")) : ""}
           </span>
           {companies.data && companies.data.length > 1 && (
             <select
@@ -107,8 +107,11 @@ export default function Layout() {
               ))}
             </select>
           )}
+          <button className="btn btn-sm" onClick={() => setLang(lang === "ar" ? "en" : "ar")} style={{ marginInlineStart: 12 }}>
+            {lang === "ar" ? "EN" : "AR"}
+          </button>
           <button className="btn btn-sm" onClick={logout}>
-            تسجيل الخروج
+            {t("auth.logout")}
           </button>
         </header>
         <main className="content">
