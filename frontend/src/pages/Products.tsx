@@ -62,6 +62,7 @@ export default function Products() {
             <tr>
               <td>${p.sku}</td>
               <td>${p.name}</td>
+              <td>${nameOf(suppliers.data, p.supplier_id) ?? ""}</td>
               <td>${nameOf(warehouses.data, p.warehouse_id) ?? ""}</td>
               <td>${money(p.cost_price)}</td>
               <td>${money(p.sale_price)}</td>
@@ -85,11 +86,11 @@ export default function Products() {
             <h1>قائمة المنتجات</h1>
             <table>
               <thead><tr>
-                <th>الكود</th><th>الاسم</th><th>المخزن</th><th>التكلفة</th><th>سعر البيع</th><th>الكمية</th><th>إجمالي القيمة بالبيع</th><th>إجمالي القيمة بالتكلفة</th>
+                <th>الكود</th><th>الاسم</th><th>المورد</th><th>المخزن</th><th>التكلفة</th><th>سعر البيع</th><th>الكمية</th><th>إجمالي القيمة بالبيع</th><th>إجمالي القيمة بالتكلفة</th>
               </tr></thead>
               <tbody>${rowsHtml}</tbody>
               <tfoot><tr>
-                <td colspan="5" style="text-align:end;font-weight:bold;">الإجمالي</td>
+                <td colspan="6" style="text-align:end;font-weight:bold;">الإجمالي</td>
                 <td class="num">${num(totalQty)}</td>
                 <td class="num">${money(totalSale)}</td>
                 <td class="num">${money(totalCost)}</td>
@@ -121,6 +122,7 @@ export default function Products() {
               <tr>
                 <th>الكود</th>
                 <th>الاسم</th>
+                <th>المورد</th>
                 <th>المخزن</th>
                 <th className="num">التكلفة</th>
                 <th className="num">سعر البيع</th>
@@ -140,6 +142,7 @@ export default function Products() {
                       {p.name}
                       {!p.is_active && <span className="badge badge-off" style={{ marginInlineStart: 8 }}>معطّل</span>}
                     </td>
+                    <td>{nameOf(suppliers.data, p.supplier_id)}</td>
                     <td>{nameOf(warehouses.data, p.warehouse_id)}</td>
                     <td className="num">{money(p.cost_price)}</td>
                     <td className="num">{money(p.sale_price)}</td>
@@ -170,7 +173,7 @@ export default function Products() {
             </tbody>
             <tfoot>
               <tr style={{ fontWeight: 600 }}>
-                <td colSpan={5} style={{ textAlign: "end" }}>الإجمالي</td>
+                <td colSpan={6} style={{ textAlign: "end" }}>الإجمالي</td>
                 <td className="num">
                   {num(rows.reduce((s, p) => s + Number(p.quantity), 0))}
                 </td>
