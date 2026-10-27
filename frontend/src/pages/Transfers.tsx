@@ -206,6 +206,8 @@ function ViewTransfer({ t, onClose, onApprove, onReject }: { t: StockTransfer; o
 export default function Transfers() {
   const { isManager } = useAuth();
   const [statusFilter, setStatusFilter] = useState("");
+  const pending = useFetch(() => (isManager ? api.get<{ count: number }>("/stock-transfers/pending-count") : Promise.resolve({ count: 0 })), "pending-transfers");
+  const pendingCount = pending.data?.count ?? 0;
   const list = usePagedList<StockTransfer>("/stock-transfers", { status: statusFilter || undefined });
   const [creating, setCreating] = useState(false);
   const [view, setView] = useState<StockTransfer | null>(null);
@@ -247,6 +249,33 @@ export default function Transfers() {
   return (
     <>
       <PageHeader title="التحويلات المخزنية">
+        {isManager && (
+          <a
+            className="btn"
+            href="/transfers?status=pending"
+            style={{ position: "relative", textDecoration: "none" }}
+            title="تحويلات قيد الانتظار"
+          >
+            🔔
+            {(pendingCount ?? 0) > 0 && (
+              <span
+                style={{
+                  position: "absolute",
+                  top: -6,
+                  insetInlineEnd: -6,
+                  background: "var(--danger, #dc2626)",
+                  color: "#fff",
+                  borderRadius: 999,
+                  fontSize: 11,
+                  padding: "1px 5px",
+                  lineHeight: 1,
+                }}
+              >
+                {pendingCount}
+              </span>
+            )}
+          </a>
+        )}
         <button className="btn btn-primary" onClick={() => setCreating(true)}>
           تحويل جديد
         </button>
