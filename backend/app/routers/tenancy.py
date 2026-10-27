@@ -272,7 +272,15 @@ def platform_create_warehouse(company_id: int, payload: schemas.WarehouseCreate,
         count = db.query(models.Warehouse).filter(models.Warehouse.branch_id == branch_id).count()
         if count >= company.max_warehouses_per_branch:
             raise HTTPException(status.HTTP_409_CONFLICT, f"Branch warehouse limit reached ({company.max_warehouses_per_branch})")
-    wh = models.Warehouse(company_id=company_id, branch_id=branch_id, name=payload.name.strip(), code=payload.code.strip(), location=payload.location, is_active=payload.is_active)
+    code = (payload.code or "").strip()
+    if not code:
+        # Auto-generate a unique code per company.
+        count = db.query(models.Warehouse).filter(models.Warehouse.company_id == company_id).count()
+        code = f"WH-{count + 1:03d}"
+        while db.query(models.Warehouse).filter(models.Warehouse.company_id == company_id, models.Warehouse.code == code).first():
+            count += 1
+            code = f"WH-{count + 1:03d}"
+    wh = models.Warehouse(company_id=company_id, branch_id=branch_id, name=payload.name.strip(), code=code, location=payload.location, is_active=payload.is_active)
     db.add(wh)
     try:
         db.commit()

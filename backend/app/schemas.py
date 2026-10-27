@@ -20,6 +20,7 @@ class WarehouseBase(BaseModel):
 
 
 class WarehouseCreate(WarehouseBase):
+    code: Optional[str] = None
     branch_id: Optional[int] = None
 
 

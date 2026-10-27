@@ -79,7 +79,7 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
     e.preventDefault();
     if (!selectedCompany) return;
     void run(async () => {
-      await api.post(`/platform/companies/${selectedCompany}/warehouses`, { name: newWhName.trim(), code: newWhCode.trim(), branch_id: newWhBranch, location: newWhLocation.trim() || null });
+      await api.post(`/platform/companies/${selectedCompany}/warehouses`, { name: newWhName.trim(), code: newWhCode.trim() || null, branch_id: newWhBranch, location: newWhLocation.trim() || null });
       setNewWhName(""); setNewWhCode(""); setNewWhBranch(null); setNewWhLocation("");
       selectCompany(selectedCompany);
     });
@@ -258,7 +258,7 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
                  ) : <Empty>لا توجد مخازن.</Empty>}
                  <form onSubmit={addSelWarehouse} className="form-grid">
                    <Field label="اسم المخزن"><input value={newWhName} onChange={(e) => setNewWhName(e.target.value)} required /></Field>
-                   <Field label="كود المخزن"><input dir="ltr" value={newWhCode} onChange={(e) => setNewWhCode(e.target.value)} required /></Field>
+                   <Field label="كود المخزن" hint="اتركه فارغاً للتوليد التلقائي"><input dir="ltr" value={newWhCode} onChange={(e) => setNewWhCode(e.target.value)} /></Field>
                    <Field label="الفرع">
                      <select value={newWhBranch ?? ""} onChange={(e) => setNewWhBranch(Number(e.target.value) || null)}>
                        <option value="">— اختر فرع —</option>
