@@ -227,6 +227,53 @@ def update_platform_company(company_id: int, payload: schemas.CompanyUpdate, db:
     db.refresh(company)
     audit(db, actor, "update", "company", company, f"{company.code}")
     return company
+
+@platform.get("/companies/{company_id}/admin", response_model=schemas.UserOut)
+def get_platform_company_admin(company_id: int, db: Session = Depends(get_db), _: models.User = Depends(require_platform_admin)):
+    membership = (
+        db.query(models.UserCompanyMembership)
+        .filter(models.UserCompanyMembership.company_id == company_id, models.UserCompanyMembership.role == "admin")
+        .order_by(models.UserCompanyMembership.id)
+        .first()
+    )
+    if membership is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No admin user for this company")
+    user = db.get(models.User, membership.user_id)
+    if user is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Admin user not found")
+    return user
+
+@platform.patch("/companies/{company_id}/admin", response_model=schemas.UserOut)
+def update_platform_company_admin(company_id: int, payload: schemas.UserUpdate, db: Session = Depends(get_db), actor: models.User = Depends(require_platform_admin)):
+    company = db.get(models.Company, company_id)
+    if company is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Company not found")
+    membership = (
+        db.query(models.UserCompanyMembership)
+        .filter(models.UserCompanyMembership.company_id == company_id, models.UserCompanyMembership.role == "admin")
+        .order_by(models.UserCompanyMembership.id)
+        .first()
+    )
+    if membership is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No admin user for this company")
+    user = db.get(models.User, membership.user_id)
+    if user is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Admin user not found")
+    data = payload.model_dump(exclude_unset=True)
+    if "password" in data and data["password"]:
+        user.hashed_password = hash_password(data.pop("password"))  # type: ignore
+    if "role" in data and data["role"] is not None:
+        membership.role = data["role"]
+    for key, value in data.items():
+        if value is not None:
+            setattr(user, key, value)
+    db.commit()
+    db.refresh(user)
+    audit(db, actor, "update", "user", user, f"{user.username}")
+    return user
+
+
+@platform.get("/companies/{company_id}/branches", response_model=List[schemas.BranchOut])
 def platform_list_branches(company_id: int, db: Session = Depends(get_db), _: models.User = Depends(require_platform_admin)):
     company = db.get(models.Company, company_id)
     if company is None:

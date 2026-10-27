@@ -26,6 +26,8 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
   const [editName, setEditName] = useState("");
   const [editLimit, setEditLimit] = useState("");
   const [editActive, setEditActive] = useState(true);
+  const [editAdminName, setEditAdminName] = useState("");
+  const [editAdminPassword, setEditAdminPassword] = useState("");
   const [memberUsername, setMemberUsername] = useState("");
   const [memberRole, setMemberRole] = useState("staff");
   const [members, setMembers] = useState<{ user_id: number; username: string; full_name: string | null; role: string }[]>([]);
@@ -237,7 +239,7 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
                 <tbody>{companies.data.map((item) => (
                   <tr key={item.id}>
                     <td>{item.name}</td><td dir="ltr">{item.code}</td>
-                    <td>{item.max_warehouses_per_branch ?? "غير محدود"}</td><td>{item.is_active ? "active" : "inactive"} <button className="btn btn-sm" onClick={() => { setEditingCompany(item); setEditName(item.name); setEditLimit(item.max_warehouses_per_branch ? String(item.max_warehouses_per_branch) : ""); setEditActive(item.is_active); }}>تعديل</button></td>
+                    <td>{item.max_warehouses_per_branch ?? "غير محدود"}</td><td>{item.is_active ? "active" : "inactive"} <button className="btn btn-sm" onClick={() => { setEditingCompany(item); setEditName(item.name); setEditLimit(item.max_warehouses_per_branch ? String(item.max_warehouses_per_branch) : ""); setEditActive(item.is_active); setEditAdminName(""); setEditAdminPassword(""); void api.get<{ full_name: string | null }>(`/platform/companies/${item.id}/admin`).then((u) => setEditAdminName(u.full_name || "")).catch(() => {}); }}>تعديل</button></td>
                   </tr>
                 ))}</tbody>
               </table>
@@ -372,6 +374,12 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
                 max_warehouses_per_branch: editLimit.trim() ? Number(editLimit) : null,
                 is_active: editActive,
               });
+              const adminPayload: Record<string, unknown> = {};
+              if (editAdminName.trim()) adminPayload.full_name = editAdminName.trim();
+              if (editAdminPassword.trim()) adminPayload.password = editAdminPassword.trim();
+              if (Object.keys(adminPayload).length) {
+                await api.patch(`/platform/companies/${editingCompany.id}/admin`, adminPayload);
+              }
               setEditingCompany(null);
               companies.reload();
             });
@@ -384,6 +392,8 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
                 <option value="0">inactive</option>
               </select>
             </Field>
+            <Field label="اسم المدير (الاسم الكامل)"><input value={editAdminName} onChange={(e) => setEditAdminName(e.target.value)} /></Field>
+            <Field label="كلمة مرور المدير (جديدة)" hint="اتركها فارغًا للإبقاء على الحالية"><input type="password" minLength={8} value={editAdminPassword} onChange={(e) => setEditAdminPassword(e.target.value)} /></Field>
             <button className="btn btn-primary" disabled={busy}>حفظ</button>
           </form>
         </Modal>
