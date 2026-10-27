@@ -283,10 +283,10 @@ function EditTransfer({ t, onClose, onDone }: { t: StockTransfer; onClose: () =>
   );
 }
 function ViewTransfer({ t, onClose, onApprove, onReject, onEdit }: { t: StockTransfer; onClose: () => void; onApprove?: (t: StockTransfer) => void; onReject?: (t: StockTransfer) => void; onEdit?: (t: StockTransfer) => void }) {
-
   const dl = useAction();
+
   return (
-    <Modal title={`تحويل TR-${t.id}`} onClose={onClose}>
+    <Modal title={`تحويل TR-${t.id}`} onClose={onClose} wide>
       <Alert>{dl.error}</Alert>
       <p>
         من <b>{t.from_warehouse_name}</b> إلى <b>{t.to_warehouse_name}</b> · {dateTime(t.created_at)} · {t.username ?? "—"}
