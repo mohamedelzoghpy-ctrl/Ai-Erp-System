@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { api } from "../api";
 import { useAuth } from "../auth";
+import { useI18n } from "../i18n";
 import { METHOD_LABEL, money, num } from "../format";
 import { useAction, useFetch } from "../hooks";
 import type { Party, PaymentMethod, Product, Warehouse } from "../types";
@@ -32,6 +33,7 @@ function remembered(): string {
 
 export default function Pos() {
   const { isManager } = useAuth();
+  const { t } = useI18n();
   const warehouses = useFetch(() => api.get<Warehouse[]>("/warehouses?is_active=true&limit=500"), "pos-wh");
   const [warehouse, setWarehouse] = useState(remembered());
   const [cart, setCart] = useState<CartLine[]>([]);
@@ -85,7 +87,7 @@ export default function Pos() {
       if (exact.length === 1 || r.length === 1) add(exact[0] ?? r[0]);
       else {
         setHits(r);
-        setNotice(r.length === 0 ? "لا يوجد منتج مطابق" : null);
+        setNotice(r.length === 0 ? t("pos.noProduct") : null);
       }
     });
   };
@@ -236,16 +238,16 @@ export default function Pos() {
 
         <div className="card card-pad">
           <div className="kpi" style={{ marginBottom: 12 }}>
-            <div className="label">الإجمالي المستحق</div>
+            <div className="label">{t("pos.totalDue")}</div>
             <div className="value" aria-live="polite">
               {money(total)}
             </div>
           </div>
-          <Field label="العميل" hint="اتركه فارغاً للبيع النقدي (عميل نقدي)، أو اختر عميلاً للبيع بالآجل/الدفع الجزئي">
+          <Field label={t("pos.customer")} hint={t("pos.customerHint")}>
             <Lookup<Party> path="/customers" params={{ is_active: true }} value={customer} onChange={(c) => { setCustomer(c); setPaidInput(""); }} label={(p) => p.name} placeholder="ابحث عن عميل…" />
           </Field>
           <div className="form-grid">
-            <Field label="طريقة الدفع">
+            <Field label={t("pos.paymentMethod")}>
               <select value={method} onChange={(e) => setMethod(e.target.value as PaymentMethod)}>
                 {(Object.keys(METHOD_LABEL) as PaymentMethod[]).map((m) => (
                   <option key={m} value={m}>
@@ -255,55 +257,55 @@ export default function Pos() {
               </select>
             </Field>
             {customer ? (
-              <Field label="المبلغ المدفوع الآن" hint={`المتبقي على العميل: ${money(Math.max(total - paid, 0))}`}>
+              <Field label={t("pos.amountPaid")} hint={`${t("pos.balanceDue")}: ${money(Math.max(total - paid, 0))}`}>
                 <input dir="ltr" type="number" min="0" step="0.01" value={paidInput} placeholder={String(total)} onChange={(e) => setPaidInput(e.target.value)} />
               </Field>
             ) : (
-              <Field label="المبلغ المستلم من العميل" hint={change !== null ? (change >= 0 ? `الباقي للعميل: ${money(change)}` : `ناقص ${money(-change)}`) : "اختياري، لحساب الباقي"}>
+              <Field label={t("pos.amountReceived")} hint={change !== null ? (change >= 0 ? `${t("pos.change")}: ${money(change)}` : `${t("pos.short")} ${money(-change)}`) : "اختياري، لحساب الباقي"}>
                 <input dir="ltr" type="number" min="0" step="0.01" value={tendered} onChange={(e) => setTendered(e.target.value)} />
               </Field>
             )}
           </div>
           <button className="btn btn-primary" style={{ width: "100%", padding: 14, fontSize: 18 }} disabled={!canPay || sale.busy || (change !== null && change < 0)} onClick={pay}>
-            {sale.busy ? "جارٍ الإتمام…" : `إتمام البيع — ${money(paid)}`}
+            {sale.busy ? "جارٍ الإتمام…" : `${t("pos.pay")} — ${money(paid)}`}
           </button>
           {cart.length > 0 && (
             <button className="btn" style={{ width: "100%", marginTop: 8 }} onClick={reset}>
-              إلغاء العملية
+              {t("pos.cancel")}
             </button>
           )}
         </div>
       </div>
 
       {receipt && (
-        <Modal title={`تم البيع — فاتورة SO-${receipt.order_id}`} onClose={reset}>
+        <Modal title={`${t("pos.receiptTitle")} SO-${receipt.order_id}`} onClose={reset}>
           <Alert>{dl.error}</Alert>
           <p>
-            العميل: <b>{receipt.customer_name}</b>
+            {t("pos.customerLabel")}: <b>{receipt.customer_name}</b>
             <br />
-            الإجمالي: <b>{money(receipt.total)}</b> · المدفوع: <b>{money(receipt.paid)}</b>
+            {t("pos.total")}: <b>{money(receipt.total)}</b> · {t("pos.paid")}: <b>{money(receipt.paid)}</b>
             {Number(receipt.balance_due) > 0 && (
               <>
                 {" "}
-                · المتبقي على العميل: <b>{money(receipt.balance_due)}</b>
+                · {t("pos.balanceDueLabel")}: <b>{money(receipt.balance_due)}</b>
               </>
             )}
             {change !== null && change >= 0 && tendered !== "" && (
               <>
                 <br />
-                الباقي للعميل: <b>{money(change)}</b>
+                {t("pos.changeLabel")}: <b>{money(change)}</b>
               </>
             )}
           </p>
           <div className="form-actions">
             <button className="btn btn-primary" autoFocus onClick={reset}>
-              عملية جديدة
+              {t("pos.newSale")}
             </button>
             <button className="btn" disabled={dl.busy} onClick={() => void dl.run(() => api.download(`/sales-orders/${receipt.order_id}/pdf`, `invoice-SO-${receipt.order_id}.pdf`))}>
-              ⬇ الفاتورة PDF
+              {t("pos.invoicePdf")}
             </button>
             <button className="btn" disabled={dl.busy} onClick={() => void dl.run(() => api.download(`/sales-orders/${receipt.order_id}/receipt`, `receipt-SO-${receipt.order_id}.pdf`))}>
-              ⬇ إيصال حراري 80mm
+              {t("pos.receipt80")}
             </button>
           </div>
         </Modal>
