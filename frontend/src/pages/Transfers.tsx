@@ -370,7 +370,7 @@ function ViewTransfer({ t, onClose, onApprove, onReject, onEdit }: { t: StockTra
 
 export default function Transfers() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const { isManager } = useAuth();
+  const { isManager, user } = useAuth();
   const [statusFilter, setStatusFilter] = useState(searchParams.get("status") ?? "");
   // keep URL in sync when filter changes
   // (simple: update on change)
@@ -489,6 +489,11 @@ export default function Transfers() {
                     <button className="btn btn-sm" onClick={() => setView(t)}>
                       عرض
                     </button>
+                    {t.status === "pending" && (isManager || t.username === user?.username) && (
+                      <button className="btn btn-sm btn-danger" disabled={act.busy} onClick={() => remove(t)}>
+                        حذف
+                      </button>
+                    )}
                     {isManager && t.status === "pending" && (
                       <>
                         <button className="btn btn-sm btn-primary" disabled={act.busy} onClick={() => approve(t)}>
