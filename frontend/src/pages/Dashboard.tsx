@@ -4,7 +4,7 @@ import { useAuth } from "../auth";
 import { dayLabel, money, num } from "../format";
 import { Link } from "react-router-dom";
 import { useFetch } from "../hooks";
-import type { Dashboard as DashboardData, InventoryValuationRow, LowStockItem, ProfitSummary, SalesSummary } from "../types";
+import type { Dashboard as DashboardData, InventoryValuationRow, LowStockItem, SalesSummary } from "../types";
 import { Alert, Empty, Loading, PageHeader } from "../ui";
 
 function Kpi({ label, value, sub, warn }: { label: string; value: string; sub?: string; warn?: boolean }) {
@@ -28,10 +28,6 @@ export default function Dashboard() {
     () => (isManager ? api.get<InventoryValuationRow[]>("/reports/inventory-valuation") : Promise.resolve(null)),
     `v${isManager}`,
   );
-  const profit = useFetch(
-    () => (isManager ? api.get<ProfitSummary>("/reports/profit") : Promise.resolve(null)),
-    `profit${isManager}`,
-  );
   const low = useFetch(() => api.get<LowStockItem[]>("/reports/low-stock"), "low");
 
   const d = dash.data;
@@ -50,7 +46,7 @@ export default function Dashboard() {
         )}
       </PageHeader>
 
-      <Alert>{dash.error || sales.error || valuation.error || profit.error || low.error}</Alert>
+      <Alert>{dash.error || sales.error || valuation.error || low.error}</Alert>
       {isManager && d && (d.stale_shifts ?? 0) > 0 && (
         <Alert kind="info">
           يوجد {num(d.stale_shifts)} وردية مفتوحة منذ وقت طويل. <Link to="/shifts">راجع الورديات وأغلقها</Link>
@@ -66,7 +62,7 @@ export default function Dashboard() {
               <Kpi label={`المبيعات (آخر ${d.period_days} يوماً)`} value={money(d.sales_total)} sub={`${num(d.sales_orders_confirmed)} أمر مؤكد`} />
               <Kpi label={`المشتريات (آخر ${d.period_days} يوماً)`} value={money(d.purchases_total)} sub={`${num(d.purchase_orders_received)} أمر مستلم`} />
               <Kpi label="قيمة المخزون (بالتكلفة)" value={money(d.inventory_cost_value)} sub={`بسعر البيع: ${money(d.inventory_sale_value)}`} />
-              <Kpi label="تقدير الربحية" value={money(profit.data?.profit ?? "0")} sub={profit.data?.margin_pct ? `Margin: ${profit.data.margin_pct}%` : undefined} />
+              <Kpi label="تقدير الربحية" value={money(Number(d.inventory_sale_value) - Number(d.inventory_cost_value))} sub={`Margin: ${d.inventory_cost_value && Number(d.inventory_cost_value) > 0 ? (((Number(d.inventory_sale_value) - Number(d.inventory_cost_value)) / Number(d.inventory_cost_value)) * 100).toFixed(1) : 0}%`} />
               <Kpi label="منتجات active" value={num(d.products)} sub={`${num(d.warehouses)} مخزن · ${num(d.suppliers)} مورد · ${num(d.customers)} عميل`} />
               <Kpi label="المرتجعات" value={money(d.sales_returns_total)} sub={`مرتجع مشتريات: ${money(d.purchase_returns_total)}`} />
               <Kpi label="مستحقات على العملاء" value={money(d.receivables_total)} sub="إجمالي الذمم المدينة" warn={Number(d.receivables_total) > 0} />
