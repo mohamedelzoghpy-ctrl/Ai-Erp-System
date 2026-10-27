@@ -46,7 +46,7 @@ export default function Products() {
           ⬇ export excel
         </a>
         <label className="btn" style={{ cursor: "pointer" }}>
-          ⬆ استيراد Excel
+          ⬆ import excel
           <input type="file" accept=".xlsx,.xls" style={{ display: "none" }} onChange={(e) => {
             const f = e.target.files?.[0];
             if (!f) return;
