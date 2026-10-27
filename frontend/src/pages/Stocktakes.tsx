@@ -242,7 +242,7 @@ function DetailDialog({ id, onClose, onChanged }: { id: number; onClose: () => v
                   </body></html>`);
                 w.document.close();
               }}>
-                🖨 طباعة
+                🖨 print
               </button>
             </div>
           </>

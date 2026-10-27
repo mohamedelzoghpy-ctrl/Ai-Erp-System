@@ -363,7 +363,7 @@ function ViewTransfer({ t, onClose, onApprove, onReject, onEdit }: { t: StockTra
             }, 60_000);
           };
         })}>
-          🖨 طباعة
+          🖨 print
         </button>
       </div>
     </Modal>

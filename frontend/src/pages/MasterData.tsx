@@ -268,7 +268,7 @@ function PartyScreen({ title, singular, path, kind }: { title: string; singular:
               </body></html>`);
             w.document.close();
           }}>
-            🖨 طباعة
+            🖨 print
           </button>
         )}
         <button className="btn btn-primary" onClick={() => setEditing("new")}>
