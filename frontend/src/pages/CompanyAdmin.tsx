@@ -55,7 +55,7 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
   const addBranch = (e: FormEvent) => {
     e.preventDefault();
     void run(async () => {
-      await api.post("/company/branches", { name: branchName.trim(), code: branchCode.trim() });
+      await api.post("/company/branches", { name: branchName.trim(), ...(branchCode.trim() ? { code: branchCode.trim() } : {}) });
       setBranchName("");
       setBranchCode("");
       branches.reload();
@@ -73,7 +73,7 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
     e.preventDefault();
     if (!selectedCompany) return;
     void run(async () => {
-      await api.post(`/platform/companies/${selectedCompany}/branches`, { name: newBranchName.trim(), code: newBranchCode.trim() });
+      await api.post(`/platform/companies/${selectedCompany}/branches`, { name: newBranchName.trim(), ...(newBranchCode.trim() ? { code: newBranchCode.trim() } : {}) });
       setNewBranchName(""); setNewBranchCode("");
       selectCompany(selectedCompany);
     });
@@ -193,7 +193,7 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
             <h2>إضافة فرع</h2>
             <form onSubmit={addBranch} className="form-grid">
               <Field label="اسم الفرع"><input value={branchName} onChange={(e) => setBranchName(e.target.value)} required /></Field>
-              <Field label="رمز الفرع"><input dir="ltr" value={branchCode} onChange={(e) => setBranchCode(e.target.value)} required /></Field>
+              <Field label="رمز الفرع" hint="اتركه فارغًا للتوليد التلقائي"><input dir="ltr" value={branchCode} onChange={(e) => setBranchCode(e.target.value)} /></Field>
               <button className="btn btn-primary" disabled={busy}>إضافة الفرع</button>
             </form>
           </div>
@@ -245,7 +245,7 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
                  ) : <Empty>لا توجد فروع.</Empty>}
                  <form onSubmit={addSelBranch} className="form-grid" style={{ marginBottom: 16 }}>
                    <Field label="اسم الفرع"><input value={newBranchName} onChange={(e) => setNewBranchName(e.target.value)} required /></Field>
-                   <Field label="رمز الفرع"><input dir="ltr" value={newBranchCode} onChange={(e) => setNewBranchCode(e.target.value)} required /></Field>
+                   <Field label="رمز الفرع" hint="اتركه فارغًا للتوليد التلقائي"><input dir="ltr" value={newBranchCode} onChange={(e) => setNewBranchCode(e.target.value)} /></Field>
                    <button className="btn btn-primary" disabled={busy}>إضافة فرع</button>
                  </form>
 

@@ -239,7 +239,16 @@ def platform_create_branch(company_id: int, payload: schemas.BranchCreate, db: S
     company = db.get(models.Company, company_id)
     if company is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Company not found")
-    branch = models.Branch(company_id=company_id, name=payload.name.strip(), code=payload.code.strip(), location=payload.location)  # type: ignore
+    raw_code = (payload.code or "").strip()
+    if not raw_code:
+        base = payload.name.strip().lower().replace(" ", "-")[:30] or "branch"
+        code = base
+        i = 2
+        while db.query(models.Branch).filter(models.Branch.company_id == company_id, models.Branch.code == code).first():
+            code = f"{base}-{i}"; i += 1
+    else:
+        code = raw_code
+    branch = models.Branch(company_id=company_id, name=payload.name.strip(), code=code, location=payload.location)  # type: ignore
     db.add(branch)
     try:
         db.commit()
@@ -337,10 +346,20 @@ def create_branch(
     db: Session = Depends(get_db),
     user: models.User = Depends(require_manager),
 ):
+    raw_code = (payload.code or "").strip()
+    if not raw_code:
+        base = payload.name.strip().lower().replace(" ", "-")[:30] or "branch"
+        code = base
+        i = 2
+        company_id = db.info["company_id"]  # type: ignore
+        while db.query(models.Branch).filter(models.Branch.company_id == company_id, models.Branch.code == code).first():
+            code = f"{base}-{i}"; i += 1
+    else:
+        code = raw_code.lower()
     branch = models.Branch(
         company_id=db.info["company_id"],  # type: ignore
         name=payload.name.strip(),  # type: ignore
-        code=payload.code.strip().lower(),  # type: ignore
+        code=code,  # type: ignore
         location=payload.location,  # type: ignore
     )
     db.add(branch)

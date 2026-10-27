@@ -325,7 +325,7 @@ class CompanyMembershipCreate(BaseModel):
 
 class BranchCreate(BaseModel):
     name: str = Field(min_length=1, max_length=150)
-    code: str = Field(min_length=1, max_length=50)
+    code: Optional[str] = Field(default=None, min_length=1, max_length=50)
     location: Optional[str] = None
 
 
