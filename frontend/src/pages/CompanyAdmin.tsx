@@ -209,10 +209,8 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
           </div>
 
           <div className="card table-wrap" style={{ marginBottom: 16 }}>
-            <h2 style={{ padding: 16 }}>الفروع</h2>
             {branches.loading && !branches.data ? <Loading /> : branches.data?.length ? (
               <table>
-                <thead><tr><th>الاسم</th><th>الرمز</th><th>الموقع</th><th>الحالة</th></tr></thead>
                 <tbody>{branches.data.map((branch) => (
                   <tr key={branch.id}>
                     <td>{branch.name}</td><td dir="ltr">{branch.code}</td><td>{branch.location || "—"}</td>
@@ -250,11 +248,9 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
             {selectedCompany && (
               <>
 
-                 <h3 style={{ marginTop: 16 }}>الفروع</h3>
                  {selBranches.length > 0 ? (
                    <div className="table-wrap" style={{ marginBottom: 12 }}>
                      <table>
-                       <thead><tr><th>الاسم</th><th>الرمز</th><th>الموقع</th><th>الحالة</th></tr></thead>
                        <tbody>{selBranches.map((b) => (
                          <tr key={b.id}><td>{b.name}</td><td dir="ltr">{b.code}</td><td>{b.location || "—"}</td><td>{b.is_active ? "active" : "inactive"}</td></tr>
                        ))}</tbody>
