@@ -19,7 +19,6 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
   const [companyName, setCompanyName] = useState("");
   const [companyCode, setCompanyCode] = useState("");
   const [adminUsername, setAdminUsername] = useState("");
-  const [adminName, setAdminName] = useState("");
   const [adminPassword, setAdminPassword] = useState("");
   const [selectedCompany, setSelectedCompany] = useState<number | null>(null);
   const [editingCompany, setEditingCompany] = useState<Company | null>(null);
@@ -133,13 +132,12 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
         code: companyCode.trim(),
         max_warehouses_per_branch: companyWarehouseLimit ? Number(companyWarehouseLimit) : null,
         admin_username: adminUsername.trim(),
-        admin_full_name: adminName.trim() || null,
+        admin_full_name: adminUsername.trim() || null,
         admin_password: adminPassword,
       });
       setCompanyName("");
       setCompanyCode("");
       setAdminUsername("");
-      setAdminName("");
       setAdminPassword("");
       setCompanyWarehouseLimit("");
       companies.reload();
@@ -160,7 +158,6 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
               <Field label="رمز الشركة"><input dir="ltr" value={companyCode} onChange={(e) => setCompanyCode(e.target.value)} required /></Field>
               <Field label="الحد الأقصى للمخازن لكل فرع" hint="اتركه فارغًا لعدد غير محدود"><input type="number" min={1} value={companyWarehouseLimit} onChange={(e) => setCompanyWarehouseLimit(e.target.value)} /></Field>
               <Field label="اسم مستخدم المدير الأول"><input dir="ltr" minLength={3} value={adminUsername} onChange={(e) => setAdminUsername(e.target.value)} required /></Field>
-              <Field label="اسم المدير"><input value={adminName} onChange={(e) => setAdminName(e.target.value)} /></Field>
               <Field label="كلمة مرور المدير"><input type="password" minLength={8} value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)} required /></Field>
             </div>
             <button className="btn btn-primary" disabled={busy}>إنشاء الشركة</button>
