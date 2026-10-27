@@ -112,7 +112,7 @@ export function StatementDialog({ kind, partyId, partyName, onClose }: { kind: P
   const base = `/${pathOf(kind)}/${partyId}/statement`;
   const data = useFetch(() => (valid ? api.get<Statement>(`${base}${q}`) : Promise.resolve(null)), `st-${kind}-${partyId}${q}${valid}`);
   const s = data.data;
-  const chargeLabel = kind === "customer" ? "مبيعات (عليه)" : "مشتريات (له)";
+  const chargeLabel = kind === "customer" ? "مدين" : "مشتريات (له)";
   const payLabel = kind === "customer" ? "مقبوضات" : "مدفوعات";
 
   return (
