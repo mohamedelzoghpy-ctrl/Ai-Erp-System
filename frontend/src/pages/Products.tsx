@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { api, getToken } from "../api";
 import { useAuth } from "../auth";
+import { useI18n } from "../i18n";
 import { dateTime, money, num, REASON_LABEL } from "../format";
 import { useAction, useFetch, usePagedList } from "../hooks";
 import type { Party, Product, StockMovement, ProductStockRow, Warehouse } from "../types";
@@ -8,6 +9,7 @@ import { Alert, Empty, Field, Loading, Modal, nameOf, PageHeader, Pager } from "
 
 export default function Products() {
   const { isManager } = useAuth();
+  const { t } = useI18n();
   const [search, setSearch] = useState("");
   const [lowOnly, setLowOnly] = useState(false);
   const [showInactive, setShowInactive] = useState(false);
@@ -21,7 +23,7 @@ export default function Products() {
   const action = useAction();
 
   const remove = (p: Product) => {
-    if (!confirm(`حذف المنتج "${p.name}"؟`)) return;
+    if (!confirm(`${t("common.delete")} "${p.name}"؟`)) return;
     void action.run(async () => {
       await api.del(`/products/${p.id}`);
       products.reload();
@@ -32,9 +34,9 @@ export default function Products() {
 
   return (
     <>
-      <PageHeader title="المنتجات">
+      <PageHeader title={t("products.title")}>
         <button className="btn btn-primary" onClick={() => setEditing("new")}>
-          + منتج جديد
+          {t("products.new")}
         </button>
         <a
           className="btn"
@@ -106,12 +108,12 @@ export default function Products() {
       </PageHeader>
 
       <div className="toolbar page-actions" style={{ marginBottom: 14 }}>
-        <input placeholder="بحث بالاسم أو الكود…" value={search} onChange={(e) => setSearch(e.target.value)} />
+        <input placeholder={t("products.search")} value={search} onChange={(e) => setSearch(e.target.value)} />
         <label className="check">
-          <input type="checkbox" checked={lowOnly} onChange={(e) => setLowOnly(e.target.checked)} /> تحت حد إعادة الطلب فقط
+          <input type="checkbox" checked={lowOnly} onChange={(e) => setLowOnly(e.target.checked)} /> {t("products.lowStock")}
         </label>
         <label className="check">
-          <input type="checkbox" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)} /> إظهار المعطّلين
+          <input type="checkbox" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)} /> {t("products.showInactive")}
         </label>
       </div>
 
@@ -124,15 +126,15 @@ export default function Products() {
           <table>
             <thead>
               <tr>
-                <th>الكود</th>
-                <th>الاسم</th>
-                <th>المورد</th>
-                <th>المخزن</th>
-                <th className="num">التكلفة</th>
-                <th className="num">سعر البيع</th>
-                <th className="num">الكمية</th>
-                <th className="num">إجمالي القيمة بالبيع</th>
-                <th className="num">إجمالي القيمة بالتكلفة</th>
+                <th>{t("products.sku")}</th>
+                <th>{t("products.name")}</th>
+                <th>{t("products.supplier")}</th>
+                <th>{t("products.warehouseCol")}</th>
+                <th className="num">{t("products.cost")}</th>
+                <th className="num">{t("products.salePrice")}</th>
+                <th className="num">{t("products.qty")}</th>
+                <th className="num">{t("products.totalSaleValue")}</th>
+                <th className="num">{t("products.totalCostValue")}</th>
                 <th />
               </tr>
             </thead>
@@ -177,7 +179,7 @@ export default function Products() {
             </tbody>
             <tfoot>
               <tr style={{ fontWeight: 600 }}>
-                <td colSpan={6} style={{ textAlign: "end" }}>الإجمالي</td>
+                <td colSpan={6} style={{ textAlign: "end" }}>{t("common.total")}</td>
                 <td className="num">
                   {num(rows.reduce((s, p) => s + Number(p.quantity), 0))}
                 </td>
@@ -193,7 +195,7 @@ export default function Products() {
 
           </table>
         ) : (
-          <Empty>{search || lowOnly ? "لا نتائج مطابقة" : "لا توجد منتجات بعد. أضف منتجاً للبدء."}</Empty>
+          <Empty>{search || lowOnly ? t("products.noResults") : t("products.empty")}</Empty>
         )}
         <Pager list={products} />
       </div>
