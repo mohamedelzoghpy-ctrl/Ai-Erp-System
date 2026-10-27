@@ -56,6 +56,52 @@ export default function Products() {
             e.target.value = "";
           }} />
         </label>
+        <button className="btn" onClick={() => {
+          const w = window.open("", "_blank");
+          if (!w) return;
+          const rowsHtml = rows.map((p) => `
+            <tr>
+              <td>${p.sku}</td>
+              <td>${p.name}</td>
+              <td>${nameOf(warehouses.data, p.warehouse_id) ?? ""}</td>
+              <td>${money(p.cost_price)}</td>
+              <td>${money(p.sale_price)}</td>
+              <td>${num(p.quantity)} ${p.unit}</td>
+              <td>${money(Number(p.quantity) * Number(p.sale_price))}</td>
+              <td>${money(Number(p.quantity) * Number(p.cost_price))}</td>
+            </tr>`).join("");
+          const totalQty = rows.reduce((s, p) => s + Number(p.quantity), 0);
+          const totalSale = rows.reduce((s, p) => s + Number(p.quantity) * Number(p.sale_price), 0);
+          const totalCost = rows.reduce((s, p) => s + Number(p.quantity) * Number(p.cost_price), 0);
+          w.document.write(`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>قائمة المنتجات</title>
+            <style>
+              body { font-family: Tahoma, Arial, sans-serif; padding: 16px; }
+              h1 { text-align: center; }
+              table { width: 100%; border-collapse: collapse; }
+              th, td { border: 1px solid #999; padding: 6px 8px; text-align: center; }
+              th { background: #eee; }
+              tfoot td { font-weight: bold; background: #f3f4f6; }
+              .num { text-align: center; }
+            </style></head><body>
+            <h1>قائمة المنتجات</h1>
+            <table>
+              <thead><tr>
+                <th>الكود</th><th>الاسم</th><th>المخزن</th><th>التكلفة</th><th>سعر البيع</th><th>الكمية</th><th>إجمالي القيمة بالبيع</th><th>إجمالي القيمة بالتكلفة</th>
+              </tr></thead>
+              <tbody>${rowsHtml}</tbody>
+              <tfoot><tr>
+                <td colspan="5" style="text-align:end;font-weight:bold;">الإجمالي</td>
+                <td class="num">${num(totalQty)}</td>
+                <td class="num">${money(totalSale)}</td>
+                <td class="num">${money(totalCost)}</td>
+              </tr></tfoot>
+            </table>
+            <script>window.onload = () => { window.print(); };</script>
+            </body></html>`);
+          w.document.close();
+        }}>
+          🖨 طباعة
+        </button>
       </PageHeader>
 
       <div className="toolbar page-actions" style={{ marginBottom: 14 }}>
