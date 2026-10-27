@@ -58,6 +58,12 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
     })();
     return () => { cancelled = true; };
   }, [platform, companies.data]);
+  useEffect(() => {
+    if (platform && currentCompany.data?.id && selectedCompany === null) {
+      selectCompany(currentCompany.data.id);
+    }
+  }, [platform, currentCompany.data]);
+
   const { busy, error, run } = useAction();
 
   const saveSettings = (e: FormEvent) => {
@@ -234,18 +240,7 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
 
       {platform && (
         <>
-          <div className="card" style={{ padding: 20, marginBottom: 16 }}>
-            <div className="form-grid" style={{ marginBottom: 12 }}>
-              <Field label="الشركة">
-                <select value={selectedCompany ?? ""} onChange={(e) => { const v = Number(e.target.value); if (v) selectCompany(v); }}>
-                  <option value="">— اختر —</option>
-                  {companies.data?.map((c) => (
-                    <option key={c.id} value={c.id}>{c.name} ({c.code})</option>
-                  ))}
-                </select>
-              </Field>
-            </div>
-            {selectedCompany && (
+          {selectedCompany && (
               <>
 
                  {selBranches.length > 0 ? (
@@ -333,7 +328,6 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
                 </form>
               </>
             )}
-          </div>
 
           <div className="card" style={{ padding: 20, marginBottom: 16 }}>
             <h2>5. حفظ الإعدادات (الشركة المختارة)</h2>
