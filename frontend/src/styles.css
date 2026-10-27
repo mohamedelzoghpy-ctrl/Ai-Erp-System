@@ -87,7 +87,8 @@ input[type="checkbox"] { width: auto; }
 /* ---------- cards & tables ---------- */
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
 .card-pad { padding: 16px 18px; }
-.card h3 { font-size: 15px; margin-bottom: 10px; }
+.card h3 { font-size: 15px; margin-top: 16px; margin-bottom: 10px; padding-top: 12px; border-top: 1px solid #e5e9f0; }
+.card h3:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
 .kpis { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 14px; margin-bottom: 18px; }
 .kpi { padding: 14px 16px; }
 .kpi .label { color: var(--muted); font-size: 13px; }
