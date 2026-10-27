@@ -284,7 +284,7 @@ export default function Stocktakes() {
               <h1>قائمة عمليات الجرد</h1>
               <table>
                 <thead><tr>
-                  <th>number</th><th>date</th><th>المخزن</th><th>الحالة</th><th>المعدود</th><th>فروقات</th>
+                  <th>number</th><th>date</th><th>warehouse</th><th>الحالة</th><th>المعدود</th><th>فروقات</th>
                 </tr></thead>
                 <tbody>${rowsHtml}</tbody>
               </table>
@@ -309,7 +309,7 @@ export default function Stocktakes() {
               <tr>
                 <th>number</th>
                 <th>date</th>
-                <th>المخزن</th>
+                <th>warehouse</th>
                 <th>الحالة</th>
                 <th className="num">المعدود</th>
                 <th className="num">فروقات</th>
