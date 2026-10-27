@@ -257,6 +257,31 @@ class SalesOrderItem(TenantOwned, Base):
         return self.product.name if self.product else None
 
 
+class Safe(TenantOwned, Base):
+    __tablename__ = "safes"
+    __table_args__ = (UniqueConstraint("company_id", "code", name="uq_safe_company_code"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(150), nullable=False)
+    code = Column(String(50), nullable=False, index=True)
+    balance = Column(Numeric(14, 2), nullable=False, default=0, server_default="0")
+    is_active = Column(Boolean, nullable=False, default=True, server_default="true")
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class Bank(TenantOwned, Base):
+    __tablename__ = "banks"
+    __table_args__ = (UniqueConstraint("company_id", "code", name="uq_bank_company_code"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(150), nullable=False)
+    code = Column(String(50), nullable=False, index=True)
+    account_number = Column(String(60), nullable=True)
+    balance = Column(Numeric(14, 2), nullable=False, default=0, server_default="0")
+    is_active = Column(Boolean, nullable=False, default=True, server_default="true")
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
 class StockMovement(TenantOwned, Base):
     """Audit trail of every quantity change on a product."""
 
@@ -347,6 +372,8 @@ class Payment(TenantOwned, Base):
     id = Column(Integer, primary_key=True, index=True)
     customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
     supplier_id = Column(Integer, ForeignKey("suppliers.id"), nullable=True, index=True)
+    safe_id = Column(Integer, ForeignKey("safes.id"), nullable=True, index=True)
+    bank_id = Column(Integer, ForeignKey("banks.id"), nullable=True, index=True)
     amount = Column(Numeric(14, 2), nullable=False)
     method = Column(String(20), nullable=False, default="cash", server_default="cash")  # cash | bank | wallet | cheque
     reference = Column(String(100), nullable=True)

@@ -56,6 +56,8 @@ def create_payment(
     p = models.Payment(
         customer_id=payload.customer_id,
         supplier_id=payload.supplier_id,
+        safe_id=payload.safe_id,
+        bank_id=payload.bank_id,
         amount=payload.amount,
         method=payload.method,
         reference=(payload.reference or "").strip() or None,
@@ -64,6 +66,18 @@ def create_payment(
         created_by=user.id,
     )
     db.add(p)
+    # Update safe/bank balance: receipt (customer) increases, payment (supplier) decreases.
+    delta = payload.amount if payload.customer_id is not None else -payload.amount
+    if payload.safe_id is not None:
+        safe = db.get(models.Safe, payload.safe_id)
+        if safe is None or safe.company_id != db.info["company_id"]:
+            raise HTTPException(422, "Safe not found")
+        safe.balance = (safe.balance or 0) + delta
+    if payload.bank_id is not None:
+        bank = db.get(models.Bank, payload.bank_id)
+        if bank is None or bank.company_id != db.info["company_id"]:
+            raise HTTPException(422, "Bank not found")
+        bank.balance = (bank.balance or 0) + delta
     audit(db, user, "create", "payment", p, f"{'قبض' if p.customer_id else 'دفع'} {p.amount}")
     db.commit()
     db.refresh(p)
@@ -115,6 +129,16 @@ def void_payment(payment_id: int, db: Session = Depends(get_db), user: models.Us
     p.status = "voided"
     p.voided_by = user.id
     p.voided_at = datetime.now(timezone.utc)
+    # Reverse safe/bank balance.
+    delta = p.amount if p.customer_id is not None else -p.amount
+    if p.safe_id is not None:
+        safe = db.get(models.Safe, p.safe_id)
+        if safe is not None:
+            safe.balance = (safe.balance or 0) - delta
+    if p.bank_id is not None:
+        bank = db.get(models.Bank, p.bank_id)
+        if bank is not None:
+            bank.balance = (bank.balance or 0) - delta
     audit(db, user, "void", "payment", p, f"{p.amount}")
     db.commit()
     db.refresh(p)

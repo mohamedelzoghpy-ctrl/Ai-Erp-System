@@ -36,6 +36,40 @@ class WarehouseOut(WarehouseBase, ORMModel):
     created_at: datetime
 
 
+# ---------- Safes & Banks ----------
+class SafeBase(BaseModel):
+    name: str = Field(min_length=1, max_length=150)
+    code: str = Field(min_length=1, max_length=50)
+    is_active: bool = True
+
+
+class SafeCreate(SafeBase):
+    opening_balance: Decimal = Field(default=Decimal("0"))
+
+
+class SafeOut(SafeBase, ORMModel):
+    id: int
+    balance: Decimal
+    created_at: datetime
+
+
+class BankBase(BaseModel):
+    name: str = Field(min_length=1, max_length=150)
+    code: str = Field(min_length=1, max_length=50)
+    account_number: Optional[str] = None
+    is_active: bool = True
+
+
+class BankCreate(BankBase):
+    opening_balance: Decimal = Field(default=Decimal("0"))
+
+
+class BankOut(BankBase, ORMModel):
+    id: int
+    balance: Decimal
+    created_at: datetime
+
+
 # ---------- Suppliers / Customers (same shape) ----------
 class PartyBase(BaseModel):
     name: str = Field(min_length=1, max_length=150)
@@ -464,6 +498,8 @@ PaymentMethod = Literal["cash", "bank", "wallet", "cheque"]
 class PaymentCreate(BaseModel):
     customer_id: Optional[int] = None  # money received from this customer
     supplier_id: Optional[int] = None  # money paid to this supplier
+    safe_id: Optional[int] = None  # optional safe (cash box) to debit/credit
+    bank_id: Optional[int] = None  # optional bank account to debit/credit
     amount: Decimal = Field(gt=0, max_digits=14, decimal_places=2)
     method: PaymentMethod = "cash"
     reference: Optional[str] = Field(default=None, max_length=100)
@@ -482,6 +518,8 @@ class PaymentOut(ORMModel):
     kind: Literal["receipt", "payment"]
     customer_id: Optional[int]
     supplier_id: Optional[int]
+    safe_id: Optional[int] = None
+    bank_id: Optional[int] = None
     party_name: Optional[str] = None
     amount: Decimal
     method: str

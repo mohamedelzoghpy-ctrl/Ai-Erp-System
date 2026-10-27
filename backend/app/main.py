@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from . import models  # noqa: F401  (importing registers the tables on Base.metadata)
 from .database import Base, engine, get_db
 from .deps import get_current_user
-from .routers import audit as audit_router, auth, pos, returns, shifts, stocktakes, transfers, masterdata, orders, payments, products, reports, tenancy
+from .routers import audit as audit_router, auth, pos, returns, shifts, stocktakes, transfers, masterdata, orders, payments, products, reports, tenancy, safes_banks
 
 
 @asynccontextmanager
@@ -74,6 +74,8 @@ app.include_router(audit_router.router, dependencies=_protected)
 app.include_router(payments.payments, dependencies=_protected)
 app.include_router(payments.customer_accounts, dependencies=_protected)
 app.include_router(payments.supplier_accounts, dependencies=_protected)
+app.include_router(safes_banks.safes, dependencies=_protected)
+app.include_router(safes_banks.banks, dependencies=_protected)
 app.include_router(reports.router)  # protected per endpoint (financial reports need manager/admin)
 
 
