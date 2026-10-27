@@ -236,17 +236,6 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
 
       {platform && (
         <>
-          <div className="card table-wrap" style={{ marginBottom: 16 }}>
-            <h2 style={{ padding: 16 }}>الفروع المسجلة</h2>
-            {allBranches.length ? (
-              <table>
-                <thead><tr><th>الشركة</th><th>الاسم</th><th>الرمز</th><th>الموقع</th><th>الحالة</th></tr></thead>
-                <tbody>{allBranches.map((b) => (
-                  <tr key={`${b.company}-${b.id}`}><td>{b.company}</td><td>{b.name}</td><td dir="ltr">{b.code}</td><td>{b.location || "—"}</td><td>{b.is_active ? "active" : "inactive"}</td></tr>
-                ))}</tbody>
-              </table>
-            ) : <Empty>لا توجد فروع مسجلة.</Empty>}
-          </div>
           <div className="card" style={{ padding: 20, marginBottom: 16 }}>
             <div className="form-grid" style={{ marginBottom: 12 }}>
               <Field label="الشركة">
@@ -277,6 +266,18 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
                    <Field label="رمز الفرع" hint="اتركه فارغًا للتوليد التلقائي"><input dir="ltr" value={newBranchCode} onChange={(e) => setNewBranchCode(e.target.value)} /></Field>
                    <button className="btn btn-primary" disabled={busy}>إضافة فرع</button>
                  </form>
+
+                 <div className="card table-wrap" style={{ marginBottom: 16 }}>
+                   <h2 style={{ padding: 16 }}>الفروع المسجلة</h2>
+                   {allBranches.length ? (
+                     <table>
+                       <thead><tr><th>الشركة</th><th>الاسم</th><th>الرمز</th><th>الموقع</th><th>الحالة</th></tr></thead>
+                       <tbody>{allBranches.map((b) => (
+                         <tr key={`${b.company}-${b.id}`}><td>{b.company}</td><td>{b.name}</td><td dir="ltr">{b.code}</td><td>{b.location || "—"}</td><td>{b.is_active ? "active" : "inactive"}</td></tr>
+                       ))}</tbody>
+                     </table>
+                   ) : <Empty>لا توجد فروع مسجلة.</Empty>}
+                 </div>
 
                  <h3>المخازن</h3>
                  {selWarehouses.length > 0 ? (
