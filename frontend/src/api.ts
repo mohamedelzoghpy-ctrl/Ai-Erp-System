@@ -124,7 +124,7 @@ export const api = {
     const items = await request<T[]>("GET", path, undefined, undefined, (h) => (total = Number(h.get("X-Total-Count") ?? 0)));
     return { items, total: total || items.length };
   },
-  post: <T>(path: string, body?: unknown) => request<T>("POST", path, body ?? {}),
+  post: <T>(path: string, body?: unknown) => request<T>("POST", path, body),
   patch: <T>(path: string, body: unknown) => request<T>("PATCH", path, body),
   put: <T>(path: string, body: unknown) => request<T>("PUT", path, body),
   del: (path: string) => request<void>("DELETE", path),
