@@ -329,7 +329,7 @@ export default function Stocktakes() {
                   <td className="num">{num(s.lines_with_difference)}</td>
                   <td className="actions">
                     <button className="btn btn-sm" onClick={() => setViewId(s.id)}>
-                      فتح
+                      open
                     </button>
                   </td>
                 </tr>
