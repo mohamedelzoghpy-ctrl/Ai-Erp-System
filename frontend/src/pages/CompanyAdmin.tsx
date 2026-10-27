@@ -185,11 +185,11 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
             <h2 style={{ padding: 16 }}>الشركات المسجلة</h2>
             {companies.loading && !companies.data ? <Loading /> : companies.data?.length ? (
               <table>
-                <thead><tr><th>الشركة</th><th>اسم مستخدم المدير الأول</th><th>حد المخازن لكل فرع</th><th>الحالة</th></tr></thead>
+                <thead><tr><th>الشركة</th><th>اسم مستخدم المدير الأول</th><th>حد المخازن لكل فرع</th><th>حد الخزائن لكل فرع</th><th>الحالة</th></tr></thead>
                 <tbody>{companies.data.map((item) => (
                   <tr key={item.id}>
                     <td>{item.name}</td><td dir="ltr">{companyAdmins[item.id] || "—"}</td>
-                    <td>{item.max_warehouses_per_branch ?? "غير محدود"}</td><td>{item.is_active ? "active" : "inactive"} <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: item.is_active ? "#22c55e" : "#ef4444", marginInlineEnd: 6, verticalAlign: "middle" }} /> <button className="btn btn-sm" style={{ marginInlineStart: 8 }} onClick={() => { setEditingCompany(item); setEditName(item.name); setEditLimit(item.max_warehouses_per_branch ? String(item.max_warehouses_per_branch) : ""); setEditSafeLimit(item.max_safes_per_branch ? String(item.max_safes_per_branch) : ""); setEditActive(item.is_active); setEditAdminName(""); setEditAdminPassword(""); void api.get<{ full_name: string | null }>(`/platform/companies/${item.id}/admin`).then((u) => setEditAdminName(u.full_name || "")).catch(() => {}); }}>تعديل</button></td>
+                    <td>{item.max_warehouses_per_branch ?? "غير محدود"}</td><td>{item.max_safes_per_branch ?? "غير محدود"}</td><td>{item.is_active ? "active" : "inactive"} <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: item.is_active ? "#22c55e" : "#ef4444", marginInlineEnd: 6, verticalAlign: "middle" }} /> <button className="btn btn-sm" style={{ marginInlineStart: 8 }} onClick={() => { setEditingCompany(item); setEditName(item.name); setEditLimit(item.max_warehouses_per_branch ? String(item.max_warehouses_per_branch) : ""); setEditSafeLimit(item.max_safes_per_branch ? String(item.max_safes_per_branch) : ""); setEditActive(item.is_active); setEditAdminName(""); setEditAdminPassword(""); void api.get<{ full_name: string | null }>(`/platform/companies/${item.id}/admin`).then((u) => setEditAdminName(u.full_name || "")).catch(() => {}); }}>تعديل</button></td>
                   </tr>
                 ))}</tbody>
               </table>
