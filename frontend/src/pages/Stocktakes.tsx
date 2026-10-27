@@ -88,7 +88,7 @@ function DetailDialog({ id, onClose, onChanged }: { id: number; onClose: () => v
         s && (
           <>
             <p className="muted">
-              {STATUS[s.status]} · أنشأه {s.username ?? "—"} · {dateTime(s.created_at)} · تم عدّ {num(s.lines_counted)} من {num(s.lines_total)} · فروقات: {num(s.lines_with_difference)}
+              {STATUS[s.status]} · أنشأه {s.username ?? "—"} · {dateTime(s.created_at)} · تم عدّ {num(s.lines_counted)} من {num(s.lines_total)} · variances: {num(s.lines_with_difference)}
             </p>
             <div className="table-wrap" style={{ maxHeight: "50vh", overflow: "auto" }}>
               <table>
@@ -158,7 +158,7 @@ function DetailDialog({ id, onClose, onChanged }: { id: number; onClose: () => v
             )}
             {confirmApply && (
               <Alert kind="info">
-                سيتم edit كميات {num(s.lines_with_difference)} صنف بحسب الفروقات، ولا يمكن التراجع. هل تؤكد الاعتماد؟{" "}
+                سيتم edit كميات {num(s.lines_with_difference)} صنف بحسب variances، ولا يمكن التراجع. هل تؤكد الاعتماد؟{" "}
                 <button className="btn btn-sm btn-primary" disabled={act.busy} onClick={() => void call("apply")}>
                   نعم، اعتمد
                 </button>{" "}
@@ -175,7 +175,7 @@ function DetailDialog({ id, onClose, onChanged }: { id: number; onClose: () => v
               )}
               {open && isManager && (
                 <button className="btn" disabled={act.busy || dirty || s.lines_counted === 0} title={dirty ? "احفظ الكميات أولاً" : undefined} onClick={() => setConfirmApply(true)}>
-                  اعتماد الفروقات
+                  اعتماد variances
                 </button>
               )}
               {s.status === "applied" && isManager && !editing && (
@@ -231,7 +231,7 @@ function DetailDialog({ id, onClose, onChanged }: { id: number; onClose: () => v
                     th { background: #eee; }
                   </style></head><body>
                   <h1>جرد #${id} — ${s.warehouse_name ?? "كل المخازن"}</h1>
-                  <p style="text-align:center;">${STATUS[s.status]} · ${dateTime(s.created_at)} · تم عدّ ${num(s.lines_counted)} من ${num(s.lines_total)} · فروقات: ${num(s.lines_with_difference)}</p>
+                  <p style="text-align:center;">${STATUS[s.status]} · ${dateTime(s.created_at)} · تم عدّ ${num(s.lines_counted)} من ${num(s.lines_total)} · variances: ${num(s.lines_with_difference)}</p>
                   <table>
                     <thead><tr>
                       <th>الكود</th><th>الصنف</th><th>كمية النظام</th><th>counted</th><th>الفرق</th>
@@ -284,7 +284,7 @@ export default function Stocktakes() {
               <h1>قائمة عمليات الجرد</h1>
               <table>
                 <thead><tr>
-                  <th>number</th><th>date</th><th>warehouse</th><th>status</th><th>counted</th><th>فروقات</th>
+                  <th>number</th><th>date</th><th>warehouse</th><th>status</th><th>counted</th><th>variances</th>
                 </tr></thead>
                 <tbody>${rowsHtml}</tbody>
               </table>
@@ -312,7 +312,7 @@ export default function Stocktakes() {
                 <th>warehouse</th>
                 <th>status</th>
                 <th className="num">counted</th>
-                <th className="num">فروقات</th>
+                <th className="num">variances</th>
                 <th />
               </tr>
             </thead>
