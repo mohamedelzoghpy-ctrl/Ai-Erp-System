@@ -5,7 +5,7 @@ const STORAGE_KEY = "erp_lang";
 
 const translations: Record<Lang, Record<string, string>> = {
   ar: {
-    "app.name": "نظام ERP",
+    "app.name": "MOZAD ERP",
     "common.save": "حفظ",
     "common.cancel": "إلغاء",
     "common.delete": "delete",
@@ -37,6 +37,7 @@ const translations: Record<Lang, Record<string, string>> = {
     "nav.inventory": "المخزون",
     "nav.products": "المنتجات",
     "nav.warehouses": "المخازن",
+    "nav.warehouseBalances": "أرصدة المخازن",
     "nav.transfers": "التحويلات",
     "nav.stocktakes": "الجرد",
     "nav.purchasing": "المشتريات",
@@ -184,7 +185,7 @@ const translations: Record<Lang, Record<string, string>> = {
     "stocktakes.applyAdjustment": "تطبيق التسوية",
     "stocktakes.empty": "لا توجد عمليات جرد بعد.",
     "stocktakes.countSheet": "ورقة الجرد",
-    "warehouseBalances.title": "warehouses balance",
+    "warehouseBalances.title": "أرصدة المخازن",
     "warehouseBalances.selectWarehouse": "اختر مخزناً",
     "warehouseBalances.code": "الكود",
     "warehouseBalances.productName": "اسم المنتج",
@@ -212,7 +213,7 @@ const translations: Record<Lang, Record<string, string>> = {
     "common.date": "التاريخ",
   },
   en: {
-    "app.name": "ERP System",
+    "app.name": "MOZAD ERP",
     "common.save": "Save",
     "common.cancel": "Cancel",
     "common.delete": "Delete",
@@ -244,6 +245,7 @@ const translations: Record<Lang, Record<string, string>> = {
     "nav.inventory": "Inventory",
     "nav.products": "Products",
     "nav.warehouses": "Warehouses",
+    "nav.warehouseBalances": "warehouses balance",
     "nav.transfers": "Transfers",
     "nav.stocktakes": "Stocktakes",
     "nav.purchasing": "Purchasing",

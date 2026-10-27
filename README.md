@@ -1,4 +1,4 @@
-# AI ERP System
+# MOZAD ERP
 
 Web ERP for inventory, purchasing, sales, customers and suppliers. Arabic (RTL) interface.
 

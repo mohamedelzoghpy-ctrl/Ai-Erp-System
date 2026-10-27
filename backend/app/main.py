@@ -29,7 +29,7 @@ async def lifespan(_: FastAPI):
 _docs = os.getenv("ENABLE_DOCS", "true").lower() not in ("0", "false", "no")
 
 app = FastAPI(
-    title="AI ERP System",
+    title="MOZAD ERP",
     description="ERP: inventory, purchasing, customers, suppliers and sales.",
     version="0.6.0",
     lifespan=lifespan,
@@ -81,7 +81,7 @@ app.include_router(reports.router)  # protected per endpoint (financial reports 
 
 @app.get("/", tags=["system"])
 def root():
-    return {"name": "AI ERP System", "status": "running", "docs": "/docs"}
+    return {"name": "MOZAD ERP", "status": "running", "docs": "/docs"}
 
 
 @app.get("/health", tags=["system"])

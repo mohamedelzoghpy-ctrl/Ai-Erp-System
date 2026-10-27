@@ -8,7 +8,7 @@ arabic-reshaper and reordered with python-bidi, and drawn with the bundled Amiri
 (SIL Open Font License, see assets/fonts/OFL.txt).
 
 Settings (environment variables, all optional):
-  COMPANY_NAME      printed in the header of every document      (default "AI ERP System")
+  COMPANY_NAME      printed in the header of every document      (default "MOZAD ERP")
   COMPANY_PHONE     printed under the company name
   COMPANY_ADDRESS   printed under the company name
   CURRENCY_LABEL    appended to money amounts                    (default "ج.م")
@@ -37,7 +37,7 @@ from reportlab.pdfgen import canvas
 
 FONT_DIR = Path(__file__).parent / "assets" / "fonts"
 
-COMPANY_NAME = os.getenv("COMPANY_NAME", "AI ERP System")
+COMPANY_NAME = os.getenv("COMPANY_NAME", "MOZAD ERP")
 COMPANY_PHONE = os.getenv("COMPANY_PHONE", "")
 COMPANY_ADDRESS = os.getenv("COMPANY_ADDRESS", "")
 CURRENCY = os.getenv("CURRENCY_LABEL", "ج.م")

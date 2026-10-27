@@ -39,7 +39,7 @@ The backend container applies Alembic migrations on start, then serves on http:/
 | `SECRET_KEY` | random per start | JWT signing key — **set it in production** |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | `480` | Token lifetime |
 | `CORS_ORIGINS` | empty (no cross-origin) | Comma-separated browser origins allowed to call the API |
-| `COMPANY_NAME` | `AI ERP System` | Printed on exported invoices, purchase orders and reports |
+| `COMPANY_NAME` | `MOZAD ERP` | Printed on exported invoices, purchase orders and reports |
 | `COMPANY_PHONE`, `COMPANY_ADDRESS` | empty | Printed under the company name on PDFs |
 | `CURRENCY_LABEL` | `ج.م` | Currency shown next to totals |
 | `EXPORT_TIMEZONE` | `Africa/Cairo` | Timezone of dates printed in exports |
