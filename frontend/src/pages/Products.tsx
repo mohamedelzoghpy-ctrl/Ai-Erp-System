@@ -103,7 +103,7 @@ export default function Products() {
             </body></html>`);
           w.document.close();
         }}>
-          🖨 طباعة
+          🖨 print
         </button>
       </PageHeader>
 
