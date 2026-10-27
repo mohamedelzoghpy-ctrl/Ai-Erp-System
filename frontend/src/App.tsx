@@ -17,6 +17,7 @@ import Returns from "./pages/Returns";
 import Reports from "./pages/Reports";
 import Users from "./pages/Users";
 import CompanyAdmin from "./pages/CompanyAdmin";
+import SwitchCompany from "./pages/SwitchCompany";
 import { Loading } from "./ui";
 
 export default function App() {
@@ -47,6 +48,7 @@ export default function App() {
         {isManager && <Route path="users" element={<Users />} />}
         {isManager && <Route path="company" element={<CompanyAdmin />} />}
         {isPlatformAdmin && <Route path="platform/companies" element={<CompanyAdmin platform />} />}
+        <Route path="switch-company" element={<SwitchCompany />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

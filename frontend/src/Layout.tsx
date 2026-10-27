@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { NavLink, Outlet } from "react-router-dom";
+import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useAuth } from "./auth";
 import { useI18n } from "./i18n";
 import { ROLE_LABEL } from "./format";
@@ -10,7 +10,7 @@ import type { Company } from "./types";
 export default function Layout() {
   const { user, logout, isManager, isPlatformAdmin } = useAuth();
   const { t, lang, setLang } = useI18n();
-  const company = useFetch(() => api.get<Company>("/company"), "current-company");
+  const navigate = useNavigate();
   const companies = useFetch(() => (isPlatformAdmin ? api.get<Company[]>("/platform/companies") : api.get<Company[]>("/auth/companies")), "my-companies");
   const pending = useFetch(() => (isManager ? api.get<{ count: number }>("/stock-transfers/pending-count") : Promise.resolve({ count: 0 })), "pending-transfers");
   const link = ({ isActive }: { isActive: boolean }) => (isActive ? "active" : undefined);
@@ -28,16 +28,6 @@ export default function Layout() {
       {open[key] && children}
     </>
   );
-
-  const switchCompany = async (id: number) => {
-    if (id === company.data?.id) return;
-    try {
-      await api.post("/auth/switch-company", { company_id: id });
-      window.location.reload();
-    } catch (e) {
-      alert((e as Error).message);
-    }
-  };
 
   return (
     <div className="app">
@@ -121,10 +111,7 @@ export default function Layout() {
             <button
               className="btn btn-sm"
               style={{ marginInlineStart: 12 }}
-              onClick={() => {
-                const id = prompt("اختر شركة:\\n" + companies.data!.map((c) => `${c.id}: ${c.name}`).join("\\n"));
-                if (id) switchCompany(Number(id));
-              }}
+              onClick={() => navigate("/switch-company")}
             >
               switch
             </button>
