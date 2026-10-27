@@ -222,7 +222,7 @@ export default function Pos() {
                       </td>
                       <td className="num">{money(l.quantity * (Number(l.price) || 0))}</td>
                       <td>
-                        <button type="button" className="icon-btn" aria-label={`حذف ${l.product.name}`} onClick={() => setCart((c) => c.filter((x) => x !== l))}>
+                        <button type="button" className="icon-btn" aria-label={`delete ${l.product.name}`} onClick={() => setCart((c) => c.filter((x) => x !== l))}>
                           ✕
                         </button>
                       </td>

@@ -290,7 +290,7 @@ function OrderForm({
                   <td className="num">{money(lineTotal(l))}</td>
                   <td>
                     {lines.length > 1 && (
-                      <button type="button" className="icon-btn" onClick={() => setLines((ls) => ls.filter((x) => x.key !== l.key))} aria-label="حذف السطر">
+                      <button type="button" className="icon-btn" onClick={() => setLines((ls) => ls.filter((x) => x.key !== l.key))} aria-label="delete السطر">
                         ✕
                       </button>
                     )}

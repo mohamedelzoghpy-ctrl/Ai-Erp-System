@@ -169,7 +169,7 @@ export default function Products() {
                       </button>
                       {isManager && (
                         <button className="btn btn-sm btn-danger" onClick={() => remove(p)}>
-                          حذف
+                          delete
                         </button>
                       )}
                     </td>

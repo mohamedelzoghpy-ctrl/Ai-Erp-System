@@ -33,7 +33,7 @@ export function Warehouses() {
   const [editing, setEditing] = useState<Warehouse | "new" | null>(null);
 
   const remove = (w: Warehouse) => {
-    if (!confirm(`حذف المخزن "${w.name}"؟`)) return;
+    if (!confirm(`delete المخزن "${w.name}"؟`)) return;
     void action.run(async () => {
       await api.del(`/warehouses/${w.id}`);
       list.reload();
@@ -115,7 +115,7 @@ export function Warehouses() {
                     </button>
                     {isManager && (
                       <button className="btn btn-sm btn-danger" onClick={() => remove(w)}>
-                        حذف
+                        delete
                       </button>
                     )}
                   </td>
@@ -227,7 +227,7 @@ function PartyScreen({ title, singular, path, kind }: { title: string; singular:
   ];
 
   const remove = (p: Party) => {
-    if (!confirm(`حذف ${singular} "${p.name}"؟`)) return;
+    if (!confirm(`delete ${singular} "${p.name}"؟`)) return;
     void action.run(async () => {
       await api.del(`${path}/${p.id}`);
       list.reload();
@@ -307,7 +307,7 @@ function PartyScreen({ title, singular, path, kind }: { title: string; singular:
                     </button>
                     {isManager && (
                       <button className="btn btn-sm btn-danger" onClick={() => remove(p)}>
-                        حذف
+                        delete
                       </button>
                     )}
                   </td>

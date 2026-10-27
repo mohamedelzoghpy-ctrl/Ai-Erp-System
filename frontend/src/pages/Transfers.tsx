@@ -134,7 +134,7 @@ function NewTransfer({ onClose, onDone }: { onClose: () => void; onDone: (t: Sto
                     </td>
                     <td>
                       <button type="button" className="btn btn-sm" onClick={() => setLines((ls) => ls.filter((x) => x.product.id !== l.product.id))}>
-                        حذف
+                        delete
                       </button>
                     </td>
                   </tr>
@@ -259,7 +259,7 @@ function EditTransfer({ t, onClose, onDone }: { t: StockTransfer; onClose: () =>
                             onChange={(e) => setLines((ls) => ls.map((x) => x.product.id === l.product.id ? { ...x, quantity: e.target.value } : x))} />
                         </td>
                         <td className="actions">
-                          <button type="button" className="btn btn-sm btn-danger" onClick={() => setLines((ls) => ls.filter((x) => x.product.id !== l.product.id))}>حذف</button>
+                          <button type="button" className="btn btn-sm btn-danger" onClick={() => setLines((ls) => ls.filter((x) => x.product.id !== l.product.id))}>delete</button>
                         </td>
                       </tr>
                     ))}
@@ -494,7 +494,7 @@ export default function Transfers() {
                     </button>
                     {((t.status === "pending" && (isManager || t.username === user?.username)) || (t.status !== "pending" && isManager)) && (
                       <button className="btn btn-sm btn-danger" disabled={act.busy} onClick={() => remove(t)}>
-                        حذف
+                        delete
                       </button>
                     )}
                     {isManager && t.status === "pending" && (
@@ -509,7 +509,7 @@ export default function Transfers() {
                     )}
                     {t.status === "pending" && (t.username === null || true) && (
                       <button className="btn btn-sm" disabled={act.busy} onClick={() => remove(t)}>
-                        حذف
+                        delete
                       </button>
                     )}
                   </td>

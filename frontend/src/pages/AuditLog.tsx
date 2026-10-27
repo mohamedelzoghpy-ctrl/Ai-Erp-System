@@ -21,7 +21,7 @@ const ENTITY: Record<string, string> = {
 const ACTION: Record<string, string> = {
   create: "إنشاء",
   update: "edit",
-  delete: "حذف",
+  delete: "delete",
   receive: "استلام",
   confirm: "تأكيد",
   cancel: "إلغاء",
