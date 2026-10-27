@@ -326,7 +326,7 @@ function ViewTransfer({ t, onClose, onApprove, onReject, onEdit }: { t: StockTra
           </button>
         )}
         {t.status === "approved" && onEdit && (
-          <button className="btn" onClick={() => onEdit(t)}>
+          <button className="btn btn-primary" onClick={() => onEdit(t)}>
             تعديل
           </button>
         )}
