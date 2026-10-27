@@ -217,7 +217,12 @@ def update_platform_company(company_id: int, payload: schemas.CompanyUpdate, db:
     if "name" in data and data["name"] is not None:
         company.name = data["name"]
     if "is_active" in data and data["is_active"] is not None:
-        company.is_active = data["is_active"]
+        new_active = data["is_active"]
+        if new_active is False:
+            other_active = db.query(models.Company).filter(models.Company.id != company_id, models.Company.is_active.is_(True)).count()
+            if other_active == 0:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, "لا يمكن تعطيل الشركة الوحيدة النشطة")
+        company.is_active = new_active
     db.commit()
     db.refresh(company)
     audit(db, actor, "update", "company", company, f"{company.code}")
