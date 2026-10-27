@@ -92,23 +92,9 @@ export default function Layout() {
       <div className="main">
         <header className="topbar">
           <span className="who">
-            {company.data?.name ? `${company.data.name} · ` : ""}
             {user?.full_name || user?.username} · {user ? (lang === "ar" ? ROLE_LABEL[user.role] : (user.role === "admin" ? "Admin" : user.role === "manager" ? "Manager" : "Staff")) : ""}
           </span>
-          {companies.data && companies.data.length > 1 && (
-            <select
-              value={company.data?.id ?? ""}
-              onChange={(e) => switchCompany(Number(e.target.value))}
-              style={{ marginInlineStart: 12 }}
-              aria-label="الشركة"
-            >
-              {companies.data.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-          )}
+
           {isManager && (
             <a href="/transfers" style={{ marginInlineStart: 12, position: "relative", textDecoration: "none" }} title="تحويلات قيد الانتظار">
               🔔
@@ -130,6 +116,18 @@ export default function Layout() {
                 </span>
               )}
             </a>
+          )}
+          {companies.data && companies.data.length > 1 && (
+            <button
+              className="btn btn-sm"
+              style={{ marginInlineStart: 12 }}
+              onClick={() => {
+                const id = prompt("اختر شركة:\\n" + companies.data!.map((c) => `${c.id}: ${c.name}`).join("\\n"));
+                if (id) switchCompany(Number(id));
+              }}
+            >
+              switch
+            </button>
           )}
           <button className="btn btn-sm" onClick={() => setLang(lang === "ar" ? "en" : "ar")} style={{ marginInlineStart: 12 }}>
             {lang === "ar" ? "EN" : "AR"}
