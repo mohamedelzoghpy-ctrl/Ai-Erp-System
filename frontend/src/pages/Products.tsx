@@ -10,11 +10,12 @@ export default function Products() {
   const { isManager } = useAuth();
   const [search, setSearch] = useState("");
   const [lowOnly, setLowOnly] = useState(false);
+  const [showInactive, setShowInactive] = useState(false);
   const [editing, setEditing] = useState<Product | "new" | null>(null);
   const [adjusting, setAdjusting] = useState<Product | null>(null);
   const [history, setHistory] = useState<Product | null>(null);
 
-  const products = usePagedList<Product>("/products", { search: search.trim(), low_stock: lowOnly });
+  const products = usePagedList<Product>("/products", { search: search.trim(), low_stock: lowOnly, is_active: showInactive ? undefined : true });
   const warehouses = useFetch(() => api.get<Warehouse[]>("/warehouses?limit=500"), "wh");
   const suppliers = useFetch(() => api.get<Party[]>("/suppliers?limit=500"), "sup");
   const action = useAction();
@@ -108,6 +109,9 @@ export default function Products() {
         <input placeholder="بحث بالاسم أو الكود…" value={search} onChange={(e) => setSearch(e.target.value)} />
         <label className="check">
           <input type="checkbox" checked={lowOnly} onChange={(e) => setLowOnly(e.target.checked)} /> تحت حد إعادة الطلب فقط
+        </label>
+        <label className="check">
+          <input type="checkbox" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)} /> إظهار المعطّلين
         </label>
       </div>
 
