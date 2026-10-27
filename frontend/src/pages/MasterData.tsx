@@ -236,6 +236,39 @@ function PartyScreen({ title, singular, path, kind }: { title: string; singular:
     <>
       <PageHeader title={title}>
         <input placeholder="بحث…" value={search} onChange={(e) => setSearch(e.target.value)} style={{ width: 200 }} />
+        {rows.length > 0 && (
+          <button className="btn" onClick={() => {
+            const w = window.open("", "_blank");
+            if (!w) return;
+            const rowsHtml = rows.map((p) => `
+              <tr>
+                <td>${p.name}</td>
+                <td>${p.contact_person || "—"}</td>
+                <td>${p.phone || "—"}</td>
+                <td>${p.email || "—"}</td>
+                <td>${money(p.balance)}</td>
+                <td>${p.is_active ? "نشط" : "معطّل"}</td>
+              </tr>`).join("");
+            w.document.write(`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>${title}</title>
+              <style>
+                body { font-family: Tahoma, Arial, sans-serif; padding: 16px; }
+                h1 { text-align: center; }
+                table { width: 100%; border-collapse: collapse; }
+                th, td { border: 1px solid #999; padding: 6px 8px; text-align: center; }
+                th { background: #eee; }
+              </style></head><body>
+              <h1>${title}</h1>
+              <table>
+                <thead><tr><th>الاسم</th><th>المسؤول</th><th>الهاتف</th><th>البريد</th><th>الرصيد</th><th>الحالة</th></tr></thead>
+                <tbody>${rowsHtml}</tbody>
+              </table>
+              <script>window.onload = () => { window.print(); };</script>
+              </body></html>`);
+            w.document.close();
+          }}>
+            🖨 طباعة
+          </button>
+        )}
         <button className="btn btn-primary" onClick={() => setEditing("new")}>
           + {singular} جديد
         </button>
