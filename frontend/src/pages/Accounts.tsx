@@ -203,6 +203,8 @@ export default function Payments() {
   const [paymentParty, setPaymentParty] = useState<{ id: number; name: string; balance: string } | null>(null);
   const [showReceiptPicker, setShowReceiptPicker] = useState(false);
   const [showPaymentPicker, setShowPaymentPicker] = useState(false);
+  const [showSafeForm, setShowSafeForm] = useState(false);
+  const [showBankForm, setShowBankForm] = useState(false);
   const [kind, setKind] = useState<"" | "receipt" | "payment">("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
@@ -224,8 +226,8 @@ export default function Payments() {
       <div className="card" style={{ padding: 14, marginBottom: 16, display: "flex", gap: 8, flexWrap: "wrap" }}>
         <button className="btn btn-primary" onClick={() => setShowReceiptPicker(true)}>+ سند قبض</button>
         <button className="btn btn-primary" onClick={() => setShowPaymentPicker(true)}>+ سند صرف</button>
-        <button className="btn btn-primary" onClick={() => { const el = document.getElementById("safe-form"); el?.scrollIntoView({ behavior: "smooth" }); }}>+ إضافة خزينة</button>
-        <button className="btn btn-primary" onClick={() => { const el = document.getElementById("bank-form"); el?.scrollIntoView({ behavior: "smooth" }); }}>+ إضافة بنك</button>
+        <button className="btn btn-primary" onClick={() => setShowSafeForm(true)}>+ إضافة خزينة</button>
+        <button className="btn btn-primary" onClick={() => setShowBankForm(true)}>+ إضافة بنك</button>
       </div>
       <div className="card card-pad range-bar" style={{ marginBottom: 14 }}>
         <label className="range-field">
@@ -259,22 +261,6 @@ export default function Payments() {
             </table>
           </div>
         ) : <Empty>لا توجد خزائن.</Empty>}
-        {isManager && (
-          <form onSubmit={(e) => {
-            e.preventDefault();
-            const fd = new FormData(e.currentTarget);
-            void (async () => {
-              await api.post("/safes", { name: String(fd.get("name") || ""), code: String(fd.get("code") || ""), opening_balance: Number(fd.get("opening") || 0) });
-              safes.reload();
-              (e.target as HTMLFormElement).reset();
-            })();
-          }} className="form-grid" id="safe-form">
-            <Field label="اسم الخزينة"><input name="name" required /></Field>
-            <Field label="الكود"><input name="code" dir="ltr" required /></Field>
-            <Field label="الرصيد الافتتاحي"><input name="opening" type="number" step="0.01" defaultValue="0" /></Field>
-            <button className="btn btn-primary" disabled={action.busy}>إضافة خزينة</button>
-          </form>
-        )}
       </div>
 
       <div className="card" style={{ padding: 20, marginBottom: 16 }}>
@@ -289,23 +275,6 @@ export default function Payments() {
             </table>
           </div>
         ) : <Empty>لا توجد بنوك.</Empty>}
-        {isManager && (
-          <form onSubmit={(e) => {
-            e.preventDefault();
-            const fd = new FormData(e.currentTarget);
-            void (async () => {
-              await api.post("/banks", { name: String(fd.get("name") || ""), code: String(fd.get("code") || ""), account_number: String(fd.get("acct") || "") || null, opening_balance: Number(fd.get("opening") || 0) });
-              banks.reload();
-              (e.target as HTMLFormElement).reset();
-            })();
-          }} className="form-grid" id="bank-form">
-            <Field label="اسم البنك"><input name="name" required /></Field>
-            <Field label="الكود"><input name="code" dir="ltr" required /></Field>
-            <Field label="رقم الحساب"><input name="acct" dir="ltr" /></Field>
-            <Field label="الرصيد الافتتاحي"><input name="opening" type="number" step="0.01" defaultValue="0" /></Field>
-            <button className="btn btn-primary" disabled={action.busy}>إضافة بنك</button>
-          </form>
-        )}
       </div>
 
       <p className="muted" style={{ marginTop: 0 }}>لتسجيل قبض أو دفعة جديدة افتح صفحة العميل أو المورد واضغط «قبض» / «دفع».</p>
@@ -388,6 +357,49 @@ export default function Payments() {
               </tbody>
             </table>
           </div>
+        </Modal>
+      )}
+      {showSafeForm && (
+        <Modal title="إضافة خزينة" onClose={() => setShowSafeForm(false)}>
+          <form onSubmit={(e) => {
+            e.preventDefault();
+            const fd = new FormData(e.currentTarget);
+            void (async () => {
+              await api.post("/safes", { name: String(fd.get("name") || ""), code: String(fd.get("code") || ""), opening_balance: Number(fd.get("opening") || 0) });
+              safes.reload();
+              setShowSafeForm(false);
+            })();
+          }}>
+            <Field label="اسم الخزينة"><input name="name" required autoFocus /></Field>
+            <Field label="الكود"><input name="code" dir="ltr" required /></Field>
+            <Field label="الرصيد الافتتاحي"><input name="opening" type="number" step="0.01" defaultValue="0" /></Field>
+            <div className="form-actions">
+              <button className="btn btn-primary" type="submit">حفظ</button>
+              <button type="button" className="btn" onClick={() => setShowSafeForm(false)}>إلغاء</button>
+            </div>
+          </form>
+        </Modal>
+      )}
+      {showBankForm && (
+        <Modal title="إضافة بنك" onClose={() => setShowBankForm(false)}>
+          <form onSubmit={(e) => {
+            e.preventDefault();
+            const fd = new FormData(e.currentTarget);
+            void (async () => {
+              await api.post("/banks", { name: String(fd.get("name") || ""), code: String(fd.get("code") || ""), account_number: String(fd.get("acct") || "") || null, opening_balance: Number(fd.get("opening") || 0) });
+              banks.reload();
+              setShowBankForm(false);
+            })();
+          }}>
+            <Field label="اسم البنك"><input name="name" required autoFocus /></Field>
+            <Field label="الكود"><input name="code" dir="ltr" required /></Field>
+            <Field label="رقم الحساب"><input name="acct" dir="ltr" /></Field>
+            <Field label="الرصيد الافتتاحي"><input name="opening" type="number" step="0.01" defaultValue="0" /></Field>
+            <div className="form-actions">
+              <button className="btn btn-primary" type="submit">حفظ</button>
+              <button type="button" className="btn" onClick={() => setShowBankForm(false)}>إلغاء</button>
+            </div>
+          </form>
         </Modal>
       )}
       {receiptParty && (
