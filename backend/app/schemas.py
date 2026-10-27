@@ -743,6 +743,10 @@ class StocktakeCount(BaseModel):
     counted_qty: Optional[int] = Field(default=None, ge=0, description="null clears the count")
 
 
+class StocktakeAddLine(BaseModel):
+    product_id: int
+
+
 class StocktakeCounts(BaseModel):
     counts: List[StocktakeCount] = Field(min_length=1, max_length=2000)
 

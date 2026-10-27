@@ -94,6 +94,24 @@ def save_counts(stocktake_id: int, payload: schemas.StocktakeCounts, db: Session
     return _out(s, detail=True)
 
 
+@router.post("/{stocktake_id}/lines", response_model=schemas.StocktakeOut)
+def add_line(stocktake_id: int, payload: schemas.StocktakeAddLine, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    s = _get(db, stocktake_id, lock=True)
+    if s.status != "open":
+        raise HTTPException(status.HTTP_409_CONFLICT, f"Stock-take is already {s.status}")
+    p = db.get(models.Product, payload.product_id)
+    if p is None or not p.is_active:
+        raise HTTPException(422, "Product not found or inactive")
+    if any(l.product_id == payload.product_id for l in s.lines):
+        raise HTTPException(409, "Product already in this stock-take")
+    held = dict(db.query(models.ProductStock.product_id, models.ProductStock.quantity).filter(models.ProductStock.warehouse_id == s.warehouse_id).all())
+    s.lines.append(models.StocktakeLine(product_id=p.id, system_qty=held.get(p.id, 0)))
+    audit(db, user, "update", "stocktake", s, f"added {p.sku}")
+    db.commit()
+    db.refresh(s)
+    return _out(s, detail=True)
+
+
 @router.post("/{stocktake_id}/apply", response_model=schemas.StocktakeOut)
 def apply(stocktake_id: int, db: Session = Depends(get_db), user: models.User = Depends(require_manager)):
     """Adds (counted - system at sheet time) to each counted product's *current* stock, so sales made during the count are kept."""

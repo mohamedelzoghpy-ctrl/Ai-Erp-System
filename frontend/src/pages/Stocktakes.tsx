@@ -3,8 +3,8 @@ import { api } from "../api";
 import { useAuth } from "../auth";
 import { dateTime, num } from "../format";
 import { useAction, useFetch, usePagedList } from "../hooks";
-import type { Stocktake, Warehouse } from "../types";
-import { Alert, Empty, Field, Loading, Modal, PageHeader, Pager } from "../ui";
+import type { Product, Stocktake, Warehouse } from "../types";
+import { Alert, Empty, Field, Loading, Lookup, Modal, PageHeader, Pager } from "../ui";
 
 const STATUS: Record<Stocktake["status"], string> = { open: "مفتوح", applied: "تم الاعتماد", cancelled: "ملغي" };
 
@@ -134,6 +134,26 @@ function DetailDialog({ id, onClose, onChanged }: { id: number; onClose: () => v
                 </tbody>
               </table>
             </div>
+            {open && (
+              <Field label="إضافة صنف" hint="ابحث عن صنف لإضافته للجرد (حتى لو كانت كميته 0 في النظام).">
+                <Lookup<Product>
+                  path="/products"
+                  params={{ is_active: true, limit: 500 }}
+                  value={null}
+                  onChange={(p) => {
+                    if (!p) return;
+                    void act.run(async () => {
+                      await api.post(`/stocktakes/${id}/lines`, { product_id: p.id });
+                      data.reload();
+                      onChanged();
+                    });
+                  }}
+                  label={(p) => `${p.name} (${p.sku})`}
+                  text={(p) => p.name}
+                  placeholder="ابحث عن صنف…"
+                />
+              </Field>
+            )}
             {confirmApply && (
               <Alert kind="info">
                 سيتم تعديل كميات {num(s.lines_with_difference)} صنف بحسب الفروقات، ولا يمكن التراجع. هل تؤكد الاعتماد؟{" "}
