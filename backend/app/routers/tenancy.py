@@ -206,7 +206,20 @@ def remove_company_member(company_id: int, user_id: int, db: Session = Depends(g
         user.active_company_id = other.company_id if other else None
     db.commit()
     audit(db, actor, "remove_member", "company", db.get(models.Company, company_id), f"user {user_id}")
-@platform.get("/companies/{company_id}/branches", response_model=List[schemas.BranchOut])
+@platform.patch("/companies/{company_id}", response_model=schemas.CompanyOut)
+def update_platform_company(company_id: int, payload: schemas.CompanyUpdate, db: Session = Depends(get_db), actor: models.User = Depends(require_platform_admin)):
+    company = db.get(models.Company, company_id)
+    if company is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Company not found")
+    data = payload.model_dump(exclude_unset=True)
+    if "max_warehouses_per_branch" in data:
+        company.max_warehouses_per_branch = data["max_warehouses_per_branch"]
+    if "name" in data and data["name"] is not None:
+        company.name = data["name"]
+    db.commit()
+    db.refresh(company)
+    audit(db, actor, "update", "company", company, f"{company.code}")
+    return company
 def platform_list_branches(company_id: int, db: Session = Depends(get_db), _: models.User = Depends(require_platform_admin)):
     company = db.get(models.Company, company_id)
     if company is None:

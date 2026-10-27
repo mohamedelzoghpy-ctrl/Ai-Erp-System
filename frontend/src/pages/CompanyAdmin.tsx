@@ -21,7 +21,7 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
   const [adminUsername, setAdminUsername] = useState("");
   const [adminName, setAdminName] = useState("");
   const [adminPassword, setAdminPassword] = useState("");
-  const [memberCompany, setMemberCompany] = useState<number | null>(null);
+  const [selectedCompany, setSelectedCompany] = useState<number | null>(null);
   const [memberUsername, setMemberUsername] = useState("");
   const [memberRole, setMemberRole] = useState("staff");
   const [members, setMembers] = useState<{ user_id: number; username: string; full_name: string | null; role: string }[]>([]);
@@ -33,6 +33,7 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
   const [newWhCode, setNewWhCode] = useState("");
   const [newWhBranch, setNewWhBranch] = useState<number | null>(null);
   const [newWhLocation, setNewWhLocation] = useState("");
+  const [selLimit, setSelLimit] = useState<string | null>(null);
   const [companyWarehouseLimit, setCompanyWarehouseLimit] = useState("");
   const { busy, error, run } = useAction();
 
@@ -57,51 +58,51 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
     });
   };
 
-  const loadMembers = (companyId: number) => {
-    setMemberCompany(companyId);
+  const selectCompany = (companyId: number) => {
+    setSelectedCompany(companyId);
     void api.get<{ user_id: number; username: string; full_name: string | null; role: string }[]>(`/platform/companies/${companyId}/members`).then(setMembers).catch(() => setMembers([]));
     void api.get<{ id: number; name: string; code: string; location: string | null; is_active: boolean }[]>(`/platform/companies/${companyId}/branches`).then(setSelBranches).catch(() => setSelBranches([]));
     void api.get<{ id: number; name: string; code: string; branch_id: number; location: string | null; is_active: boolean }[]>(`/platform/companies/${companyId}/warehouses`).then(setSelWarehouses).catch(() => setSelWarehouses([]));
   };
 
-  const addMember = (e: FormEvent) => {
-    e.preventDefault();
-    if (!memberCompany) return;
-    void run(async () => {
-      await api.post(`/platform/companies/${memberCompany}/members`, { username: memberUsername.trim(), role: memberRole });
-      setMemberUsername("");
-      loadMembers(memberCompany);
-    });
-  };
-
   const addSelBranch = (e: FormEvent) => {
     e.preventDefault();
-    if (!memberCompany) return;
+    if (!selectedCompany) return;
     void run(async () => {
-      await api.post(`/platform/companies/${memberCompany}/branches`, { name: newBranchName.trim(), code: newBranchCode.trim() });
+      await api.post(`/platform/companies/${selectedCompany}/branches`, { name: newBranchName.trim(), code: newBranchCode.trim() });
       setNewBranchName(""); setNewBranchCode("");
-      loadMembers(memberCompany);
+      selectCompany(selectedCompany);
     });
   };
 
   const addSelWarehouse = (e: FormEvent) => {
     e.preventDefault();
-    if (!memberCompany) return;
+    if (!selectedCompany) return;
     void run(async () => {
-      await api.post(`/platform/companies/${memberCompany}/warehouses`, { name: newWhName.trim(), code: newWhCode.trim(), branch_id: newWhBranch, location: newWhLocation.trim() || null });
+      await api.post(`/platform/companies/${selectedCompany}/warehouses`, { name: newWhName.trim(), code: newWhCode.trim(), branch_id: newWhBranch, location: newWhLocation.trim() || null });
       setNewWhName(""); setNewWhCode(""); setNewWhBranch(null); setNewWhLocation("");
-      loadMembers(memberCompany);
+      selectCompany(selectedCompany);
     });
   };
 
   const removeSelMember = (userId: number) => {
-    if (!memberCompany) return;
+    if (!selectedCompany) return;
     if (!confirm("إزالة العضوية؟")) return;
     void run(async () => {
-      await api.del(`/platform/companies/${memberCompany}/members/${userId}`);
-      loadMembers(memberCompany);
+      await api.del(`/platform/companies/${selectedCompany}/members/${userId}`);
+      selectCompany(selectedCompany);
     });
   };
+  const addSelMember = (e: FormEvent) => {
+    e.preventDefault();
+    if (!selectedCompany) return;
+    void run(async () => {
+      await api.post(`/platform/companies/${selectedCompany}/members`, { username: memberUsername.trim(), role: memberRole });
+      setMemberUsername("");
+      selectCompany(selectedCompany);
+    });
+  };
+
   const addCompany = (e: FormEvent) => {
     e.preventDefault();
     void run(async () => {
@@ -212,7 +213,7 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
             <p className="muted" style={{ marginTop: 0 }}>اختر شركة لعرض/إدارة أعضائها. المستخدم الذي ينتمي لأكثر من شركة سيظهر له مُبدِّل "الشركة" في الشريط العلوي.</p>
             <div className="form-grid" style={{ marginBottom: 12 }}>
               <Field label="الشركة">
-                <select value={memberCompany ?? ""} onChange={(e) => { const v = Number(e.target.value); if (v) loadMembers(v); }}>
+                <select value={selectedCompany ?? ""} onChange={(e) => { const v = Number(e.target.value); if (v) selectCompany(v); }}>
                   <option value="">— اختر —</option>
                   {companies.data?.map((c) => (
                     <option key={c.id} value={c.id}>{c.name} ({c.code})</option>
@@ -220,40 +221,9 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
                 </select>
               </Field>
             </div>
-            {memberCompany && (
+            {selectedCompany && (
               <>
-                {members.length > 0 ? (
-                  <div className="table-wrap" style={{ marginBottom: 12 }}>
-                    <table>
-                      <thead><tr><th>اسم المستخدم</th><th>الاسم</th><th>الدور</th><th /></tr></thead>
-                      <tbody>
-                        {members.map((m) => (
-                          <tr key={m.user_id}>
-                            <td dir="ltr">{m.username}</td>
-                            <td>{m.full_name || "—"}</td>
-                            <td>{m.role}</td>
-                            <td className="actions">
-                              <button className="btn btn-sm btn-danger" onClick={() => removeSelMember(m.user_id)}>إزالة</button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : (
-                  <Empty>لا يوجد أعضاء بعد.</Empty>
-                )}
-                <form onSubmit={addMember} className="form-grid">
-                  <Field label="اسم المستخدم (موجود)"><input dir="ltr" value={memberUsername} onChange={(e) => setMemberUsername(e.target.value)} required /></Field>
-                  <Field label="الدور">
-                    <select value={memberRole} onChange={(e) => setMemberRole(e.target.value)}>
-                      <option value="staff">موظف</option>
-                      <option value="manager">مدير</option>
-                      <option value="admin">مدير عام</option>
-                    </select>
-                  </Field>
-                  <button className="btn btn-primary" disabled={busy}>إضافة عضوية</button>
-                </form>
+
                  <h3 style={{ marginTop: 16 }}>الفروع</h3>
                  {selBranches.length > 0 ? (
                    <div className="table-wrap" style={{ marginBottom: 12 }}>
@@ -293,7 +263,64 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
                    </Field>
                    <Field label="الموقع"><input value={newWhLocation} onChange={(e) => setNewWhLocation(e.target.value)} /></Field>
                    <button className="btn btn-primary" disabled={busy}>إضافة مخزن</button>
-                 </form>              </>
+                 </form>
+                <h3>3.3 الأعضاء (الخزن)</h3>
+                {members.length > 0 ? (
+                  <div className="table-wrap" style={{ marginBottom: 12 }}>
+                    <table>
+                      <thead><tr><th>اسم المستخدم</th><th>الاسم</th><th>الدور</th><th /></tr></thead>
+                      <tbody>
+                        {members.map((m) => (
+                          <tr key={m.user_id}>
+                            <td dir="ltr">{m.username}</td>
+                            <td>{m.full_name || "—"}</td>
+                            <td>{m.role}</td>
+                            <td className="actions">
+                              <button className="btn btn-sm btn-danger" onClick={() => removeSelMember(m.user_id)}>إزالة</button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <Empty>لا يوجد أعضاء بعد.</Empty>
+                )}
+                <form onSubmit={addSelMember} className="form-grid">
+                  <Field label="اسم المستخدم (موجود)"><input dir="ltr" value={memberUsername} onChange={(e) => setMemberUsername(e.target.value)} required /></Field>
+                  <Field label="الدور">
+                    <select value={memberRole} onChange={(e) => setMemberRole(e.target.value)}>
+                      <option value="staff">موظف</option>
+                      <option value="manager">مدير</option>
+                      <option value="admin">مدير عام</option>
+                    </select>
+                  </Field>
+                  <button className="btn btn-primary" disabled={busy}>إضافة عضوية</button>
+                </form>
+              </>
+            )}
+          </div>
+
+          <div className="card" style={{ padding: 20, marginBottom: 16 }}>
+            <h2>5. حفظ الإعدادات (الشركة المختارة)</h2>
+            <p className="muted" style={{ marginTop: 0 }}>حد المخازن لكل فرع. اتركه فارغًا لعدد غير محدود.</p>
+            {selectedCompany ? (
+              <form onSubmit={(e) => {
+                e.preventDefault();
+                if (!selectedCompany) return;
+                void run(async () => {
+                  await api.patch(`/platform/companies/${selectedCompany}`, { max_warehouses_per_branch: selLimit?.trim() ? Number(selLimit) : null });
+                  setSelLimit(null);
+                  companies.reload();
+                });
+              }} className="form-grid">
+                <Field label="الحد الأقصى للمخازن في كل فرع">
+                  <input type="number" min={1} value={selLimit ?? ""} onChange={(e) => setSelLimit(e.target.value)} />
+                </Field>
+                <button className="btn btn-primary" disabled={busy}>حفظ الإعدادات</button>
+              </form>
+            ) : (
+              <Empty>اختر شركة أولاً.</Empty>
             )}
           </div>
 
