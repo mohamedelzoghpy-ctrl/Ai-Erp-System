@@ -49,7 +49,7 @@ export default function Layout() {
             <>
               <NavLink to="/products" className={link}>{t("nav.products")}</NavLink>
               <NavLink to="/warehouses" className={link}>{t("nav.warehouses")}</NavLink>
-              <NavLink to="/warehouse-balances" className={link}>أرصدة المخازن</NavLink>
+              <NavLink to="/warehouse-balances" className={link}>warehouses balance</NavLink>
               <NavLink to="/transfers" className={link}>{t("nav.transfers")}</NavLink>
               <NavLink to="/stocktakes" className={link}>{t("nav.stocktakes")}</NavLink>
             </>
