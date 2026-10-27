@@ -490,7 +490,7 @@ export default function Transfers() {
                   <td dir="ltr">{t.username ?? "—"}</td>
                   <td className="actions">
                     <button className="btn btn-sm" onClick={() => setView(t)}>
-                      عرض
+                      review
                     </button>
                     {((t.status === "pending" && (isManager || t.username === user?.username)) || (t.status !== "pending" && isManager)) && (
                       <button className="btn btn-sm btn-danger" disabled={act.busy} onClick={() => remove(t)}>
