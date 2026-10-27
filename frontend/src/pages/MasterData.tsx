@@ -49,7 +49,7 @@ export function Warehouses() {
           </button>
         )}
         {list.data && list.data.length > 0 && (
-          <button className="btn" onClick={() => {
+          <button className="btn btn-primary" onClick={() => {
             const w = window.open("", "_blank");
             if (!w) return;
             const rowsHtml = (list.data ?? []).map((wh) => `
@@ -240,7 +240,7 @@ function PartyScreen({ title, singular, path, kind }: { title: string; singular:
       <PageHeader title={title}>
         <input placeholder="بحث…" value={search} onChange={(e) => setSearch(e.target.value)} style={{ width: 200 }} />
         {rows.length > 0 && (
-          <button className="btn" onClick={() => {
+          <button className="btn btn-primary" onClick={() => {
             const w = window.open("", "_blank");
             if (!w) return;
             const rowsHtml = rows.map((p) => `
