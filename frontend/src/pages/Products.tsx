@@ -88,6 +88,7 @@ export default function Products() {
                 <th className="num">التكلفة</th>
                 <th className="num">سعر البيع</th>
                 <th className="num">الكمية</th>
+                <th className="num">إجمالي القيمة بالبيع</th>
                 <th />
               </tr>
             </thead>
@@ -107,6 +108,7 @@ export default function Products() {
                     <td className={`num${low ? " low" : ""}`}>
                       {num(p.quantity)} {p.unit}
                     </td>
+                    <td className="num">{money(Number(p.quantity) * Number(p.sale_price))}</td>
                     <td className="actions">
                       <button className="btn btn-sm" onClick={() => setEditing(p)}>
                         تعديل
