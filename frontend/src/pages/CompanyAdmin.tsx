@@ -250,9 +250,9 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
               <>
 
                  <form onSubmit={addSelBranch} className="form-grid" style={{ marginBottom: 16 }}>
+                   <button className="btn btn-primary" disabled={busy} style={{ marginBottom: 8 }}>إضافة فرع</button>
                    <Field label="اسم الفرع"><input value={newBranchName} onChange={(e) => setNewBranchName(e.target.value)} required /></Field>
                    <Field label="رمز الفرع" hint="اتركه فارغًا للتوليد التلقائي"><input dir="ltr" value={newBranchCode} onChange={(e) => setNewBranchCode(e.target.value)} /></Field>
-                   <button className="btn btn-primary" disabled={busy}>إضافة فرع</button>
                  </form>
                  {selBranches.length > 0 ? (
                    <div className="table-wrap" style={{ marginBottom: 12 }}>
