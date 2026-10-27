@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { api } from "../api";
 import { useAuth } from "../auth";
 import { useAction, useFetch } from "../hooks";
@@ -31,6 +31,7 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
   const [members, setMembers] = useState<{ user_id: number; username: string; full_name: string | null; role: string }[]>([]);
   const [selBranches, setSelBranches] = useState<{ id: number; name: string; code: string; location: string | null; is_active: boolean }[]>([]);
   const [selWarehouses, setSelWarehouses] = useState<{ id: number; name: string; code: string; branch_id: number; location: string | null; is_active: boolean }[]>([]);
+  const [allBranches, setAllBranches] = useState<{ company: string; id: number; name: string; code: string; location: string | null; is_active: boolean }[]>([]);
   const [newBranchName, setNewBranchName] = useState("");
   const [newBranchCode, setNewBranchCode] = useState("");
   const [newWhName, setNewWhName] = useState("");
@@ -39,6 +40,21 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
   const [newWhLocation, setNewWhLocation] = useState("");
   const [selLimit, setSelLimit] = useState<string | null>(null);
   const [companyWarehouseLimit, setCompanyWarehouseLimit] = useState("");
+  useEffect(() => {
+    if (!platform || !companies.data?.length) return;
+    let cancelled = false;
+    (async () => {
+      const out: { company: string; id: number; name: string; code: string; location: string | null; is_active: boolean }[] = [];
+      for (const c of companies.data ?? []) {
+        try {
+          const bs = await api.get<{ id: number; name: string; code: string; location: string | null; is_active: boolean }[]>(`/platform/companies/${c.id}/branches`);
+          for (const b of bs) out.push({ company: c.name, ...b });
+        } catch { /* ignore */ }
+      }
+      if (!cancelled) setAllBranches(out);
+    })();
+    return () => { cancelled = true; };
+  }, [platform, companies.data]);
   const { busy, error, run } = useAction();
 
   const saveSettings = (e: FormEvent) => {
@@ -202,6 +218,17 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
 
       {platform && (
         <>
+          <div className="card table-wrap" style={{ marginBottom: 16 }}>
+            <h2 style={{ padding: 16 }}>الفروع المسجلة</h2>
+            {allBranches.length ? (
+              <table>
+                <thead><tr><th>الشركة</th><th>الاسم</th><th>الرمز</th><th>الموقع</th><th>الحالة</th></tr></thead>
+                <tbody>{allBranches.map((b) => (
+                  <tr key={`${b.company}-${b.id}`}><td>{b.company}</td><td>{b.name}</td><td dir="ltr">{b.code}</td><td>{b.location || "—"}</td><td>{b.is_active ? "active" : "inactive"}</td></tr>
+                ))}</tbody>
+              </table>
+            ) : <Empty>لا توجد فروع مسجلة.</Empty>}
+          </div>
           <div className="card table-wrap" style={{ marginBottom: 16 }}>
             <h2 style={{ padding: 16 }}>الشركات المسجلة</h2>
             {companies.loading && !companies.data ? <Loading /> : companies.data?.length ? (
