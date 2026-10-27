@@ -195,7 +195,6 @@ def adjust(stocktake_id: int, payload: schemas.StocktakeCounts, db: Session = De
         target = wid if wid is not None else stock.home_warehouse_id(db, products[c.product_id])
         stock.move_stock(db, products[c.product_id], target, delta, "stocktake_adjust", f"ST-{s.id}")
         l.counted_qty = c.counted_qty
-        l.difference = c.counted_qty - l.system_qty
         changed += 1
     audit(db, user, "update", "stocktake", s, f"adjusted {changed} line(s) after approval")
     db.commit()
