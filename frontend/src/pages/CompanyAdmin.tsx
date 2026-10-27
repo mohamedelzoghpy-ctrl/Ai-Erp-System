@@ -155,8 +155,8 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
 
       {platform && (
         <div className="card" style={{ padding: 20, marginBottom: 16 }}>
-          <h2>إضافة شركة</h2>
           <form onSubmit={addCompany}>
+            <button className="btn btn-primary" disabled={busy} style={{ marginBottom: 12 }}>إنشاء الشركة</button>
             <div className="form-grid">
               <Field label="اسم الشركة"><input value={companyName} onChange={(e) => setCompanyName(e.target.value)} required /></Field>
               <Field label="رمز الشركة"><input dir="ltr" value={companyCode} onChange={(e) => setCompanyCode(e.target.value)} required /></Field>
@@ -165,7 +165,6 @@ export default function CompanyAdmin({ platform = false }: { platform?: boolean 
               <Field label="اسم مستخدم المدير الأول"><input dir="ltr" minLength={3} value={adminUsername} onChange={(e) => setAdminUsername(e.target.value)} required /></Field>
               <Field label="كلمة مرور المدير"><input type="password" minLength={8} value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)} required /></Field>
             </div>
-            <button className="btn btn-primary" disabled={busy}>إنشاء الشركة</button>
           </form>
         </div>
       )}
