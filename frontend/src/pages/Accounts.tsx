@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { api, qs } from "../api";
 import { useAuth } from "../auth";
+import { useI18n } from "../i18n";
 import { balanceNote, dateOnly, METHOD_LABEL, money } from "../format";
 import { useAction, useFetch, usePagedList } from "../hooks";
 import type { Payment, PaymentMethod, Statement } from "../types";
@@ -195,6 +196,7 @@ export function StatementDialog({ kind, partyId, partyName, onClose }: { kind: P
 // ------------------------------------------------------------ payments list page
 export default function Payments() {
   const { isManager } = useAuth();
+  const { t } = useI18n();
   const safes = useFetch(() => api.get<{ id: number; name: string; code: string; balance: string; is_active: boolean }[]>("/safes"), "safes");
   const banks = useFetch(() => api.get<{ id: number; name: string; code: string; account_number: string | null; balance: string; is_active: boolean }[]>("/banks"), "banks");
   const customers = useFetch(() => api.get<{ id: number; name: string; balance?: string }[]>("/customers?limit=500"), "acc-customers");
@@ -222,12 +224,12 @@ export default function Payments() {
 
   return (
     <>
-      <PageHeader title="المقبوضات والمدفوعات" />
+      <PageHeader title={t("accounts.title")} />
       <div className="card" style={{ padding: 14, marginBottom: 16, display: "flex", gap: 8, flexWrap: "wrap" }}>
-        <button className="btn btn-primary" onClick={() => setShowReceiptPicker(true)}>+ سند قبض</button>
-        <button className="btn btn-primary" onClick={() => setShowPaymentPicker(true)}>+ سند صرف</button>
-        <button className="btn btn-primary" onClick={() => setShowSafeForm(true)}>+ إضافة خزينة</button>
-        <button className="btn btn-primary" onClick={() => setShowBankForm(true)}>+ إضافة بنك</button>
+        <button className="btn btn-primary" onClick={() => setShowReceiptPicker(true)}>+ {t("accounts.receipt")}</button>
+        <button className="btn btn-primary" onClick={() => setShowPaymentPicker(true)}>+ {t("accounts.payment")}</button>
+        <button className="btn btn-primary" onClick={() => setShowSafeForm(true)}>+ {t("accounts.addSafe")}</button>
+        <button className="btn btn-primary" onClick={() => setShowBankForm(true)}>+ {t("accounts.addBank")}</button>
       </div>
       <div className="card card-pad range-bar" style={{ marginBottom: 14 }}>
         <label className="range-field">
