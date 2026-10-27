@@ -4,6 +4,7 @@ import Layout from "./Layout";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import Products from "./pages/Products";
+import WarehouseBalances from "./pages/WarehouseBalances";
 import { Customers, Suppliers, Warehouses } from "./pages/MasterData";
 import { PurchaseOrders, SalesOrders } from "./pages/Orders";
 import Payments from "./pages/Accounts";
@@ -29,6 +30,7 @@ export default function App() {
       <Route element={<Layout />}>
         <Route index element={<Dashboard />} />
         <Route path="products" element={<Products />} />
+        <Route path="warehouse-balances" element={<WarehouseBalances />} />
         <Route path="warehouses" element={<Warehouses />} />
         <Route path="suppliers" element={<Suppliers />} />
         <Route path="customers" element={<Customers />} />
