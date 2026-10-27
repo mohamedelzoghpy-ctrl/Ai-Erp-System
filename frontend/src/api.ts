@@ -128,6 +128,21 @@ export const api = {
   patch: <T>(path: string, body: unknown) => request<T>("PATCH", path, body),
   put: <T>(path: string, body: unknown) => request<T>("PUT", path, body),
   del: (path: string) => request<void>("DELETE", path),
+  upload: async <T>(path: string, file: File): Promise<T> => {
+    const headers: Record<string, string> = {};
+    if (token) headers.Authorization = `Bearer ${token}`;
+    const fd = new FormData();
+    fd.append("file", file);
+    const res = await fetch(API_URL(path), { method: "POST", headers, body: fd });
+    if (!res.ok) {
+      if (res.status === 401 && onUnauthorized) onUnauthorized();
+      const text = await res.text();
+      let detail: unknown = null;
+      try { detail = JSON.parse(text)?.detail; } catch { detail = text; }
+      throw new ApiError(res.status, messageFromDetail(res.status, detail));
+    }
+    return (await res.json()) as T;
+  },
   login: (username: string, password: string) =>
     request<{ access_token: string }>("POST", "/auth/login", undefined, new URLSearchParams({ username, password })),
 };

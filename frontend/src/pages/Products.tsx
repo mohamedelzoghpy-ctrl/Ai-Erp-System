@@ -36,6 +36,22 @@ export default function Products() {
         <button className="btn btn-primary" onClick={() => setEditing("new")}>
           + منتج جديد
         </button>
+        <button className="btn" disabled={action.busy} onClick={() => void action.run(() => api.download("/products/export/xlsx", "products.xlsx"))}>
+          ⬇ تصدير Excel
+        </button>
+        <label className="btn" style={{ cursor: "pointer" }}>
+          ⬆ استيراد Excel
+          <input type="file" accept=".xlsx,.xls" style={{ display: "none" }} onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (!f) return;
+            void action.run(async () => {
+              const res = await api.upload<{ updated: number; created: number; errors: string[] }>("/products/import/xlsx", f);
+              alert(`تم: ${res.updated} تحديث، ${res.created} جديد` + (res.errors.length ? `\\nأخطاء: ${res.errors.join(", ")}` : ""));
+              products.reload();
+            });
+            e.target.value = "";
+          }} />
+        </label>
       </PageHeader>
 
       <div className="toolbar page-actions" style={{ marginBottom: 14 }}>

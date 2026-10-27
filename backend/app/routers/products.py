@@ -4,12 +4,13 @@ from decimal import Decimal
 
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..pagination import paginate
 from ..audit import audit
+from .. import exports
 from ..deps import get_current_user, require_manager, user_role
 from .. import models, schemas, stock
 from ..database import get_db
@@ -99,8 +100,114 @@ def list_products(
     return rows
 
 
+@router.get("/export/xlsx")
+def export_products_xlsx(db: Session = Depends(get_db)):
+    products = db.query(models.Product).order_by(models.Product.id).all()
+    rows = []
+    for p in products:
+        wh = db.get(models.Warehouse, p.warehouse_id) if p.warehouse_id else None
+        sup = db.get(models.Supplier, p.supplier_id) if p.supplier_id else None
+        rows.append([
+            ("text", p.sku),
+            ("text", p.name),
+            ("text", p.unit),
+            ("money", p.cost_price),
+            ("money", p.sale_price),
+            ("int", p.quantity),
+            ("int", p.reorder_level),
+            ("text", wh.name if wh else ""),
+            ("text", sup.name if sup else ""),
+            ("text", "نعم" if p.is_active else "لا"),
+        ])
+    content = exports.build_tables_xlsx(
+        "قائمة المنتجات", "", [("المنتجات", ["الكود", "الاسم", "الوحدة", "سعر التكلفة", "سعر البيع", "الكمية", "حد إعادة الطلب", "المخزن", "المورد", "نشط"], rows)]
+    )
+    return Response(content=content, media_type=exports.XLSX_MIME, headers={"Content-Disposition": 'attachment; filename="products.xlsx"', "Cache-Control": "no-store"})
+
+
+@router.post("/import/xlsx")
+async def import_products_xlsx(file: UploadFile = File(...), db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    import io
+    import openpyxl
+    content = await file.read()
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(content), data_only=True)
+    except Exception:
+        raise HTTPException(422, "Invalid Excel file")
+    ws = wb.active
+    header = [str(c.value).strip() if c.value is not None else "" for c in ws[1]]
+
+    def col(name: str):
+        for i, h in enumerate(header):
+            if name in h:
+                return i
+        return None
+
+    sku_i = col("الكود")
+    if sku_i is None:
+        sku_i = col("SKU")
+    if sku_i is None:
+        sku_i = 0
+    name_i = col("الاسم")
+    if name_i is None:
+        name_i = col("Name")
+    unit_i = col("الوحدة")
+    if unit_i is None:
+        unit_i = col("Unit")
+    cost_i = col("التكلفة")
+    if cost_i is None:
+        cost_i = col("Cost")
+    sale_i = col("البيع")
+    if sale_i is None:
+        sale_i = col("Sale")
+    reorder_i = col("إعادة الطلب")
+    if reorder_i is None:
+        reorder_i = col("Reorder")
+
+    company_id = db.info["company_id"]
+    updated = 0
+    created = 0
+    errors = []
+    for row in ws.iter_rows(min_row=2, values_only=True):
+        if not row or all(v is None for v in row):
+            continue
+        sku = str(row[sku_i]).strip() if sku_i is not None and row[sku_i] is not None else ""
+        if not sku:
+            continue
+        name = str(row[name_i]).strip() if (name_i is not None and row[name_i] is not None) else sku
+        product = db.query(models.Product).filter(models.Product.company_id == company_id, models.Product.sku == sku).one_or_none()
+        if product is None:
+            product = models.Product(company_id=company_id, sku=sku, name=name, unit="قطعة", is_active=True)
+            db.add(product)
+            db.flush()
+            created += 1
+        if name_i is not None and row[name_i] is not None:
+            product.name = str(row[name_i]).strip()
+        if unit_i is not None and row[unit_i] is not None:
+            product.unit = str(row[unit_i]).strip() or product.unit
+        if cost_i is not None and row[cost_i] is not None:
+            try:
+                product.cost_price = Decimal(str(row[cost_i]))
+            except Exception:
+                errors.append(f"{sku}: invalid cost_price")
+        if sale_i is not None and row[sale_i] is not None:
+            try:
+                product.sale_price = Decimal(str(row[sale_i]))
+            except Exception:
+                errors.append(f"{sku}: invalid sale_price")
+        if reorder_i is not None and row[reorder_i] is not None:
+            try:
+                product.reorder_level = int(row[reorder_i])
+            except Exception:
+                errors.append(f"{sku}: invalid reorder_level")
+        updated += 1
+    db.commit()
+    return {"updated": updated, "created": created, "errors": errors}
+
+
 @router.get("/{product_id}", response_model=schemas.ProductOut)
 def get_product(product_id: int, db: Session = Depends(get_db)):
+    return _product_or_404(db, product_id)
     return _product_or_404(db, product_id)
 
 
