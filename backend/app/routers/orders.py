@@ -31,6 +31,16 @@ def _require(db: Session, model, obj_id: int, label: str):
     return obj
 
 
+def _products_by_id(db: Session, items) -> dict:
+    """Loads every product of an order in one query; 422 on the first missing id (same message as `_require`)."""
+    ids = list(dict.fromkeys(item.product_id for item in items))
+    found = {p.id: p for p in db.query(models.Product).filter(models.Product.id.in_(ids)).all()} if ids else {}
+    for pid in ids:
+        if pid not in found:
+            raise HTTPException(422, f"Product {pid} does not exist")
+    return found
+
+
 def _order_or_404(db: Session, model, order_id: int, label: str):
     order = db.get(model, order_id)
     if order is None:
@@ -63,8 +73,8 @@ def create_purchase_order(payload: schemas.PurchaseOrderCreate, db: Session = De
         supplier_id=payload.supplier_id, warehouse_id=payload.warehouse_id, notes=payload.notes  # type: ignore
     )
     total = Decimal("0")
+    _products_by_id(db, payload.items)  # one query instead of one per line
     for item in payload.items:
-        _require(db, models.Product, item.product_id, "Product")
         order.items.append(
             models.PurchaseOrderItem(
                 product_id=item.product_id, quantity=item.quantity, unit_cost=item.unit_cost  # type: ignore
@@ -163,8 +173,9 @@ def create_sales_order(payload: schemas.SalesOrderCreate, db: Session = Depends(
         customer_id=payload.customer_id, warehouse_id=payload.warehouse_id, notes=payload.notes, created_by=user.id  # type: ignore
     )
     total = Decimal("0")
+    products = _products_by_id(db, payload.items)  # one query instead of one per line
     for item in payload.items:
-        product = _require(db, models.Product, item.product_id, "Product")
+        product = products[item.product_id]
         price = item.unit_price if item.unit_price is not None else product.sale_price
         order.items.append(
             models.SalesOrderItem(

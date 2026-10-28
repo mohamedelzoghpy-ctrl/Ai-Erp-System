@@ -26,6 +26,11 @@ SECRET_KEY = os.getenv("SECRET_KEY")
 if not SECRET_KEY:
     SECRET_KEY = secrets.token_urlsafe(48)
     logger.warning("SECRET_KEY is not set: using a random key; all tokens are invalidated on restart.")
+elif SECRET_KEY.startswith("change-me"):
+    # The placeholder from .env.example is public: anyone could forge tokens with it.
+    raise RuntimeError("SECRET_KEY still has the placeholder value from .env.example; set a long random string.")
+elif len(SECRET_KEY) < 32:
+    logger.warning("SECRET_KEY is shorter than 32 characters; use a longer random key.")
 
 _PBKDF2_ITERATIONS = 600_000
 

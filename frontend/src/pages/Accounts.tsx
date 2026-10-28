@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { api, getToken, qs } from "../api";
+import { api, qs } from "../api";
 import { useAuth } from "../auth";
 import { useI18n } from "../i18n";
 import { balanceNote, dateOnly, METHOD_LABEL, money } from "../format";
@@ -134,10 +134,7 @@ export function StatementDialog({ kind, partyId, partyName, onClose }: { kind: P
             ⬇ Excel
           </button>
           <button className="btn btn-sm btn-primary" disabled={download.busy || !valid} onClick={() => void download.run(async () => {
-            const url = `/api${base}/pdf${q}${q ? "&" : "?"}token=${encodeURIComponent(getToken() ?? "")}`;
-            const res = await fetch(url);
-            if (!res.ok) throw new Error("تعذّر تحميل السند");
-            const blob = await res.blob();
+            const { blob } = await api.fetchFile(`${base}/pdf${q}`, "statement.pdf");
             const objUrl = URL.createObjectURL(blob);
             const iframe = document.createElement("iframe");
             iframe.style.position = "fixed"; iframe.style.right = "0"; iframe.style.bottom = "0";

@@ -83,8 +83,8 @@ async function request<T>(method: string, path: string, body?: unknown, form?: U
   return data as T;
 }
 
-/** Downloads a file from an authenticated endpoint (a plain link cannot send the Bearer token). */
-async function download(path: string, fallbackName: string): Promise<void> {
+/** Fetches a file from an authenticated endpoint (a plain link cannot send the Bearer token, and the token must not go in the URL). */
+async function fetchFile(path: string, fallbackName = "download"): Promise<{ blob: Blob; filename: string }> {
   const headers: Record<string, string> = {};
   if (token) headers.Authorization = `Bearer ${token}`;
   let res: Response;
@@ -105,10 +105,16 @@ async function download(path: string, fallbackName: string): Promise<void> {
   }
   const blob = await res.blob();
   const match = /filename="?([^";]+)"?/i.exec(res.headers.get("Content-Disposition") ?? "");
+  return { blob, filename: match ? match[1] : fallbackName };
+}
+
+/** Downloads a file from an authenticated endpoint. */
+async function download(path: string, fallbackName: string): Promise<void> {
+  const { blob, filename } = await fetchFile(path, fallbackName);
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = match ? match[1] : fallbackName;
+  a.download = filename;
   document.body.appendChild(a);
   a.click();
   a.remove();
@@ -117,6 +123,7 @@ async function download(path: string, fallbackName: string): Promise<void> {
 
 export const api = {
   download,
+  fetchFile,
   get: <T>(path: string) => request<T>("GET", path),
   /** One page of a list endpoint plus the total number of matches (X-Total-Count). */
   getPage: async <T>(path: string): Promise<{ items: T[]; total: number }> => {

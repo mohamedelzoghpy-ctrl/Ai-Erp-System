@@ -33,3 +33,14 @@ def test_access_token_rejects_expired_tokens():
     token = create_access_token(123, expires_minutes=-1)
 
     assert decode_access_token(token) is None
+
+
+def test_placeholder_secret_key_is_refused_at_startup():
+    import subprocess
+    import sys
+
+    code = "import app.security"
+    bad = subprocess.run([sys.executable, "-c", code], env={"SECRET_KEY": "change-me-to-a-long-random-string", "PATH": ""}, capture_output=True, text=True)
+    assert bad.returncode != 0 and "placeholder" in bad.stderr
+    good = subprocess.run([sys.executable, "-c", code], env={"SECRET_KEY": "x" * 48, "PATH": ""}, capture_output=True, text=True)
+    assert good.returncode == 0, good.stderr

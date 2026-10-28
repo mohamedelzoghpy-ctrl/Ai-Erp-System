@@ -172,3 +172,10 @@ def test_approving_a_transfer_rechecks_changed_warehouses(api):
     ok(api.post(f"/stock-transfers/{t['id']}/approve", json=base))
     assert by_wh(api, p["id"]) == {w1["id"]: 7, w2["id"]: 3}
     ok(api.post(f"/stock-transfers/{t['id']}/approve", json=base), 409)  # already approved
+
+
+def test_token_in_the_url_is_not_accepted(api):
+    token = api.headers["Authorization"].split()[1]
+    plain = TestClient(app)  # no Authorization header
+    assert plain.get(f"/products?token={token}").status_code == 401
+    assert plain.get("/products", headers={"Authorization": f"Bearer {token}"}).status_code == 200

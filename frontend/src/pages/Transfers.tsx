@@ -1,6 +1,6 @@
 import { useState, useRef, type FormEvent } from "react";
 import { useSearchParams } from "react-router-dom";
-import { api, getToken } from "../api";
+import { api } from "../api";
 import { useAuth } from "../auth";
 import { useI18n } from "../i18n";
 import { dateTime, num } from "../format";
@@ -336,10 +336,7 @@ function ViewTransfer({ t, onClose, onApprove, onReject, onEdit }: { t: StockTra
           ⬇ سند التحويل PDF
         </button>
         <button className="btn" disabled={dl.busy} onClick={() => void dl.run(async () => {
-          const url = `/api/stock-transfers/${t.id}/pdf?token=${encodeURIComponent(getToken() ?? "")}`;
-          const res = await fetch(url);
-          if (!res.ok) throw new Error("تعذّر تحميل السند");
-          const blob = await res.blob();
+          const { blob } = await api.fetchFile(`/stock-transfers/${t.id}/pdf`, `transfer-TR-${t.id}.pdf`);
           const objUrl = URL.createObjectURL(blob);
           const iframe = document.createElement("iframe");
           iframe.style.position = "fixed";

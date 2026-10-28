@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { api, getToken } from "../api";
+import { api } from "../api";
 import { useAuth } from "../auth";
 import { useI18n } from "../i18n";
 import { dateTime, money, num, REASON_LABEL } from "../format";
@@ -38,13 +38,9 @@ export default function Products() {
         <button className="btn btn-primary" onClick={() => setEditing("new")}>
           {t("products.new")}
         </button>
-        <a
-          className="btn"
-          href={`/api/products/export/xlsx?token=${encodeURIComponent(getToken() ?? "")}`}
-          download="products.xlsx"
-        >
+        <button className="btn" disabled={action.busy} onClick={() => void action.run(() => api.download("/products/export/xlsx", "products.xlsx"))}>
           ⬇ export excel
-        </a>
+        </button>
         <label className="btn" style={{ cursor: "pointer" }}>
           ⬆ import excel
           <input type="file" accept=".xlsx,.xls" style={{ display: "none" }} onChange={(e) => {
