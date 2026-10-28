@@ -607,40 +607,6 @@ class AuditLogOut(ORMModel):
 
 
 # ---------- Point of sale ----------
-class PosItem(BaseModel):
-    product_id: int
-    quantity: int = Field(gt=0)
-
-
-class PosCheckout(BaseModel):  # type: ignore
-    warehouse_id: int
-    items: List[PosItem] = Field(min_length=1)
-    customer_id: Optional[int] = None  # default: the shared "walk-in" customer
-    pay_now: bool = True  # False = sale on the customer's account (needs customer_id)
-    method: PaymentMethod = "cash"
-    notes: Optional[str] = None
-
-
-class PosReceiptLine(BaseModel):
-    name: str
-    sku: str
-    quantity: int
-    unit_price: Decimal
-    total: Decimal
-
-
-class PosReceipt(BaseModel):  # type: ignore
-    order_id: int
-    payment_id: Optional[int]
-    total: Decimal
-    paid: bool
-    customer_name: str
-    method: Optional[str]
-    created_at: datetime
-    cashier: str
-    lines: List[PosReceiptLine]
-
-
 class PosInfo(BaseModel):
     company_name: str
     company_phone: str
@@ -648,7 +614,6 @@ class PosInfo(BaseModel):
     currency: str
 
 
-# ---------- Point of sale ----------
 class PosCheckout(BaseModel):
     warehouse_id: int
     customer_id: Optional[int] = Field(default=None, description="Omit for a walk-in cash customer (must pay in full).")

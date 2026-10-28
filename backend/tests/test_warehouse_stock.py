@@ -157,3 +157,18 @@ def test_staff_only_see_and_move_stock_of_their_own_warehouses(api):
     assert r.status_code == 422, r.text  # cannot send to a warehouse they have no access to
     assert by_wh(api, p["id"]) == {w1["id"]: 6, w2["id"]: 4}
     del me, branch
+
+
+def test_approving_a_transfer_rechecks_changed_warehouses(api):
+    w1, w2 = make_warehouses(api)
+    p = make_product(api, "A", 10, w1["id"])
+    base = {"from_warehouse_id": w1["id"], "to_warehouse_id": w2["id"], "items": [{"product_id": p["id"], "quantity": 3}]}
+    t = ok(api.post("/stock-transfers", json=base), 201)
+    # an approver cannot redirect the transfer to the same, a missing or an inactive warehouse
+    ok(api.post(f"/stock-transfers/{t['id']}/approve", json={**base, "to_warehouse_id": w1["id"]}), 422)
+    ok(api.post(f"/stock-transfers/{t['id']}/approve", json={**base, "to_warehouse_id": 999}), 422)
+    assert by_wh(api, p["id"]) == {w1["id"]: 10}
+    assert ok(api.get(f"/stock-transfers/{t['id']}"))["status"] == "pending"
+    ok(api.post(f"/stock-transfers/{t['id']}/approve", json=base))
+    assert by_wh(api, p["id"]) == {w1["id"]: 7, w2["id"]: 3}
+    ok(api.post(f"/stock-transfers/{t['id']}/approve", json=base), 409)  # already approved

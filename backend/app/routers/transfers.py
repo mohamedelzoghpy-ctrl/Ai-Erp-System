@@ -10,7 +10,6 @@ from ..audit import audit
 from ..database import get_db
 from ..deps import get_current_user
 from ..pagination import paginate
-from .orders import _locked_product
 
 router = APIRouter(prefix="/stock-transfers", tags=["stock-transfers"])
 
@@ -22,16 +21,20 @@ def _get(db: Session, transfer_id: int) -> models.StockTransfer:
     return t
 
 
-@router.post("", response_model=schemas.TransferOut, status_code=status.HTTP_201_CREATED)
-def create_transfer(payload: schemas.TransferCreate, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
-    if payload.from_warehouse_id == payload.to_warehouse_id:
+def _check_warehouses(db: Session, from_id: int, to_id: int) -> None:
+    if from_id == to_id:
         raise HTTPException(422, "Source and destination warehouses must differ")
-    for wid in (payload.from_warehouse_id, payload.to_warehouse_id):
+    for wid in (from_id, to_id):
         w = db.get(models.Warehouse, wid)
         if w is None:
             raise HTTPException(422, f"Warehouse {wid} does not exist")
         if not w.is_active:  # type: ignore
             raise HTTPException(422, f"Warehouse '{w.name}' is inactive")
+
+
+@router.post("", response_model=schemas.TransferOut, status_code=status.HTTP_201_CREATED)
+def create_transfer(payload: schemas.TransferCreate, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    _check_warehouses(db, payload.from_warehouse_id, payload.to_warehouse_id)
     wanted: dict = {}
     for it in payload.items:  # duplicate lines are merged so they are validated together
         wanted[it.product_id] = wanted.get(it.product_id, 0) + it.quantity
@@ -60,7 +63,6 @@ def create_transfer(payload: schemas.TransferCreate, db: Session = Depends(get_d
         db.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, "Insufficient stock: " + "; ".join(shortages))
 
-    ref = f"TR-{transfer.id}"
     for pid, qty in wanted.items():
         transfer.items.append(models.StockTransferItem(product_id=pid, quantity=qty))  # type: ignore
     audit(db, user, "create", "stock_transfer", transfer, f"{len(wanted)} صنف · {payload.from_warehouse_id}→{payload.to_warehouse_id} (pending)")
@@ -99,15 +101,18 @@ def pending_count(db: Session = Depends(get_db), user: models.User = Depends(get
 
 @router.post("/{transfer_id}/approve", response_model=schemas.TransferOut)
 def approve_transfer(transfer_id: int, payload: Optional[schemas.TransferCreate] = None, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
-    from ..deps import require_manager, user_role
+    from ..deps import user_role
     if user_role(user) not in ("admin", "manager"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Only a manager or admin can approve transfers")
     t = _get(db, transfer_id)
+    # Lock the row and re-read it, so two concurrent approvals cannot both move the stock.
+    db.refresh(t, with_for_update=True)
     if t.status != "pending":  # type: ignore
         raise HTTPException(409, f"Transfer is already {t.status}")
     # optional modification of items/warehouses/notes
     if payload is not None:
         if payload.from_warehouse_id != t.from_warehouse_id or payload.to_warehouse_id != t.to_warehouse_id:
+            _check_warehouses(db, payload.from_warehouse_id, payload.to_warehouse_id)
             t.from_warehouse_id = payload.from_warehouse_id  # type: ignore
             t.to_warehouse_id = payload.to_warehouse_id  # type: ignore
         if payload.notes is not None:
