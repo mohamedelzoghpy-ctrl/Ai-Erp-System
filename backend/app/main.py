@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from . import models  # noqa: F401  (importing registers the tables on Base.metadata)
 from .database import Base, engine, get_db
 from .deps import get_current_user
-from .routers import audit as audit_router, auth, pos, returns, shifts, stocktakes, transfers, masterdata, orders, payments, products, reports, tenancy, safes_banks
+from .routers import audit as audit_router, auth, cheques, coa, cost_centers, data_io, departments, fixed_assets, fiscal_years, general_ledger, journal_entries, manufacturing, pos, reports, reports_fin, returns, reps, shifts, stocktakes, transfers, masterdata, orders, payments, products, tenancy, safes_banks
 
 
 @asynccontextmanager
@@ -53,8 +53,11 @@ if _origins:
     )
 
 app.include_router(auth.router)  # login / setup are public; user admin is protected inside
+app.include_router(products.image_router)  # GET /products/{id}/image is public (serves <img> sources)
 app.include_router(tenancy.platform)
 app.include_router(tenancy.company)
+app.include_router(departments.router)
+app.include_router(reps.router)
 
 # Every business route requires a logged-in user.
 _protected = [Depends(get_current_user)]
@@ -62,6 +65,7 @@ app.include_router(masterdata.warehouses, dependencies=_protected)
 app.include_router(masterdata.suppliers, dependencies=_protected)
 app.include_router(masterdata.customers, dependencies=_protected)
 app.include_router(products.router, dependencies=_protected)
+app.include_router(data_io.router, dependencies=_protected)
 app.include_router(orders.purchases, dependencies=_protected)
 app.include_router(orders.sales, dependencies=_protected)
 app.include_router(pos.router, dependencies=_protected)
@@ -72,11 +76,23 @@ app.include_router(returns.sales_returns, dependencies=_protected)
 app.include_router(returns.purchase_returns, dependencies=_protected)
 app.include_router(audit_router.router, dependencies=_protected)
 app.include_router(payments.payments, dependencies=_protected)
+app.include_router(payments.categories, dependencies=_protected)
+app.include_router(cheques.router, dependencies=_protected)
+app.include_router(manufacturing.boms, dependencies=_protected)
+app.include_router(manufacturing.production_orders, dependencies=_protected)
+app.include_router(manufacturing.lines, dependencies=_protected)
 app.include_router(payments.customer_accounts, dependencies=_protected)
 app.include_router(payments.supplier_accounts, dependencies=_protected)
+app.include_router(coa.router, dependencies=_protected)
 app.include_router(safes_banks.safes, dependencies=_protected)
 app.include_router(safes_banks.banks, dependencies=_protected)
-app.include_router(reports.router)  # protected per endpoint (financial reports need manager/admin)
+app.include_router(reports.router)
+app.include_router(reports_fin.router, dependencies=_protected)
+app.include_router(cost_centers.router, dependencies=_protected)
+app.include_router(fiscal_years.router, dependencies=_protected)
+app.include_router(general_ledger.router, dependencies=_protected)
+app.include_router(journal_entries.router, dependencies=_protected)
+app.include_router(fixed_assets.router, dependencies=_protected)
 
 
 @app.get("/", tags=["system"])

@@ -48,7 +48,7 @@ except Exception:  # unknown zone name or missing tzdata: fall back to UTC rathe
     LOCAL_TZ = timezone.utc
 
 STATUS_LABEL = {"draft": "مسودة", "received": "تم الاستلام", "confirmed": "مؤكد", "cancelled": "ملغي"}
-KIND_TITLE = {"sales": "فاتورة بيع", "purchase": "أمر شراء"}
+KIND_TITLE = {"sales": "فاتورة بيع", "quotation": "بيان أسعار", "purchase": "فاتورة مشتريات"}
 
 PDF_MIME = "application/pdf"
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -667,6 +667,40 @@ def build_tables_xlsx(title: str, subtitle: str, tables: Iterable[Table]) -> byt
             ws.column_dimensions[get_column_letter(ci)].width = min(48, max(12, longest + 3))
         ws.freeze_panes = "A5"
 
+    out = io.BytesIO()
+    wb.save(out)
+    return out.getvalue()
+
+
+def decorate_template_xlsx(content: bytes, required_titles: Sequence[str], yes_no_title: Optional[str] = "نشط") -> bytes:
+    """Add a data-validation dropdown on the yes/no column and highlight required headers."""
+    import openpyxl
+    from openpyxl.comments import Comment
+    from openpyxl.styles import Font, PatternFill
+    from openpyxl.worksheet.datavalidation import DataValidation
+
+    wb = openpyxl.load_workbook(io.BytesIO(content))
+    ws = wb.active
+    req_fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
+    req_font = Font(color="7F6000", bold=True)
+    yes_col = None
+    for c in range(1, (ws.max_column or 0) + 1):  # type: ignore
+        title = str(ws.cell(row=4, column=c).value or "").strip()
+        if not title:
+            continue
+        if title.split("(")[0].strip() in required_titles:
+            cell = ws.cell(row=4, column=c)
+            cell.fill = req_fill
+            cell.font = req_font
+            cell.comment = Comment("عمود مطلوب — لا تتركه فاضيًا", "MOZAD ERP", height=100, width=220)
+        if title == yes_no_title:
+            yes_col = c
+    if yes_col:
+        dv = DataValidation(type="list", formula1='"نعم,لا"', allow_blank=True)
+        dv.error = "القيمة المسموحة: نعم أو لا فقط"
+        dv.errorTitle = "قيمة غير صالحة"
+        ws.add_data_validation(dv)
+        dv.add(f"{get_column_letter(yes_col)}5:{get_column_letter(yes_col)}500")
     out = io.BytesIO()
     wb.save(out)
     return out.getvalue()

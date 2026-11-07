@@ -1,6 +1,6 @@
 import { useState, useRef, type FormEvent } from "react";
 import { useSearchParams } from "react-router-dom";
-import { api, getToken } from "../api";
+import { api } from "../api";
 import { useAuth } from "../auth";
 import { useI18n } from "../i18n";
 import { dateTime, num } from "../format";
@@ -335,35 +335,8 @@ function ViewTransfer({ t, onClose, onApprove, onReject, onEdit }: { t: StockTra
         <button className="btn" disabled={dl.busy} onClick={() => void dl.run(() => api.download(`/stock-transfers/${t.id}/pdf`, `transfer-TR-${t.id}.pdf`))}>
           ⬇ سند التحويل PDF
         </button>
-        <button className="btn" disabled={dl.busy} onClick={() => void dl.run(async () => {
-          const url = `/api/stock-transfers/${t.id}/pdf?token=${encodeURIComponent(getToken() ?? "")}`;
-          const res = await fetch(url);
-          if (!res.ok) throw new Error("تعذّر تحميل السند");
-          const blob = await res.blob();
-          const objUrl = URL.createObjectURL(blob);
-          const iframe = document.createElement("iframe");
-          iframe.style.position = "fixed";
-          iframe.style.right = "0";
-          iframe.style.bottom = "0";
-          iframe.style.width = "0";
-          iframe.style.height = "0";
-          iframe.style.border = "0";
-          iframe.src = objUrl;
-          document.body.appendChild(iframe);
-          iframe.onload = () => {
-            try {
-              iframe.contentWindow?.focus();
-              iframe.contentWindow?.print();
-            } catch {
-              window.open(objUrl, "_blank");
-            }
-            setTimeout(() => {
-              document.body.removeChild(iframe);
-              URL.revokeObjectURL(objUrl);
-            }, 60_000);
-          };
-        })}>
-          🖨 print
+        <button className="btn" disabled={dl.busy} onClick={() => void dl.run(() => api.printPdf(`/stock-transfers/${t.id}/pdf`))}>
+          🖨 طباعة
         </button>
       </div>
     </Modal>

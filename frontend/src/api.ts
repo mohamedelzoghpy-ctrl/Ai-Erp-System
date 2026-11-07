@@ -83,8 +83,8 @@ async function request<T>(method: string, path: string, body?: unknown, form?: U
   return data as T;
 }
 
-/** Downloads a file from an authenticated endpoint (a plain link cannot send the Bearer token). */
-async function download(path: string, fallbackName: string): Promise<void> {
+/** Fetches a file from an authenticated endpoint as a Blob (Bearer auth, proper error handling). */
+export async function fetchBlob(path: string): Promise<Blob> {
   const headers: Record<string, string> = {};
   if (token) headers.Authorization = `Bearer ${token}`;
   let res: Response;
@@ -103,20 +103,52 @@ async function download(path: string, fallbackName: string): Promise<void> {
     }
     throw new ApiError(res.status, messageFromDetail(res.status, detail));
   }
-  const blob = await res.blob();
-  const match = /filename="?([^";]+)"?/i.exec(res.headers.get("Content-Disposition") ?? "");
+  return res.blob();
+}
+
+/** Downloads a file from an authenticated endpoint (a plain link cannot send the Bearer token). */
+async function download(path: string, fallbackName: string): Promise<void> {
+  const blob = await fetchBlob(path);
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = match ? match[1] : fallbackName;
+  a.download = fallbackName;
   document.body.appendChild(a);
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
+/** Fetches a document (PDF) with the Bearer token and sends it to the browser print dialog via a hidden iframe. */
+async function printPdf(path: string): Promise<void> {
+  const blob = await fetchBlob(path);
+  const objUrl = URL.createObjectURL(blob);
+  const iframe = document.createElement("iframe");
+  iframe.style.position = "fixed";
+  iframe.style.right = "0";
+  iframe.style.bottom = "0";
+  iframe.style.width = "0";
+  iframe.style.height = "0";
+  iframe.style.border = "0";
+  iframe.src = objUrl;
+  document.body.appendChild(iframe);
+  iframe.onload = () => {
+    try {
+      iframe.contentWindow?.focus();
+      iframe.contentWindow?.print();
+    } catch {
+      window.open(objUrl, "_blank");
+    }
+    setTimeout(() => {
+      iframe.remove();
+      URL.revokeObjectURL(objUrl);
+    }, 60_000);
+  };
+}
+
 export const api = {
   download,
+  printPdf,
   get: <T>(path: string) => request<T>("GET", path),
   /** One page of a list endpoint plus the total number of matches (X-Total-Count). */
   getPage: async <T>(path: string): Promise<{ items: T[]; total: number }> => {

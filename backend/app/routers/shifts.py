@@ -53,9 +53,9 @@ def _totals(db: Session, s: models.Shift) -> dict:
     def window(model):
         return (model.created_by == s.user_id, model.created_at >= s.opened_at, model.created_at <= end)
 
-    receipts_cash = _sum(db, P.amount, *window(P), P.status == "posted", P.customer_id.isnot(None), P.method == "cash")
-    receipts_other = _sum(db, P.amount, *window(P), P.status == "posted", P.customer_id.isnot(None), P.method != "cash")
-    supplier_cash = _sum(db, P.amount, *window(P), P.status == "posted", P.supplier_id.isnot(None), P.method == "cash")
+    receipts_cash = _sum(db, P.amount, *window(P), P.status == "posted", P.kind == "receipt", P.method == "cash")
+    receipts_other = _sum(db, P.amount, *window(P), P.status == "posted", P.kind == "receipt", P.method != "cash")
+    supplier_cash = _sum(db, P.amount, *window(P), P.status == "posted", P.kind == "payment", P.method == "cash")
     sales_refunds = _sum(db, SR.refund_amount, *window(SR), SR.method == "cash")
     purchase_refunds = _sum(db, PR.refund_amount, *window(PR), PR.method == "cash")
     return {

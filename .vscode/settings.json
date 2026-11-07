@@ -2,5 +2,7 @@
   "python.analysis.typeCheckingMode": "off",
   "python.analysis.diagnosticSeverityOverrides": {
     "reportMissingImports": "none"
-  }
+  },
+  "python.terminal.useEnvFile": true,
+  "Codegeex.SidebarUI.LanguagePreference": "English"
 }

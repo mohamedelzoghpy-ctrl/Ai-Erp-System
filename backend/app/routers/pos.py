@@ -3,14 +3,16 @@
 import os
 from datetime import datetime
 from decimal import Decimal
+from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
 from .. import exports, models, schemas
 from ..audit import audit
 from ..database import get_db
-from ..deps import get_current_user
+from ..deps import get_current_user, user_role
+from ..pagination import paginate
 from .orders import _require, apply_sale_stock
 from .shifts import open_shift_of
 
@@ -43,6 +45,17 @@ def _load_checkout_products(db: Session, items) -> dict[int, models.Product]:
     return products_by_id  # type: ignore
 
 
+@router.get("/invoices", response_model=List[schemas.SalesOrderOut])
+def list_pos_invoices(response: Response, skip: int = 0, limit: int = 50, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    query = db.query(models.SalesOrder).filter(models.SalesOrder.status == "confirmed")
+    if user_role(user) not in ("admin", "manager"):
+        query = query.filter(models.SalesOrder.created_by == user.id)
+    invoices = paginate(query, response, skip, min(limit, 100), models.SalesOrder.id.desc())
+    from ..accounts import attach_settlement
+    attach_settlement(db, "customer", invoices)
+    return invoices
+
+
 @router.post("/checkout", response_model=schemas.PosReceipt, status_code=status.HTTP_201_CREATED)
 def checkout(payload: schemas.PosCheckout, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     if REQUIRE_SHIFT and open_shift_of(db, user.id) is None:  # type: ignore
@@ -56,7 +69,7 @@ def checkout(payload: schemas.PosCheckout, db: Session = Depends(get_db), user: 
         customer = _walk_in(db)
 
     products = _load_checkout_products(db, payload.items)
-    order = models.SalesOrder(customer_id=customer.id, warehouse_id=payload.warehouse_id, notes=payload.notes, created_by=user.id)  # type: ignore
+    order = models.SalesOrder(customer_id=customer.id, warehouse_id=payload.warehouse_id, notes=payload.notes, created_by=user.id, rep_id=payload.rep_id if payload.rep_id and db.get(models.SalesRep, payload.rep_id) else None)  # type: ignore
     total = Decimal("0")
     for item in payload.items:
         product = products[item.product_id]

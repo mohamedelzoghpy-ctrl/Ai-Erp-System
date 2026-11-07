@@ -31,15 +31,22 @@ services:
       CURRENCY_LABEL: ${CURRENCY_LABEL:-ج.م}
       EXPORT_TIMEZONE: ${EXPORT_TIMEZONE:-Africa/Cairo}
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
 
   frontend:
     build: ./frontend
+    image: mozad-erp-frontend:local
+    container_name: mozad-erp-frontend
     restart: unless-stopped
     depends_on:
       - backend
     ports:
       - "8080:80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost/ >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
 volumes:
   pgdata:

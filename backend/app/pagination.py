@@ -2,7 +2,7 @@
 
 from fastapi import Response
 
-MAX_PAGE = 500
+MAX_PAGE = 1000
 
 
 def paginate(query, response: Response, skip: int, limit: int, *order_by):

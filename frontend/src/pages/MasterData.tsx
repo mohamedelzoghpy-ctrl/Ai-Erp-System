@@ -5,7 +5,7 @@ import { useI18n } from "../i18n";
 import { useAction, useFetch, usePagedList } from "../hooks";
 import type { Branch, Party, Warehouse } from "../types";
 import { balanceNote, money } from "../format";
-import { Alert, Empty, Field, Loading, Modal, PageHeader, Pager } from "../ui";
+import { ActiveBadge, Alert, Empty, Field, Loading, Modal, PageHeader, Pager } from "../ui";
 import { PaymentDialog, StatementDialog } from "./Accounts";
 
 /** Shared shape of the three master-data screens. */
@@ -20,10 +20,6 @@ function useCrud<T extends { id: number }>(path: string) {
   return { list, action };
 }
 
-function ActiveBadge({ active }: { active: boolean }) {
-  return active ? <span className="badge badge-confirmed">active</span> : <span className="badge badge-off">inactive</span>;
-}
-
 // ---------------------------------------------------------------- Warehouses
 export function Warehouses() {
   const { isManager } = useAuth();
@@ -33,7 +29,7 @@ export function Warehouses() {
   const [editing, setEditing] = useState<Warehouse | "new" | null>(null);
 
   const remove = (w: Warehouse) => {
-    if (!confirm(`delete المخزن "${w.name}"؟`)) return;
+    if (!confirm(`حذف المخزن "${w.name}"؟`)) return;
     void action.run(async () => {
       await api.del(`/warehouses/${w.id}`);
       list.reload();
@@ -49,7 +45,7 @@ export function Warehouses() {
           </button>
         )}
         {list.data && list.data.length > 0 && (
-          <button className="btn btn-primary" onClick={() => {
+          <button className="btn" onClick={() => {
             const w = window.open("", "_blank");
             if (!w) return;
             const rowsHtml = (list.data ?? []).map((wh) => `
@@ -58,7 +54,7 @@ export function Warehouses() {
                 <td>${wh.code}</td>
                 <td>${branches.data?.find((b) => b.id === wh.branch_id)?.name || "—"}</td>
                 <td>${wh.location || "—"}</td>
-                <td>${wh.is_active ? t("warehouses.active") : t("warehouses.inactive")}</td>
+                <td>${wh.is_active ? "نشط" : "موقوف"}</td>
               </tr>`).join("");
             w.document.write(`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>${t("warehouses.title")}</title>
               <style>
@@ -79,7 +75,7 @@ export function Warehouses() {
               </body></html>`);
             w.document.close();
           }}>
-            {t("warehouses.print")}
+            🖨 طباعة
           </button>
         )}
       </PageHeader>
@@ -111,11 +107,11 @@ export function Warehouses() {
                   </td>
                   <td className="actions">
                     <button className="btn btn-sm" onClick={() => setEditing(w)}>
-                      edit
+                      تعديل
                     </button>
                     {isManager && (
                       <button className="btn btn-sm btn-danger" onClick={() => remove(w)}>
-                        delete
+                        حذف
                       </button>
                     )}
                   </td>
@@ -152,7 +148,7 @@ function WarehouseForm({ initial, branches, onClose, onSaved }: { initial: Wareh
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    const body = { name: name.trim(), code: code.trim(), location: location.trim() || null, is_active: active, branch_id: branchId || null };
+    const body = { name: name.trim(), ...(!initial && !code.trim() ? {} : { code: code.trim() }), location: location.trim() || null, is_active: active, branch_id: branchId || null };
     void run(async () => {
       if (initial) await api.patch(`/warehouses/${initial.id}`, body);
       else await api.post("/warehouses", body);
@@ -161,15 +157,15 @@ function WarehouseForm({ initial, branches, onClose, onSaved }: { initial: Wareh
   };
 
   return (
-    <Modal title={initial ? "edit مخزن" : "مخزن جديد"} onClose={onClose}>
+    <Modal title={initial ? "تعديل مخزن" : "مخزن جديد"} onClose={onClose}>
       <form onSubmit={submit}>
         <Alert>{error}</Alert>
         <div className="form-grid">
           <Field label="اسم المخزن">
             <input value={name} onChange={(e) => setName(e.target.value)} required autoFocus />
           </Field>
-          <Field label="الكود" hint="فريد، مثل W1">
-            <input value={code} onChange={(e) => setCode(e.target.value)} required />
+          <Field label="الكود" hint={initial ? "فريد، مثل W1" : "اتركه فارغًا للتوليد التلقائي"}>
+            <input value={code} onChange={(e) => setCode(e.target.value)} placeholder={initial ? undefined : "يُولّد تلقائيًا عند الحفظ"} />
           </Field>
         </div>
         {!initial && (
@@ -212,6 +208,7 @@ function PartyScreen({ title, singular, path, kind }: { title: string; singular:
   const rows = list.data ?? [];
 
   const columns: Column<Party>[] = [
+    { header: t("party.code") ?? "الكود", cell: (p) => <span dir="ltr">{p.code || "—"}</span> },
     { header: t("common.name") ?? "الاسم", cell: (p) => p.name },
     ...(lang === "en" ? [] : [{ header: t("party.contactPerson") ?? "المسؤول", cell: (p: Party) => p.contact_person || "—" }]),
     { header: t("party.phone") ?? "الهاتف", cell: (p) => <span dir="ltr">{p.phone || "—"}</span> },
@@ -228,7 +225,7 @@ function PartyScreen({ title, singular, path, kind }: { title: string; singular:
   ];
 
   const remove = (p: Party) => {
-    if (!confirm(`delete ${singular} "${p.name}"؟`)) return;
+    if (!confirm(`حذف ${singular} "${p.name}"؟`)) return;
     void action.run(async () => {
       await api.del(`${path}/${p.id}`);
       list.reload();
@@ -245,12 +242,13 @@ function PartyScreen({ title, singular, path, kind }: { title: string; singular:
             if (!w) return;
             const rowsHtml = rows.map((p) => `
               <tr>
+                <td>${p.code || "—"}</td>
                 <td>${p.name}</td>
                 <td>${p.contact_person || "—"}</td>
                 <td>${p.phone || "—"}</td>
                 <td>${p.email || "—"}</td>
                 <td>${money(p.balance)}</td>
-                <td>${p.is_active ? "active" : "inactive"}</td>
+                <td>${p.is_active ? "نشط" : "موقوف"}</td>
               </tr>`).join("");
             w.document.write(`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>${title}</title>
               <style>
@@ -262,14 +260,14 @@ function PartyScreen({ title, singular, path, kind }: { title: string; singular:
               </style></head><body>
               <h1>${title}</h1>
               <table>
-                <thead><tr><th>الاسم</th><th>المسؤول</th><th>الهاتف</th><th>البريد</th><th>الرصيد</th><th>الحالة</th></tr></thead>
+                <thead><tr><th>الكود</th><th>الاسم</th><th>المسؤول</th><th>الهاتف</th><th>البريد</th><th>الرصيد</th><th>الحالة</th></tr></thead>
                 <tbody>${rowsHtml}</tbody>
               </table>
               <script>window.onload = () => { window.print(); };</script>
               </body></html>`);
             w.document.close();
           }}>
-            🖨 print
+            🖨 طباعة
           </button>
         )}
         <button className="btn btn-primary" onClick={() => setEditing("new")}>
@@ -304,11 +302,11 @@ function PartyScreen({ title, singular, path, kind }: { title: string; singular:
                       كشف حساب
                     </button>
                     <button className="btn btn-sm" onClick={() => setEditing(p)}>
-                      edit
+                      تعديل
                     </button>
                     {isManager && (
                       <button className="btn btn-sm btn-danger" onClick={() => remove(p)}>
-                        delete
+                        حذف
                       </button>
                     )}
                   </td>
@@ -399,12 +397,17 @@ function PartyForm({
   };
 
   return (
-    <Modal title={initial ? `edit ${singular}` : `${singular} جديد`} onClose={onClose}>
+    <Modal title={initial ? `تعديل ${singular}` : `${singular} جديد`} onClose={onClose}>
       <form onSubmit={submit}>
         <Alert>{error}</Alert>
         <Field label="الاسم">
           <input value={f.name} onChange={(e) => set("name", e.target.value)} required autoFocus />
         </Field>
+        {initial && (
+          <Field label="الكود" hint="يُولَّد تلقائيًا إذا تُرك فاضيًا عند الاستيراد أو الإضافة — يُعدَّل من الاستيراد فقط">
+            <input dir="ltr" value={initial.code || "—"} readOnly style={{ background: "#f6f7f9" }} />
+          </Field>
+        )}
         <div className="form-grid">
           <Field label="المسؤول">
             <input value={f.contact_person} onChange={(e) => set("contact_person", e.target.value)} />

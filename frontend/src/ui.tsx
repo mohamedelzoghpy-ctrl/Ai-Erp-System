@@ -1,7 +1,23 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { api } from "./api";
 import { STATUS_LABEL } from "./format";
-import type { OrderStatus } from "./types";
+import type { OrderStatus, Product } from "./types";
+
+/** صورة مصغّرة للمنتج: مرفوعة (bytea عبر /products/{id}/image) أو رابط إنترنت — أو 📦 */
+export function ProductThumb({ product }: { product: Product }) {
+  const [failed, setFailed] = useState(false);
+  const src = product.image_uploaded ? `/api/products/${product.id}/image` : product.image_url || null;
+  if (!src || failed) return <div className="product-thumb-empty" aria-label="بدون صورة">📦</div>;
+  return (
+    <img
+      className="product-thumb"
+      src={src}
+      alt={product.name}
+      loading="lazy"
+      onError={() => setFailed(true)}
+    />
+  );
+}
 
 export function PageHeader({ title, children }: { title: string; children?: ReactNode }) {
   return (
@@ -33,6 +49,16 @@ export function StatusBadge({ status }: { status: OrderStatus }) {
   return <span className={`badge badge-${status}`}>{STATUS_LABEL[status]}</span>;
 }
 
+/** حالة التفعيل الموحدة في كل الشاشات: «نشط» / «موقوف». */
+export function ActiveBadge({ active }: { active: boolean }) {
+  return (
+    <span className={`badge ${active ? "badge-confirmed" : "badge-off"}`}>
+      <span className={`status-dot ${active ? "status-dot-active" : ""}`} style={active ? undefined : { background: "var(--muted)" }} />
+      {active ? "نشط" : "موقوف"}
+    </span>
+  );
+}
+
 const PAY_LABEL = { paid: "مسددة", partial: "سداد جزئي", unpaid: "غير مسددة" } as const;
 
 /** Settlement state of a committed invoice / purchase order (nothing for drafts and cancelled orders). */
@@ -47,11 +73,13 @@ export function Modal({
   onClose,
   children,
   wide,
+  fullscreen,
 }: {
   title: string;
   onClose: () => void;
   children: ReactNode;
   wide?: boolean;
+  fullscreen?: boolean;
 }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -61,7 +89,7 @@ export function Modal({
 
   return (
     <div className="overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className={`modal${wide ? " modal-wide" : ""}`} role="dialog" aria-modal="true" aria-label={title}>
+      <div className={`modal${wide ? " modal-wide" : ""}${fullscreen ? " modal-fullscreen" : ""}`} role="dialog" aria-modal="true" aria-label={title}>
         <div className="modal-head">
           <h2>{title}</h2>
           <button className="icon-btn" onClick={onClose} aria-label="إغلاق">

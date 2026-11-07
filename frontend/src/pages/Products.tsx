@@ -1,11 +1,11 @@
 import { useState, type FormEvent } from "react";
-import { api, getToken } from "../api";
+import { api } from "../api";
 import { useAuth } from "../auth";
 import { useI18n } from "../i18n";
 import { dateTime, money, num, REASON_LABEL } from "../format";
 import { useAction, useFetch, usePagedList } from "../hooks";
 import type { Party, Product, StockMovement, ProductStockRow, Warehouse } from "../types";
-import { Alert, Empty, Field, Loading, Modal, nameOf, PageHeader, Pager } from "../ui";
+import { Alert, Empty, Field, Loading, Modal, PageHeader, Pager, ProductThumb } from "../ui";
 
 export default function Products() {
   const { isManager } = useAuth();
@@ -14,23 +14,128 @@ export default function Products() {
   const [lowOnly, setLowOnly] = useState(false);
   const [showInactive, setShowInactive] = useState(false);
   const [editing, setEditing] = useState<Product | "new" | null>(null);
-  const [adjusting, setAdjusting] = useState<Product | null>(null);
   const [history, setHistory] = useState<Product | null>(null);
 
   const products = usePagedList<Product>("/products", { search: search.trim(), low_stock: lowOnly, is_active: showInactive ? undefined : true });
   const warehouses = useFetch(() => api.get<Warehouse[]>("/warehouses?limit=500"), "wh");
   const suppliers = useFetch(() => api.get<Party[]>("/suppliers?limit=500"), "sup");
+  const rows = products.data ?? [];
   const action = useAction();
+  const [tmplBusy, setTmplBusy] = useState(false);
+  const [tmplNote, setTmplNote] = useState<string | null>(null);
+  type ImportSummary = { updated: number; created: number; errors: string[] };
+  type ImportCheck = ImportSummary & { file: File };
+  const [pending, setPending] = useState<ImportCheck | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [importNote, setImportNote] = useState<string | null>(null);
+  const [importing, setImporting] = useState(false);
 
-  const remove = (p: Product) => {
-    if (!confirm(`${t("common.delete")} "${p.name}"؟`)) return;
-    void action.run(async () => {
-      await api.del(`/products/${p.id}`);
-      products.reload();
-    });
+  // وضع تعديل الأسعار: خانات تكلفة/بيع في الجدول + حفظ المتغير منها دفعة واحدة
+  type PriceEdits = Record<number, { cost_price: string; sale_price: string }>;
+  const [priceEdit, setPriceEdit] = useState(false);
+  const [edits, setEdits] = useState<PriceEdits>({});
+  const [savingPrices, setSavingPrices] = useState(false);
+  const [priceNote, setPriceNote] = useState<string | null>(null);
+
+  const togglePriceEdit = (on: boolean) => {
+    setPriceEdit(on);
+    setEdits({});
+    setPriceNote(on ? "وضع تعديل الأسعار مفتوح — عدّل «التكلفة» و«سعر البيع» داخل الجدول، ثم دوس «حفظ الأسعار»." : null);
+    if (on) {
+      const init: PriceEdits = {};
+      for (const p of rows) init[p.id] = { cost_price: String(p.cost_price), sale_price: String(p.sale_price) };
+      setEdits(init);
+    }
   };
 
-  const rows = products.data ?? [];
+  const setEdit = (id: number, key: "cost_price" | "sale_price", v: string) => {
+    // اكتب بيدك: عربي أو إنجليزي، نقط أو فاصلة — كل الخطوط بتتحول شكل واحد موحد هنا
+    const t = v
+      .replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)))
+      .replace(/[۰-۹]/g, (d) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(d)))
+      .replace(/[٫,،]/g, ".")
+      .replace(/[^0-9.]/g, "")
+      .replace(/\.(?=.*\.)/g, "");
+    setEdits((prev) => ({ ...prev, [id]: { ...(prev[id] ?? { cost_price: "", sale_price: "" }), [key]: t } }));
+  };
+
+  const changedRows = rows.filter((p) => {
+    const e = edits[p.id];
+    if (!e) return false;
+    const c = Number(e.cost_price), s = Number(e.sale_price);
+    const costChanged = e.cost_price !== "" && c !== Number(p.cost_price);
+    const saleChanged = e.sale_price !== "" && s !== Number(p.sale_price);
+    return costChanged || saleChanged;
+  });
+
+  const savePrices = async () => {
+    setSavingPrices(true);
+    let n = 0;
+    const errs: string[] = [];
+    for (const p of changedRows) {
+      const e = edits[p.id];
+      const body: Record<string, string> = {};
+      if (Number(e.cost_price) !== Number(p.cost_price)) body.cost_price = e.cost_price || "0";
+      if (Number(e.sale_price) !== Number(p.sale_price)) body.sale_price = e.sale_price || "0";
+      try {
+        await api.patch(`/products/${p.id}`, body);
+        n += 1;
+      } catch (err) {
+        errs.push(`${p.sku}: ${(err as Error).message}`);
+      }
+    }
+    setSavingPrices(false);
+    setEdits({});
+    setPriceNote(`تم حفظ أسعار ${n} صنف` + (errs.length ? ` — أخطاء: ${errs.slice(0, 3).join(" | ")}` : "") );
+    products.reload();
+  };
+
+  // وضع تعديل حد الطلب انتقل لصفحة «تنبيهات نقص المخزون» (LowStock) — هنا تُعدَّل الأسعار فقط، وحد الطلب من نموذج تعديل المنتج.
+
+  const downloadTemplate = async () => {
+    setTmplBusy(true);
+    setTmplNote(null);
+    try {
+      await api.download("/products/import-template/xlsx", "products-upload-template.xlsx");
+      setTmplNote("نزل النموذج في «التنزيلات» — املأ الأعمدة وارفعه من زرار الاستيراد.");
+    } catch (e) {
+      setTmplNote((e as Error).message);
+    } finally {
+      setTmplBusy(false);
+    }
+  };
+
+  // اختبار النموذج أولًا (dry run بدون تسجيل) — العدّاد يظهر في المودال ثم بعد الرفع الفعلي
+  const checkFile = async (f: File) => {
+    setChecking(true);
+    setImportNote(null);
+    try {
+      const res = await api.upload<ImportSummary>("/products/import/xlsx?dry_run=true", f);
+      setPending({ file: f, ...res });
+    } catch (e) {
+      setImportNote((e as Error).message);
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  const confirmImport = async () => {
+    if (!pending) return;
+    setImporting(true);
+    try {
+      const res = await api.upload<ImportSummary>("/products/import/xlsx", pending.file);
+      setImportNote(
+        `العدّاد: ${res.created} جديد · ${res.updated} تحديث · ${res.errors.length} خطأ` +
+          (res.errors.length ? ` — آخر الأخطاء: ${res.errors.slice(0, 3).join(" | ")}` : ""),
+      );
+      setPending(null);
+      products.reload();
+    } catch (e) {
+      setImportNote((e as Error).message);
+    } finally {
+      setImporting(false);
+    }
+  };
 
   return (
     <>
@@ -38,44 +143,41 @@ export default function Products() {
         <button className="btn btn-primary" onClick={() => setEditing("new")}>
           {t("products.new")}
         </button>
-        <a
+        <button
           className="btn"
-          href={`/api/products/export/xlsx?token=${encodeURIComponent(getToken() ?? "")}`}
-          download="products.xlsx"
+          disabled={action.busy}
+          onClick={() => void action.run(() => api.download("/products/export/xlsx", "products.xlsx"))}
         >
-          ⬇ export excel
-        </a>
+          ⬇ تصدير Excel
+        </button>
+        <button className="btn" disabled={tmplBusy} onClick={() => void downloadTemplate()}>
+          {tmplBusy ? "… جارٍ التنزيل" : "⬇ نموذج رفع المنتجات"}
+        </button>
         <label className="btn" style={{ cursor: "pointer" }}>
-          ⬆ import excel
+          {checking ? "… جارٍ الاختبار" : "⬆ استيراد Excel"}
           <input type="file" accept=".xlsx,.xls" style={{ display: "none" }} onChange={(e) => {
             const f = e.target.files?.[0];
             if (!f) return;
-            void action.run(async () => {
-              const res = await api.upload<{ updated: number; created: number; errors: string[] }>("/products/import/xlsx", f);
-              alert(`تم: ${res.updated} تحديث، ${res.created} جديد` + (res.errors.length ? `\\nأخطاء: ${res.errors.join(", ")}` : ""));
-              products.reload();
-            });
+            void checkFile(f);
             e.target.value = "";
           }} />
         </label>
         <button className="btn" onClick={() => {
           const w = window.open("", "_blank");
           if (!w) return;
-          const rowsHtml = rows.map((p) => `
+          const rowsHtml = rows.map((p) => {
+            const sup = suppliers.data?.find((s) => s.id === p.supplier_id);
+            return `
             <tr>
               <td>${p.sku}</td>
               <td>${p.name}</td>
-              <td>${nameOf(suppliers.data, p.supplier_id) ?? ""}</td>
-              <td>${nameOf(warehouses.data, p.warehouse_id) ?? ""}</td>
+              <td>${sup?.code ?? ""}</td>
+              <td>${sup?.name ?? ""}</td>
+              <td>${p.unit || "—"}</td>
               <td>${money(p.cost_price)}</td>
               <td>${money(p.sale_price)}</td>
-              <td>${num(p.quantity)} ${p.unit}</td>
-              <td>${money(Number(p.quantity) * Number(p.sale_price))}</td>
-              <td>${money(Number(p.quantity) * Number(p.cost_price))}</td>
-            </tr>`).join("");
-          const totalQty = rows.reduce((s, p) => s + Number(p.quantity), 0);
-          const totalSale = rows.reduce((s, p) => s + Number(p.quantity) * Number(p.sale_price), 0);
-          const totalCost = rows.reduce((s, p) => s + Number(p.quantity) * Number(p.cost_price), 0);
+            </tr>`;
+          }).join("");
           w.document.write(`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>قائمة المنتجات</title>
             <style>
               body { font-family: Tahoma, Arial, sans-serif; padding: 16px; }
@@ -83,29 +185,84 @@ export default function Products() {
               table { width: 100%; border-collapse: collapse; }
               th, td { border: 1px solid #999; padding: 6px 8px; text-align: center; }
               th { background: #eee; }
-              tfoot td { font-weight: bold; background: #f3f4f6; }
               .num { text-align: center; }
             </style></head><body>
             <h1>قائمة المنتجات</h1>
             <table>
               <thead><tr>
-                <th>الكود</th><th>الاسم</th><th>المورد</th><th>المخزن</th><th>التكلفة</th><th>سعر البيع</th><th>الكمية</th><th>إجمالي القيمة بالبيع</th><th>إجمالي القيمة بالتكلفة</th>
+                <th>كود الصنف</th><th>الاسم</th><th>كود المورد</th><th>اسم المورد</th><th>الوحدة</th><th>التكلفة</th><th>سعر البيع</th>
               </tr></thead>
               <tbody>${rowsHtml}</tbody>
-              <tfoot><tr>
-                <td colspan="6" style="text-align:end;font-weight:bold;">الإجمالي</td>
-                <td class="num">${num(totalQty)}</td>
-                <td class="num">${money(totalSale)}</td>
-                <td class="num">${money(totalCost)}</td>
-              </tr></tfoot>
+            </table>
             </table>
             <script>window.onload = () => { window.print(); };</script>
             </body></html>`);
           w.document.close();
         }}>
-          🖨 print
+          🖨 طباعة
         </button>
       </PageHeader>
+
+      {tmplNote && (
+        <p style={{ marginTop: 8, padding: "8px 10px", borderRadius: 8, fontSize: 13, background: "var(--ok-bg, #e8f5e9)", color: "var(--ok-fg, #1b5e20)" }}>
+          {tmplNote}
+        </p>
+      )}
+
+      {importNote && (
+        <div
+          dir="rtl"
+          style={{
+            marginTop: 8,
+            padding: "10px 12px",
+            borderRadius: 8,
+            fontSize: 14,
+            background: importNote.startsWith("العدّاد") ? "var(--ok-bg, #e8f5e9)" : "#fdecea",
+            color: importNote.startsWith("العدّاد") ? "var(--ok-fg, #1b5e20)" : "#93321b",
+            border: "1px solid rgba(0,0,0,0.08)",
+          }}
+        >
+          {importNote}
+        </div>
+      )}
+
+      {pending && (
+        <Modal title="اختبار النموذج" onClose={() => setPending(null)}>
+          <p style={{ marginTop: 0, color: "var(--muted, #6B778A)", fontSize: 13 }}>
+            الملف: <b dir="ltr">{pending.file.name}</b> — تجربة بدون تسجيل، الرفع الفعلي يتم بعد تأكيدك.
+          </p>
+          <div style={{ display: "flex", gap: 10, margin: "14px 0" }}>
+            <div style={{ flex: 1, padding: 12, borderRadius: 10, background: "#e8f5e9", color: "#1b5e20", textAlign: "center" }}>
+              <div style={{ fontSize: 26, fontWeight: 700 }}>{pending.created}</div>
+              <div style={{ fontSize: 12 }}>صنف جديد</div>
+            </div>
+            <div style={{ flex: 1, padding: 12, borderRadius: 10, background: "#e3f2fd", color: "#0d47a1", textAlign: "center" }}>
+              <div style={{ fontSize: 26, fontWeight: 700 }}>{pending.updated}</div>
+              <div style={{ fontSize: 12 }}>تحديث صنف موجود</div>
+            </div>
+            <div style={{ flex: 1, padding: 12, borderRadius: 10, background: pending.errors.length ? "#fdecea" : "#efeef4", color: pending.errors.length ? "#93321b" : "#555", textAlign: "center" }}>
+              <div style={{ fontSize: 26, fontWeight: 700 }}>{pending.errors.length}</div>
+              <div style={{ fontSize: 12 }}>خطأ</div>
+            </div>
+          </div>
+          {pending.errors.length > 0 && (
+            <ul dir="rtl" style={{ maxHeight: 140, overflowY: "auto", margin: "0 0 14px", paddingRight: 18, fontSize: 13, color: "#93321b" }}>
+              {pending.errors.slice(0, 10).map((err, i) => (
+                <li key={i}>{err}</li>
+              ))}
+              {pending.errors.length > 10 && <li>… ({pending.errors.length - 10} أخرى)</li>}
+            </ul>
+          )}
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="btn btn-primary" disabled={importing} onClick={() => void confirmImport()} style={{ flex: 1 }}>
+              {importing ? "… جارٍ الرفع" : `تأكيد الرفع (${pending.created} جديد، ${pending.updated} تحديث)`}
+            </button>
+            <button className="btn" disabled={importing} onClick={() => setPending(null)}>
+              إلغاء
+            </button>
+          </div>
+        </Modal>
+      )}
 
       <div className="toolbar page-actions" style={{ marginBottom: 14 }}>
         <input placeholder={t("products.search")} value={search} onChange={(e) => setSearch(e.target.value)} />
@@ -115,7 +272,35 @@ export default function Products() {
         <label className="check">
           <input type="checkbox" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)} /> {t("products.showInactive")}
         </label>
+        <button
+          className={priceEdit ? "btn btn-primary" : "btn"}
+          onClick={() => togglePriceEdit(!priceEdit)}
+        >
+          {priceEdit ? "✕ إغلاق وضع التعديل" : "✏️ وضع تعديل الأسعار"}
+        </button>
+        {priceEdit && changedRows.length > 0 && (
+          <button className="btn btn-primary" disabled={savingPrices} onClick={() => void savePrices()}>
+            {savingPrices ? "… جارٍ الحفظ" : `💾 حفظ الأسعار (${changedRows.length})`}
+          </button>
+        )}
       </div>
+
+      {priceNote && (
+        <div
+          dir="rtl"
+          style={{
+            marginBottom: 10,
+            padding: "8px 12px",
+            borderRadius: 8,
+            fontSize: 13,
+            background: priceNote.startsWith("تم حفظ") ? "var(--ok-bg, #e8f5e9)" : "#fff8e1",
+            color: priceNote.startsWith("تم حفظ") ? "var(--ok-fg, #1b5e20)" : "#7F6000",
+            border: "1px solid rgba(0,0,0,0.08)",
+          }}
+        >
+          {priceNote}
+        </div>
+      )}
 
       <Alert>{products.error || action.error}</Alert>
 
@@ -126,73 +311,76 @@ export default function Products() {
           <table>
             <thead>
               <tr>
+                <th style={{ width: 56 }}>صورة</th>
                 <th>{t("products.sku")}</th>
                 <th>{t("products.name")}</th>
-                <th>{t("products.supplier")}</th>
-                <th>{t("products.warehouseCol")}</th>
+                <th>كود المورد</th>
+                <th>اسم المورد</th>
+                <th>الوحدة</th>
                 <th className="num">{t("products.cost")}</th>
                 <th className="num">{t("products.salePrice")}</th>
-                <th className="num">{t("products.qty")}</th>
-                <th className="num">{t("products.totalSaleValue")}</th>
-                <th className="num">{t("products.totalCostValue")}</th>
                 <th />
               </tr>
             </thead>
             <tbody>
               {rows.map((p) => {
-                const low = p.quantity <= p.reorder_level;
+                const sup = suppliers.data?.find((s) => s.id === p.supplier_id);
+                const edit = priceEdit ? (edits[p.id] ?? { cost_price: String(p.cost_price), sale_price: String(p.sale_price) }) : null;
+                const isChanged = edit && (Number(edit.cost_price) !== Number(p.cost_price) || Number(edit.sale_price) !== Number(p.sale_price));
+                const inputStyle: React.CSSProperties = { width: 95, textAlign: "end" };
                 return (
                   <tr key={p.id} style={p.is_active ? undefined : { opacity: 0.55 }}>
-                    <td dir="ltr">{p.sku}</td>
                     <td>
+                      <ProductThumb product={p} />
+                    </td>
+                    <td dir="ltr">{p.sku}</td>
+                    <td
+                      style={isChanged ? { background: "#fff8e1" } : undefined}
+                    >
                       {p.name}
                       {!p.is_active && <span className="badge badge-off" style={{ marginInlineStart: 8 }}>inactive</span>}
                     </td>
-                    <td>{nameOf(suppliers.data, p.supplier_id)}</td>
-                    <td>{nameOf(warehouses.data, p.warehouse_id)}</td>
-                    <td className="num">{money(p.cost_price)}</td>
-                    <td className="num">{money(p.sale_price)}</td>
-                    <td className={`num${low ? " low" : ""}`}>
-                      {num(p.quantity)} {p.unit}
-                    </td>
-                    <td className="num">{money(Number(p.quantity) * Number(p.sale_price))}</td>
-                    <td className="num">{money(Number(p.quantity) * Number(p.cost_price))}</td>
+                    <td dir="ltr" style={{ fontSize: 12 }}>{sup?.code ?? "—"}</td>
+                    <td>{sup?.name ?? ""}</td>
+                    <td>{p.unit || "—"}</td>
+                    {priceEdit && isManager ? (
+                      <td className="num" style={Number(edit?.cost_price) !== Number(p.cost_price) ? { background: "#fff8e1" } : undefined}>
+                        <input
+                          dir="ltr"
+                          inputMode="decimal"
+                          style={inputStyle}
+                          value={edit?.cost_price ?? ""}
+                          onChange={(e) => setEdit(p.id, "cost_price", e.target.value)}
+                        />
+                      </td>
+                    ) : (
+                      <td className="num" style={isChanged ? { background: "#fff8e1" } : undefined}>{money(p.cost_price)}</td>
+                    )}
+                    {priceEdit ? (
+                      <td className="num" style={Number(edit?.sale_price) !== Number(p.sale_price) ? { background: "#fff8e1" } : undefined}>
+                        <input
+                          dir="ltr"
+                          inputMode="decimal"
+                          style={inputStyle}
+                          value={edit?.sale_price ?? ""}
+                          onChange={(e) => setEdit(p.id, "sale_price", e.target.value)}
+                        />
+                      </td>
+                    ) : (
+                      <td className="num" style={isChanged ? { background: "#fff8e1" } : undefined}>{money(p.sale_price)}</td>
+                    )}
                     <td className="actions">
                       <button className="btn btn-sm" onClick={() => setEditing(p)}>
-                        edit
-                      </button>
-                      <button className="btn btn-sm" onClick={() => setAdjusting(p)}>
-                        تسوية
+                        تعديل
                       </button>
                       <button className="btn btn-sm" onClick={() => setHistory(p)}>
                         الحركات
                       </button>
-                      {isManager && (
-                        <button className="btn btn-sm btn-danger" onClick={() => remove(p)}>
-                          delete
-                        </button>
-                      )}
                     </td>
                   </tr>
                 );
               })}
             </tbody>
-            <tfoot>
-              <tr style={{ fontWeight: 600 }}>
-                <td colSpan={6} style={{ textAlign: "end" }}>{t("common.total")}</td>
-                <td className="num">
-                  {num(rows.reduce((s, p) => s + Number(p.quantity), 0))}
-                </td>
-                <td className="num">
-                  {money(rows.reduce((s, p) => s + Number(p.quantity) * Number(p.sale_price), 0))}
-                </td>
-                <td className="num">
-                  {money(rows.reduce((s, p) => s + Number(p.quantity) * Number(p.cost_price), 0))}
-                </td>
-                <td />
-              </tr>
-            </tfoot>
-
           </table>
         ) : (
           <Empty>{search || lowOnly ? t("products.noResults") : t("products.empty")}</Empty>
@@ -213,20 +401,13 @@ export default function Products() {
           }}
         />
       )}
-      {adjusting && (
-        <AdjustForm
-          product={adjusting}
-          onClose={() => setAdjusting(null)}
-          onSaved={() => {
-            setAdjusting(null);
-            products.reload();
-          }}
-        />
-      )}
       {history && <MovementsModal product={history} onClose={() => setHistory(null)} />}
     </>
   );
 }
+
+/** أنواع الوحدات المتاحة لاختيارها عند إضافة/تعديل منتج. */
+const PRODUCT_UNITS = ["قطعة", "علبة", "كرتونة", "عبوة", "دستة", "زجاجة", "رول", "طقم", "كجم", "جرام", "لتر", "متر", "سم"];
 
 function ProductForm({
   initial,
@@ -255,9 +436,30 @@ function ProductForm({
     warehouse_id: initial?.warehouse_id ? String(initial.warehouse_id) : "",
     supplier_id: initial?.supplier_id ? String(initial.supplier_id) : "",
     is_active: initial?.is_active ?? true,
+    image_url: initial?.image_url ?? "",
   });
   const { busy, error, run } = useAction();
   const set = (k: keyof typeof f, v: string | boolean) => setF((p) => ({ ...p, [k]: v }));
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imageNote, setImageNote] = useState<string | null>(null);
+  const imageUrl = f.image_url.trim() || null;
+  const previewSrc = imageFile ? URL.createObjectURL(imageFile) : initial?.image_uploaded ? `/api/products/${initial.id}/image` : imageUrl;
+  const currentImageTitle = initial?.image_uploaded ? "صورة مرفوعة من الجهاز" : imageUrl ? "صورة من رابط" : "لا صورة بعد";
+
+  const pickImage = (file: File | null) => {
+    setImageFile(file);
+    if (file && file.size > 3 * 1024 * 1024) {
+      setImageNote("⚠️ حجم الصورة أكبر من 3 ميجابايت — اختر صورة أصغر.");
+      setImageFile(null);
+      return;
+    }
+    if (file && !file.type.startsWith("image/")) {
+      setImageNote("⚠️ المفروض ملف صورة (PNG/JPEG/WebP/GIF).");
+      setImageFile(null);
+      return;
+    }
+    setImageNote(null);
+  };
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
@@ -270,28 +472,31 @@ function ProductForm({
       is_active: f.is_active,
       warehouse_id: f.warehouse_id ? Number(f.warehouse_id) : null,
       supplier_id: f.supplier_id ? Number(f.supplier_id) : null,
+      image_url: imageUrl,
       ...(isManager ? { cost_price: f.cost_price || "0" } : {}),
     };
     void run(async () => {
-      if (initial) await api.patch(`/products/${initial.id}`, common);
-      else
-        await api.post("/products", {
+      if (initial) {
+        await api.patch(`/products/${initial.id}`, common);
+        if (imageFile) await api.upload(`/products/${initial.id}/image`, imageFile);
+      } else {
+        const created = await api.post<Product>("/products", {
           ...common,
-          sku: f.sku.trim(),
+          ...(f.sku.trim() ? { sku: f.sku.trim() } : {}),
           ...(isManager ? { quantity: Number(f.quantity) || 0 } : {}),
         });
+        if (imageFile) await api.upload(`/products/${created.id}/image`, imageFile);
+      }
       onSaved();
     });
   };
 
   return (
-    <Modal title={initial ? "edit منتج" : "منتج جديد"} onClose={onClose} wide>
+    <Modal title={initial ? "تعديل منتج" : "منتج جديد"} onClose={onClose} wide>
       <form onSubmit={submit}>
         <Alert>{error}</Alert>
         <div className="form-grid">
-          <Field label="الكود (SKU)" hint={initial ? "لا يمكن تغيير الكود بعد الإنشاء" : "فريد لكل منتج"}>
-            <input dir="ltr" value={f.sku} onChange={(e) => set("sku", e.target.value)} required disabled={!!initial} autoFocus={!initial} />
-          </Field>
+          {!initial && <p className="field-hint">سيُنشأ رمز SKU تلقائيًا من اسم المنتج عند الحفظ.</p>}
           <Field label="اسم المنتج">
             <input value={f.name} onChange={(e) => set("name", e.target.value)} required autoFocus={!!initial} />
           </Field>
@@ -302,7 +507,7 @@ function ProductForm({
               step="0.01"
               value={f.cost_price}
               readOnly={!isManager}
-              title={isManager ? undefined : "edit سعر التكلفة للمدير فقط"}
+              title={isManager ? undefined : "تعديل سعر التكلفة للمدير فقط"}
               onChange={(e) => set("cost_price", e.target.value)}
             />
           </Field>
@@ -310,7 +515,11 @@ function ProductForm({
             <input type="number" min="0" step="0.01" value={f.sale_price} onChange={(e) => set("sale_price", e.target.value)} />
           </Field>
           <Field label="الوحدة">
-            <input value={f.unit} onChange={(e) => set("unit", e.target.value)} />
+            <select value={f.unit} onChange={(e) => set("unit", e.target.value)}>
+              {(f.unit && !PRODUCT_UNITS.includes(f.unit) ? [...PRODUCT_UNITS, f.unit] : PRODUCT_UNITS).map((u) => (
+                <option key={u} value={u}>{u}</option>
+              ))}
+            </select>
           </Field>
           <Field label="حد إعادة الطلب">
             <input type="number" min="0" step="1" value={f.reorder_level} onChange={(e) => set("reorder_level", e.target.value)} />
@@ -336,67 +545,40 @@ function ProductForm({
             </select>
           </Field>
         </div>
-        {!initial && isManager && (
-          <Field label="الرصيد الافتتاحي" hint="بعد الإنشاء تتغير الكمية فقط عبر المشتريات والمبيعات والتسوية">
-            <input type="number" min="0" step="1" value={f.quantity} onChange={(e) => set("quantity", e.target.value)} />
-          </Field>
-        )}
         <Field label="الوصف">
           <textarea rows={2} value={f.description} onChange={(e) => set("description", e.target.value)} />
         </Field>
+        <div className="product-image-field">
+          <div className="product-image-preview" title={currentImageTitle}>
+            {previewSrc ? (
+              <img src={previewSrc} alt="معاينة صورة المنتج" style={{ width: 96, height: 96, objectFit: "cover", borderRadius: 8, border: "1px solid var(--border, #d8dde6)" }} onError={(e) => { (e.currentTarget as HTMLImageElement).style.opacity = "0.25"; }} />
+            ) : (
+              <div style={{ width: 96, height: 96, borderRadius: 8, border: "1px dashed var(--border, #d8dde6)", display: "grid", placeItems: "center", fontSize: 40 }} aria-label="بدون صورة">📦</div>
+            )}
+          </div>
+          <div style={{ flex: 1 }}>
+            <Field label="رابط الصورة من الإنترنت" hint="http:// أو https:// — تُستخدم لو مفيش ملف مرفوع">
+              <input dir="ltr" type="text" placeholder="https://example.com/product.jpg" value={f.image_url} onChange={(e) => set("image_url", e.target.value)} />
+            </Field>
+            <Field label="أو ارفع صورة من جهازك" hint={imageNote ?? "PNG / JPEG / WebP / GIF — حتى 3 ميجابايت"}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <label className="btn btn-primary" style={{ cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  📁 اختر صورة من الجهاز
+                  <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" style={{ display: "none" }} onChange={(e) => pickImage(e.target.files?.[0] ?? null)} />
+                </label>
+                <span className="muted" style={{ fontSize: 13 }}>
+                  {imageFile ? `تم الاختيار: ${imageFile.name}` : "لم يتم اختيار صورة"}
+                </span>
+              </div>
+            </Field>
+          </div>
+        </div>
         <label className="check">
           <input type="checkbox" checked={f.is_active} onChange={(e) => set("is_active", e.target.checked)} /> active
         </label>
         <div className="form-actions">
           <button className="btn btn-primary" disabled={busy}>
             {busy ? "جارٍ الحفظ…" : "حفظ"}
-          </button>
-          <button type="button" className="btn" onClick={onClose}>
-            إلغاء
-          </button>
-        </div>
-      </form>
-    </Modal>
-  );
-}
-
-function AdjustForm({ product, onClose, onSaved }: { product: Product; onClose: () => void; onSaved: () => void }) {
-  const [change, setChange] = useState("");
-  const [reference, setReference] = useState("");
-  const { busy, error, run } = useAction();
-  const delta = Number(change);
-  const valid = Number.isInteger(delta) && delta !== 0;
-
-  const submit = (e: FormEvent) => {
-    e.preventDefault();
-    if (!valid) return;
-    void run(async () => {
-      await api.post(`/products/${product.id}/adjust-stock`, { change: delta, reference: reference.trim() || null });
-      onSaved();
-    });
-  };
-
-  return (
-    <Modal title={`تسوية مخزون — ${product.name}`} onClose={onClose}>
-      <form onSubmit={submit}>
-        <Alert>{error}</Alert>
-        <p className="muted" style={{ marginTop: 0 }}>
-          الكمية الحالية: <b>{num(product.quantity)}</b> {product.unit}
-        </p>
-        <Field label="التغيير" hint="رقم موجب للإضافة وسالب للخصم، مثل 5 أو -3">
-          <input dir="ltr" type="number" step="1" value={change} onChange={(e) => setChange(e.target.value)} required autoFocus />
-        </Field>
-        {valid && (
-          <p style={{ marginTop: 0 }}>
-            الكمية بعد التسوية: <b>{num(product.quantity + delta)}</b>
-          </p>
-        )}
-        <Field label="السبب / المرجع">
-          <input value={reference} onChange={(e) => setReference(e.target.value)} placeholder="جرد، تالف، …" />
-        </Field>
-        <div className="form-actions">
-          <button className="btn btn-primary" disabled={busy || !valid}>
-            {busy ? "جارٍ الحفظ…" : "تطبيق"}
           </button>
           <button type="button" className="btn" onClick={onClose}>
             إلغاء

@@ -70,7 +70,7 @@ export default function WarehouseBalances() {
               </body></html>`);
             w.document.close();
           }}>
-            {t("warehouseBalances.print")}
+            🖨 طباعة
           </button>
         )}
       </PageHeader>

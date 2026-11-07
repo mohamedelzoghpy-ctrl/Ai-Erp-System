@@ -57,22 +57,51 @@ def _file_range(summary) -> str:
 
 
 # ---------------------------------------------------------------- low stock
-def _low_stock_rows(db: Session) -> List[schemas.LowStockItem]:
-    products = (
-        db.query(models.Product)
-        .filter(models.Product.is_active.is_(True), models.Product.quantity <= models.Product.reorder_level)
-        .all()
+def _low_stock_rows(db: Session, warehouse_id: Optional[int] = None, branch_id: Optional[int] = None, supplier_id: Optional[int] = None) -> List[schemas.LowStockItem]:
+    """Scopes: company-wide by default, or per branch (all its warehouses), or one warehouse.
+
+    The quantity compared against the reorder level is the stock across the selected scope;
+    products with no stock record in that scope count as zero.
+    """
+    PS = models.ProductStock
+    compared: dict = {}
+    if warehouse_id or branch_id:
+        WH = models.Warehouse
+        q = db.query(PS.product_id, func.coalesce(func.sum(PS.quantity), 0)).join(WH, WH.id == PS.warehouse_id)
+        if warehouse_id:
+            q = q.filter(WH.id == warehouse_id)
+        else:
+            q = q.filter(WH.branch_id == branch_id)
+        compared = dict(q.group_by(PS.product_id).all())
+        products = db.query(models.Product).filter(models.Product.is_active.is_(True)).all()
+        products = [p for p in products if compared.get(p.id, 0) <= p.reorder_level]  # type: ignore[union-attr,operator]
+    else:
+        products = (
+            db.query(models.Product)
+            .filter(models.Product.is_active.is_(True), models.Product.quantity <= models.Product.reorder_level)
+            .all()
+        )
+    if supplier_id:
+        products = [p for p in products if p.supplier_id == supplier_id]
+    sup_ids = {p.supplier_id for p in products if p.supplier_id}  # type: ignore[union-attr]
+    supplier_map = (
+        dict(db.query(models.Supplier.id, models.Supplier.name).filter(models.Supplier.id.in_(sup_ids)).all())
+        if sup_ids
+        else {}
     )
     rows = [
         schemas.LowStockItem(
             id=p.id,  # type: ignore
             sku=p.sku,  # type: ignore
             name=p.name,  # type: ignore
-            quantity=p.quantity,  # type: ignore
+            quantity=(compared.get(p.id, 0) if compared else p.quantity),  # type: ignore
             reorder_level=p.reorder_level,  # type: ignore
-            shortfall=p.reorder_level - p.quantity,  # type: ignore
+            shortfall=p.reorder_level - (compared.get(p.id, 0) if compared else p.quantity),  # type: ignore
+            image_url=p.image_url,  # type: ignore
+            image_uploaded=p.image_uploaded,  # type: ignore
             warehouse_id=p.warehouse_id,  # type: ignore
             supplier_id=p.supplier_id,  # type: ignore
+            supplier_name=supplier_map.get(p.supplier_id),  # type: ignore[union-attr]
         )
         for p in products
     ]
@@ -80,18 +109,39 @@ def _low_stock_rows(db: Session) -> List[schemas.LowStockItem]:
 
 
 @router.get("/low-stock", response_model=List[schemas.LowStockItem])
-def low_stock(db: Session = Depends(get_db), _: models.User = Depends(get_current_user)):
-    """Active products at or below their reorder level, most urgent first."""
-    return _low_stock_rows(db)
+def low_stock(
+    warehouse_id: Optional[int] = None,
+    branch_id: Optional[int] = None,
+    supplier_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+):
+    """Active products at or below their reorder level, most urgent first. Scope: company, branch, warehouse, or supplier."""
+    return _low_stock_rows(db, warehouse_id=warehouse_id, branch_id=branch_id, supplier_id=supplier_id)
 
 
 @router.get("/low-stock/xlsx")
-def low_stock_xlsx(db: Session = Depends(get_db), _: models.User = Depends(get_current_user)):
-    rows = _low_stock_rows(db)
+def low_stock_xlsx(
+    warehouse_id: Optional[int] = None,
+    branch_id: Optional[int] = None,
+    supplier_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+):
+    rows = _low_stock_rows(db, warehouse_id=warehouse_id, branch_id=branch_id, supplier_id=supplier_id)
     wh = {w.id: w.name for w in db.query(models.Warehouse).all()}
+    if warehouse_id:
+        scope = wh.get(warehouse_id, f"مخزن #{warehouse_id}")
+    elif branch_id:
+        br = db.get(models.Branch, branch_id)  # type: ignore[arg-type]
+        scope = getattr(br, "name", None) or f"فرع #{branch_id}"
+    else:
+        scope = "الشركة ككل"
     sup = {s.id: s.name for s in db.query(models.Supplier).all()}
+    if supplier_id:
+        scope += f" — مورد: {sup.get(supplier_id, '#' + str(supplier_id))}"
     table = (
-        "نقص المخزون",
+        f"نقص المخزون — نطاق: {scope}",
         ["الكود", "المنتج", "المخزن", "المورد", "المتاح", "حد إعادة الطلب", "العجز"],
         [
             [
@@ -198,17 +248,40 @@ def inventory_valuation_xlsx(db: Session = Depends(get_db), _: models.User = Dep
 
 
 # ---------------------------------------------------------------- sales
-def _sales_summary(db: Session, date_from, date_to, top: int) -> schemas.SalesSummary:
+def _sales_summary(
+    db: Session,
+    date_from,
+    date_to,
+    top: int,
+    customer_id: Optional[int] = None,
+    product_id: Optional[int] = None,
+    supplier_id: Optional[int] = None,
+    user_id: Optional[int] = None,
+    rep_id: Optional[int] = None,
+) -> schemas.SalesSummary:
     start, end = _period(date_from, date_to)
     SO, SI, P, C = models.SalesOrder, models.SalesOrderItem, models.Product, models.Customer
     in_period = (SO.status == "confirmed", SO.updated_at >= start, SO.updated_at < end)
 
-    orders, total = db.query(func.count(SO.id), func.coalesce(func.sum(SO.total_amount), 0)).filter(*in_period).one()
+    # classification filters: narrow the report to selected customer / product / product's supplier / sales rep / user
+    extra = []
+    if customer_id:
+        extra.append(SO.customer_id == customer_id)
+    if user_id:
+        extra.append(SO.created_by == user_id)
+    if rep_id:
+        extra.append(SO.rep_id == rep_id)
+    if product_id:
+        extra.append(SO.id.in_(db.query(SI.order_id).filter(SI.product_id == product_id)))
+    if supplier_id:
+        extra.append(SO.id.in_(db.query(SI.order_id).join(P, P.id == SI.product_id).filter(P.supplier_id == supplier_id)))
+
+    orders, total = db.query(func.count(SO.id), func.coalesce(func.sum(SO.total_amount), 0)).filter(*in_period, *extra).one()
 
     day = func.date(SO.updated_at)
     by_day = (
         db.query(day, func.count(SO.id), func.coalesce(func.sum(SO.total_amount), 0))
-        .filter(*in_period)
+        .filter(*in_period, *extra)
         .group_by(day)
         .order_by(day)
         .all()
@@ -219,7 +292,7 @@ def _sales_summary(db: Session, date_from, date_to, top: int) -> schemas.SalesSu
         db.query(P.id, P.sku, P.name, func.sum(SI.quantity), revenue)
         .join(SI, SI.product_id == P.id)
         .join(SO, SO.id == SI.order_id)
-        .filter(*in_period)
+        .filter(*in_period, *extra)
         .group_by(P.id, P.sku, P.name)
         .order_by(revenue.desc(), P.id)
         .limit(top)
@@ -230,7 +303,7 @@ def _sales_summary(db: Session, date_from, date_to, top: int) -> schemas.SalesSu
     cust_rows = (
         db.query(C.id, C.name, func.count(SO.id), cust_total)
         .join(SO, SO.customer_id == C.id)
-        .filter(*in_period)
+        .filter(*in_period, *extra)
         .group_by(C.id, C.name)
         .order_by(cust_total.desc(), C.id)
         .limit(top)
@@ -242,9 +315,22 @@ def _sales_summary(db: Session, date_from, date_to, top: int) -> schemas.SalesSu
         db.query(U.username, func.count(SO.id), cashier_total)
         .select_from(SO)
         .outerjoin(U, U.id == SO.created_by)
-        .filter(*in_period)
+        .filter(*in_period, *extra)
         .group_by(U.username)
         .order_by(cashier_total.desc(), U.username)
+        .all()
+    )
+    S = models.Supplier
+    sup_total = func.sum(SI.quantity * SI.unit_price)
+    sup_rows = (
+        db.query(S.id, S.name, func.count(func.distinct(SO.id)), sup_total)
+        .select_from(SI)
+        .join(SO, SO.id == SI.order_id)
+        .join(P, P.id == SI.product_id)
+        .outerjoin(S, S.id == P.supplier_id)
+        .filter(*in_period, *extra)
+        .group_by(S.id, S.name)
+        .order_by(sup_total.desc(), S.id)
         .all()
     )
     return schemas.SalesSummary(
@@ -262,6 +348,10 @@ def _sales_summary(db: Session, date_from, date_to, top: int) -> schemas.SalesSu
             for cid, cname, n, t in cust_rows
         ],
         by_cashier=[schemas.SalesByCashier(username=u, orders=n, total=_money(t)) for u, n, t in cashier_rows],
+        by_product_supplier=[
+            schemas.SalesByProductSupplier(supplier_id=sid, supplier_name=sname or "بدون مورد", orders=n, total=_money(t))
+            for sid, sname, n, t in sup_rows
+        ],
     )
 
 
@@ -269,12 +359,20 @@ def _sales_summary(db: Session, date_from, date_to, top: int) -> schemas.SalesSu
 def sales_summary(
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
+    days: Optional[int] = Query(None, ge=1, le=366),
     top: int = Query(5, ge=1, le=50),
+    customer_id: Optional[int] = None,
+    product_id: Optional[int] = None,
+    supplier_id: Optional[int] = None,
+    user_id: Optional[int] = None,
+    rep_id: Optional[int] = None,
     db: Session = Depends(get_db),
     _: models.User = Depends(require_manager),
 ):
-    """Confirmed sales in a period (default: last 30 days): totals, per-day series, top products and customers."""
-    return _sales_summary(db, date_from, date_to, top)
+    """Confirmed sales in a period (default: last `days`=30 days): totals, per-day series, top products and customers."""
+    if days and date_from is None and date_to is None:
+        date_from = date.today() - timedelta(days=days - 1)
+    return _sales_summary(db, date_from, date_to, top, customer_id=customer_id, product_id=product_id, supplier_id=supplier_id, user_id=user_id, rep_id=rep_id)
 
 
 @router.get("/sales-summary/xlsx")
@@ -282,10 +380,15 @@ def sales_summary_xlsx(
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
     top: int = Query(50, ge=1, le=50),
+    customer_id: Optional[int] = None,
+    product_id: Optional[int] = None,
+    supplier_id: Optional[int] = None,
+    user_id: Optional[int] = None,
+    rep_id: Optional[int] = None,
     db: Session = Depends(get_db),
     _: models.User = Depends(require_manager),
 ):
-    s = _sales_summary(db, date_from, date_to, top)
+    s = _sales_summary(db, date_from, date_to, top, customer_id=customer_id, product_id=product_id, supplier_id=supplier_id, user_id=user_id, rep_id=rep_id)
     tables = [
         ("الملخص", ["البند", "القيمة"], [[("text", "عدد الأوامر المؤكدة"), ("int", s.orders)], [("text", "إجمالي المبيعات"), ("money", s.total)]]),
         ("المبيعات اليومية", ["اليوم", "عدد الأوامر", "الإجمالي"], [[("text", d.day), ("int", d.orders), ("money", d.total)] for d in s.by_day]),
@@ -303,6 +406,11 @@ def sales_summary_xlsx(
             "الكاشير",
             ["الكاشير", "عدد الأوامر", "الإجمالي"],
             [[("text", c.username or "غير مسجّل"), ("int", c.orders), ("money", c.total)] for c in s.by_cashier],
+        ),
+        (
+            "مورد الصنف",
+            ["المورد", "عدد الأوامر", "الإجمالي"],
+            [[("text", c.supplier_name), ("int", c.orders), ("money", c.total)] for c in s.by_product_supplier],
         ),
     ]
     content = exports.build_tables_xlsx("تقرير المبيعات", _range_label(s), tables)
@@ -623,11 +731,20 @@ def payables_aging_xlsx(db: Session = Depends(get_db), _: models.User = Depends(
 @router.get("/dashboard", response_model=schemas.Dashboard)
 def dashboard(
     days: int = Query(30, ge=1, le=366),
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    branch_id: Optional[int] = Query(None),
     db: Session = Depends(get_db),
     _: models.User = Depends(require_manager),
 ):
-    """Headline numbers for the home screen. Sales/purchase totals cover the last `days` days."""
-    start, end = _period(None, None, default_days=days)
+    """Headline numbers for the home screen. Sales/purchase totals cover the last `days` days,
+    or the explicit range [date_from, date_to] when provided."""
+    if date_from is not None or date_to is not None:
+        start, end = _period(date_from, date_to, default_days=days)
+        span_days = max((end.date() - start.date()).days, 1)
+    else:
+        start, end = _period(None, None, default_days=days)
+        span_days = days
     P, SO, PO = models.Product, models.SalesOrder, models.PurchaseOrder
 
     def count(model):
@@ -644,20 +761,47 @@ def dashboard(
         .filter(P.is_active.is_(True))
         .one()
     )
-    s_orders, s_total = (
-        db.query(func.count(SO.id), func.coalesce(func.sum(SO.total_amount), 0))
-        .filter(SO.status == "confirmed", SO.updated_at >= start, SO.updated_at < end)
-        .one()
-    )
-    p_orders, p_total = (
-        db.query(func.count(PO.id), func.coalesce(func.sum(PO.total_amount), 0))
-        .filter(PO.status == "received", PO.updated_at >= start, PO.updated_at < end)
-        .one()
-    )
+
+    # Base queries
+    so_q = db.query(SO).filter(SO.status == "confirmed", SO.updated_at >= start, SO.updated_at < end)
+    po_q = db.query(PO).filter(PO.status == "received", PO.updated_at >= start, PO.updated_at < end)
+    # Note: branch_id filtering is not supported (SalesOrder/PurchaseOrder have no branch_id column);
+    # the parameter is accepted for API compatibility but ignored.
+
+    s_orders = so_q.with_entities(func.count(SO.id)).scalar() or 0
+    s_total = so_q.with_entities(func.coalesce(func.sum(SO.total_amount), 0)).scalar() or 0
+    p_orders = po_q.with_entities(func.count(PO.id)).scalar() or 0
+    p_total = po_q.with_entities(func.coalesce(func.sum(PO.total_amount), 0)).scalar() or 0
+
+    # Previous period for growth % calculation
+    prev_start = start - timedelta(days=span_days)
+    prev_so_q = db.query(SO).filter(SO.status == "confirmed", SO.updated_at >= prev_start, SO.updated_at < start)
+    prev_po_q = db.query(PO).filter(PO.status == "received", PO.updated_at >= prev_start, PO.updated_at < start)
+    prev_s_total = prev_so_q.with_entities(func.coalesce(func.sum(SO.total_amount), 0)).scalar() or 0
+    prev_p_total = prev_po_q.with_entities(func.coalesce(func.sum(PO.total_amount), 0)).scalar() or 0
+
+    def growth_pct(current, prev):
+        c, p = float(current), float(prev)
+        if p > 0:
+            return round(((c - p) / p) * 100, 1)
+        return None
+
     s_ret = db.query(func.coalesce(func.sum(models.SalesReturn.total_amount), 0)).filter(models.SalesReturn.created_at >= start, models.SalesReturn.created_at < end).scalar()
     p_ret = db.query(func.coalesce(func.sum(models.PurchaseReturn.total_amount), 0)).filter(models.PurchaseReturn.created_at >= start, models.PurchaseReturn.created_at < end).scalar()
+
+    # Cash liquidity: sum of all safe & bank balances
+    safes_total = db.query(func.coalesce(func.sum(models.Safe.balance), 0)).scalar() or 0
+    banks_total = db.query(func.coalesce(func.sum(models.Bank.balance), 0)).scalar() or 0
+
+    # Pending stock transfers
+    pending_transfers = (
+        db.query(func.count(models.StockTransfer.id))
+        .filter(models.StockTransfer.status == "pending")
+        .scalar() or 0
+    )
+
     return schemas.Dashboard(
-        period_days=days,
+        period_days=span_days,
         sales_returns_total=_money(s_ret),
         purchase_returns_total=_money(p_ret),
         products=db.query(func.count(P.id)).filter(P.is_active.is_(True)).scalar() or 0,
@@ -676,4 +820,10 @@ def dashboard(
         receivables_total=_balances_report(db, "customer").total,
         payables_total=_balances_report(db, "supplier").total,
         stale_shifts=db.query(func.count(models.Shift.id)).filter(models.Shift.status == "open", models.Shift.opened_at < stale_cutoff()).scalar() or 0,
+        sales_growth_pct=growth_pct(s_total, prev_s_total),
+        purchases_growth_pct=growth_pct(p_total, prev_p_total),
+        pending_transfers=pending_transfers,
+        safes_balance_total=_money(safes_total),
+        banks_balance_total=_money(banks_total),
+        cash_liquidity_total=_money(float(safes_total) + float(banks_total)),
     )

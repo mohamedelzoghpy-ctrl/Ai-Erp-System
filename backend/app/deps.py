@@ -2,7 +2,7 @@
 
 from typing import Optional
 
-from fastapi import Depends, HTTPException, Query, Request, status
+from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 
@@ -16,11 +16,10 @@ ROLES = ("admin", "manager", "staff")
 
 
 def get_current_user(
-    token_query: Optional[str] = Query(None, alias="token"),
     token_header: Optional[str] = Depends(oauth2_scheme),
     db: Session = Depends(get_db),
 ) -> models.User:
-    token = token_query or token_header
+    token = token_header
     if not token:
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED,
@@ -76,6 +75,13 @@ def get_current_user(
         .filter(models.Branch.company_id == company_id)
         .all()
     ]
+    if membership.all_branches:
+        branch_ids = [
+            branch_id
+            for (branch_id,) in db.query(models.Branch.id)
+            .filter(models.Branch.company_id == company_id, models.Branch.is_active.is_(True))
+            .all()
+        ]
     warehouse_ids = {
         warehouse_id
         for (warehouse_id,) in db.query(models.UserWarehouseAccess.warehouse_id)

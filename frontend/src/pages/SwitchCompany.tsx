@@ -3,7 +3,7 @@ import { useAuth } from "../auth";
 import { api } from "../api";
 import { useFetch } from "../hooks";
 import type { Company } from "../types";
-import { Alert, Empty, Loading, PageHeader } from "../ui";
+import { ActiveBadge, Alert, Empty, Loading, PageHeader } from "../ui";
 
 export default function SwitchCompany() {
   const { isPlatformAdmin } = useAuth();
@@ -32,7 +32,7 @@ export default function SwitchCompany() {
             <thead><tr><th>الشركة</th><th>الرمز</th><th>الحالة</th><th /></tr></thead>
             <tbody>{companies.data.map((c) => (
               <tr key={c.id}>
-                <td>{c.name}</td><td dir="ltr">{c.code}</td><td>{c.is_active ? "active" : "inactive"}</td>
+                <td>{c.name}</td><td dir="ltr">{c.code}</td><td><ActiveBadge active={c.is_active} /></td>
                 <td className="actions">
                   <button className="btn btn-sm btn-primary" onClick={() => void switchTo(c.id)}>اختيار</button>
                 </td>

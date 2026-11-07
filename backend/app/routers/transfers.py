@@ -22,6 +22,20 @@ def _get(db: Session, transfer_id: int) -> models.StockTransfer:
     return t
 
 
+def _get_locked(db: Session, transfer_id: int) -> models.StockTransfer:
+    """Fetch the transfer with a row lock (SELECT ... FOR UPDATE) so concurrent
+    approve/reject calls are serialized before the status is checked."""
+    t = (
+        db.query(models.StockTransfer)
+        .filter(models.StockTransfer.id == transfer_id)
+        .with_for_update()
+        .first()
+    )
+    if t is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Transfer {transfer_id} not found")
+    return t
+
+
 @router.post("", response_model=schemas.TransferOut, status_code=status.HTTP_201_CREATED)
 def create_transfer(payload: schemas.TransferCreate, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     if payload.from_warehouse_id == payload.to_warehouse_id:
@@ -102,7 +116,7 @@ def approve_transfer(transfer_id: int, payload: Optional[schemas.TransferCreate]
     from ..deps import require_manager, user_role
     if user_role(user) not in ("admin", "manager"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Only a manager or admin can approve transfers")
-    t = _get(db, transfer_id)
+    t = _get_locked(db, transfer_id)
     if t.status != "pending":  # type: ignore
         raise HTTPException(409, f"Transfer is already {t.status}")
     # optional modification of items/warehouses/notes
@@ -160,7 +174,7 @@ def reject_transfer(transfer_id: int, reason: Optional[str] = None, db: Session 
     from ..deps import user_role
     if user_role(user) not in ("admin", "manager"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Only a manager or admin can reject transfers")
-    t = _get(db, transfer_id)
+    t = _get_locked(db, transfer_id)
     if t.status != "pending":  # type: ignore
         raise HTTPException(409, f"Transfer is already {t.status}")
     t.status = "rejected"  # type: ignore

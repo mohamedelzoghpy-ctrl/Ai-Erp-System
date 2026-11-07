@@ -7,12 +7,15 @@ import threading
 import time
 from collections import defaultdict, deque
 
+from sqlalchemy import func, or_
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
+from ..accounting import seed_default_coa, seed_default_cost_centers, seed_default_fiscal_year
 from ..audit import audit
 from ..database import get_db
 from ..deps import get_current_user, require_admin
@@ -89,6 +92,9 @@ def first_run_setup(payload: schemas.SetupAdmin, db: Session = Depends(get_db)):
         db.flush()
         db.add(models.Branch(company_id=company.id, name="Main Branch", code="main"))  # type: ignore
         db.flush()
+        seed_default_coa(db, company.id)
+        seed_default_cost_centers(db, company.id)
+        seed_default_fiscal_year(db, company.id)
     db.info["company_id"] = company.id
     user = _make_user(db, payload, role="admin")
     user.is_platform_admin = True  # type: ignore
@@ -241,12 +247,56 @@ def create_user(
 
 @router.get("/users", response_model=List[schemas.UserOut])
 def list_users(db: Session = Depends(get_db), _: models.User = Depends(require_admin)):
-    return (
+    users = (
         db.query(models.User)
         .join(models.UserCompanyMembership)
         .filter(models.UserCompanyMembership.company_id == db.info["company_id"])
         .order_by(models.User.id)
         .all()
+    )
+    BA, WA = models.UserBranchAccess, models.UserWarehouseAccess
+    branch_map: dict = {}
+    for uid, bid in db.query(BA.user_id, BA.branch_id).all():
+        branch_map.setdefault(uid, []).append(bid)
+    wh_map: dict = {}
+    for uid, wid in db.query(WA.user_id, WA.warehouse_id).all():
+        wh_map.setdefault(uid, []).append(wid)
+    out = []
+    for u in users:
+        item = schemas.UserOut.model_validate(u)
+        item.branch_ids = branch_map.get(u.id, [])  # type: ignore[union-attr]
+        item.warehouse_ids = wh_map.get(u.id, [])  # type: ignore[union-attr]
+        out.append(item)
+    return out
+
+
+@router.get("/users/{user_id}/activity", response_model=schemas.UserActivity)
+def user_activity(
+    user_id: int,
+    limit: int = 500,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_admin),
+):
+    """مراقبة عمل مستخدم: كل ما فعله من أول تسجيل دخول حتى الآن (الأحدث أولاً)."""
+    target = db.get(models.User, user_id)
+    if target is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    q = db.query(models.AuditLog).filter(or_(models.AuditLog.user_id == user_id, models.AuditLog.username == target.username))
+    total = q.count()
+    login_start, login_end, login_count = (
+        db.query(func.min(models.AuditLog.created_at), func.max(models.AuditLog.created_at), func.count())
+        .filter(models.AuditLog.user_id == user_id, models.AuditLog.action == "login")
+        .one()
+    )
+    logs = q.order_by(models.AuditLog.id.desc()).limit(max(1, min(limit, 1000))).all()
+    return schemas.UserActivity(
+        username=target.username,
+        full_name=target.full_name,
+        first_login=login_start,
+        last_login=login_end,
+        login_count=login_count or 0,
+        total=total,
+        logs=logs,
     )
 
 
@@ -286,3 +336,39 @@ def update_user(
     db.commit()
     db.refresh(user)
     return user
+
+
+@router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    admin: models.User = Depends(require_admin),
+):
+    membership = (
+        db.query(models.UserCompanyMembership)
+        .filter(
+            models.UserCompanyMembership.user_id == user_id,
+            models.UserCompanyMembership.company_id == db.info["company_id"],
+        )
+        .one_or_none()
+    )
+    user = db.get(models.User, user_id)
+    if user is None or membership is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"User {user_id} not found")
+    if user.is_platform_admin:  # type: ignore
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "The platform administrator cannot be deleted")
+    if user.id == admin.id:  # type: ignore
+        raise HTTPException(status.HTTP_409_CONFLICT, "You cannot delete your own account")
+    try:
+        db.query(models.UserBranchAccess).filter(models.UserBranchAccess.user_id == user_id).delete(synchronize_session=False)
+        db.query(models.UserWarehouseAccess).filter(models.UserWarehouseAccess.user_id == user_id).delete(synchronize_session=False)
+        db.delete(user)
+        audit(db, admin, "delete", "user", None, f"deleted user {user_id} ({user.username})")
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "لا يمكن حذف هذا المستخدم لأن له سجلات مرتبطة (حركات أو فواتير). أوقفه من زر التعديل بدلاً من حذفه.",
+        )
+    return None

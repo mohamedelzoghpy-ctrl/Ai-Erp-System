@@ -41,6 +41,10 @@ Base = declarative_base()
 
 @event.listens_for(Session, "do_orm_execute")
 def _scope_tenant_queries(execute_state) -> None:
+    if execute_state.execution_options.get("ignore_tenant_scope", False) or execute_state.session.info.get(
+        "ignore_tenant_scope", False
+    ):
+        return
     company_id = execute_state.session.info.get("company_id")
     if not execute_state.is_select or company_id is None:
         return
@@ -117,6 +121,27 @@ def _scope_tenant_queries(execute_state) -> None:
             with_loader_criteria(
                 models.StockTransfer,
                 lambda entity: entity.from_warehouse_id.in_(warehouse_ids) | entity.to_warehouse_id.in_(warehouse_ids),
+                include_aliases=True,
+            ),
+        )
+        # Money documents: staff see vouchers recorded against their branches' safes/banks,
+        # plus vouchers they recorded themselves. Company-wide (bank) and other-branch
+        # accounting stays manager/admin-only.
+        user_id = execute_state.session.info.get("user_id")
+        visible_safe_ids = select(models.Safe.id).where(models.Safe.branch_id.in_(branch_ids))
+        visible_bank_ids = select(models.Bank.id).where(models.Bank.branch_id.in_(branch_ids))
+        execute_state.statement = execute_state.statement.options(
+            with_loader_criteria(
+                models.Payment,
+                lambda entity: (entity.created_by == user_id)
+                | entity.safe_id.in_(visible_safe_ids)
+                | entity.bank_id.in_(visible_bank_ids),
+                include_aliases=True,
+            ),
+            with_loader_criteria(
+                models.Cheque,
+                lambda entity: (entity.created_by == user_id)
+                | entity.bank_id.in_(visible_bank_ids),
                 include_aliases=True,
             ),
         )

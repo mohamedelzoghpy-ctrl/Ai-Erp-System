@@ -1,4 +1,4 @@
-import type { OrderStatus, PaymentMethod, Role } from "./types";
+import type { ChequeStatus, OrderStatus, PaymentMethod, Role } from "./types";
 
 const LOCALE = "ar-EG-u-nu-latn"; // Arabic text, Latin digits
 
@@ -38,6 +38,7 @@ export const REASON_LABEL: Record<string, string> = {
   sale: "بيع",
   adjustment: "تسوية",
   stocktake: "جرد",
+  stock_import: "استيراد مخزون",
   transfer_out: "تحويل (صادر)",
   transfer_in: "تحويل (وارد)",
   sales_return: "مرتجع بيع",
@@ -49,6 +50,14 @@ export const METHOD_LABEL: Record<PaymentMethod, string> = {
   bank: "تحويل بنكي",
   wallet: "محفظة إلكترونية",
   cheque: "شيك",
+};
+
+export const CHEQUE_STATUS_LABEL: Record<ChequeStatus, string> = {
+  under_collection: "تحت التحصيل",
+  issued: "مصروف",
+  collected: "محصّل",
+  cashed: "تم صرفه",
+  returned: "مرتد",
 };
 
 /** Plain calendar date (YYYY-MM-DD) shown without any timezone shift. */

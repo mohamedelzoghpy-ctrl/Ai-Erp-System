@@ -7,7 +7,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
+from ..accounting import seed_default_coa, seed_default_cost_centers, seed_default_fiscal_year
 from ..audit import audit
+from ..codegen import unique_code
 from ..database import get_db
 from ..deps import get_current_user, require_manager, require_platform_admin, user_role
 from ..security import hash_password
@@ -69,13 +71,18 @@ def _employee_out(db: Session, user: models.User) -> schemas.EmployeeOut:
         .filter(models.UserWarehouseAccess.user_id == user.id)
         .all()
     ]
+    department = db.get(models.Department, membership.department_id) if membership.department_id else None
     return schemas.EmployeeOut(
         id=user.id,  # type: ignore
         username=user.username,  # type: ignore
+        employee_code=membership.employee_code or user.username,  # type: ignore
         full_name=user.full_name,  # type: ignore
         role=membership.role,  # type: ignore
         is_active=user.is_active,  # type: ignore
         created_at=user.created_at,  # type: ignore
+        department_id=membership.department_id,  # type: ignore
+        department_name=department.name if department else None,
+        all_branches=membership.all_branches,  # type: ignore
         branch_ids=branches,
         warehouse_ids=warehouses,
     )
@@ -114,11 +121,15 @@ def create_company(
     db: Session = Depends(get_db),
     actor: models.User = Depends(require_platform_admin),
 ):
+    company_code = (payload.code or "").strip().lower() or unique_code(
+        db, models.Company, 0, payload.name, "co", max_length=50
+    )
     company_obj = models.Company(
         name=payload.name.strip(),
-        code=payload.code.strip().lower(),
+        code=company_code,
         max_warehouses_per_branch=payload.max_warehouses_per_branch,
         max_safes_per_branch=payload.max_safes_per_branch,
+        max_branches=payload.max_branches,
     )
     user = models.User(
         username=payload.admin_username.strip().lower(),
@@ -130,7 +141,8 @@ def create_company(
     try:
         db.info["allow_company_provisioning"] = True
         db.flush()
-        branch = models.Branch(company_id=company_obj.id, name="Main Branch", code="main")  # type: ignore
+        main_branch_code = unique_code(db, models.Branch, company_obj.id, "Main Branch", "br", max_length=50)
+        branch = models.Branch(company_id=company_obj.id, name="Main Branch", code=main_branch_code)  # type: ignore
         db.add(branch)
         db.flush()
         db.add(
@@ -142,6 +154,9 @@ def create_company(
         )
         db.add(models.UserBranchAccess(user_id=user.id, branch_id=branch.id))
         audit(db, actor, "create", "company", company_obj, f"{company_obj.code} · admin {user.username}")
+        seed_default_coa(db, company_obj.id)
+        seed_default_cost_centers(db, company_obj.id)
+        seed_default_fiscal_year(db, company_obj.id)
         db.commit()
     except IntegrityError as exc:
         db.rollback()
@@ -213,10 +228,20 @@ def update_platform_company(company_id: int, payload: schemas.CompanyUpdate, db:
     if company is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Company not found")
     data = payload.model_dump(exclude_unset=True)
+    new_branch_limit = data.get("max_branches", company.max_branches)
+    if new_branch_limit is not None:
+        current_branches = db.query(models.Branch.id).filter(models.Branch.company_id == company_id).count()
+        if new_branch_limit < current_branches:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"Company already has {current_branches} branch(es); the limit cannot be lower than the current count",
+            )
     if "max_warehouses_per_branch" in data:
         company.max_warehouses_per_branch = data["max_warehouses_per_branch"]
     if "max_safes_per_branch" in data:
         company.max_safes_per_branch = data["max_safes_per_branch"]
+    if "max_branches" in data:
+        company.max_branches = data["max_branches"]
     if "name" in data and data["name"] is not None:
         company.name = data["name"]
     if "is_active" in data and data["is_active"] is not None:
@@ -284,18 +309,95 @@ def platform_list_branches(company_id: int, db: Session = Depends(get_db), _: mo
     return db.query(models.Branch).filter(models.Branch.company_id == company_id).order_by(models.Branch.id).all()
 
 
+@platform.patch("/companies/{company_id}/branches/{branch_id}", response_model=schemas.BranchOut)
+def platform_update_branch(
+    company_id: int,
+    branch_id: int,
+    payload: schemas.BranchUpdate,
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(require_platform_admin),
+):
+    db.info["ignore_tenant_scope"] = True
+    try:
+        branch = db.query(models.Branch).filter(
+            models.Branch.id == branch_id,
+            models.Branch.company_id == company_id,
+        ).one_or_none()
+        if branch is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Branch not found")
+
+        data = payload.model_dump(exclude_unset=True)
+        if "name" in data and data["name"] is not None:
+            branch.name = data["name"].strip()
+        if "code" in data and data["code"] is not None:
+            branch.code = data["code"].strip().lower()
+        if "location" in data:
+            branch.location = data["location"]
+        if "is_active" in data and data["is_active"] is not None:
+            branch.is_active = data["is_active"]
+
+        try:
+            db.commit()
+        except IntegrityError as exc:
+            db.rollback()
+            raise HTTPException(status.HTTP_409_CONFLICT, "Branch code already exists for this company") from exc
+        db.refresh(branch)
+        audit(db, actor, "update", "branch", branch, f"{branch.code} · {company_id}")
+        db.commit()
+        return branch
+    finally:
+        db.info.pop("ignore_tenant_scope", None)
+
+
+@platform.delete("/companies/{company_id}/branches/{branch_id}", status_code=status.HTTP_204_NO_CONTENT)
+def platform_delete_branch(
+    company_id: int,
+    branch_id: int,
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(require_platform_admin),
+):
+    db.info["ignore_tenant_scope"] = True
+    try:
+        branch = db.query(models.Branch).filter(
+            models.Branch.id == branch_id,
+            models.Branch.company_id == company_id,
+        ).one_or_none()
+        if branch is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Branch not found")
+        if db.query(models.Warehouse.id).filter(models.Warehouse.branch_id == branch_id).first():
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "لا يمكن حذف الفرع لوجود مخازن مرتبطة به. انقل المخازن أو احذفها أولاً.",
+            )
+        if db.query(models.Safe.id).filter(models.Safe.branch_id == branch_id).first():
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "لا يمكن حذف الفرع لوجود خزائن مرتبطة به. انقل الخزائن أو احذفها أولاً.",
+            )
+        audit(db, actor, "delete", "branch", branch.id, f"{branch.code} · {company_id}")
+        try:
+            db.delete(branch)
+            db.commit()
+        except IntegrityError as exc:
+            db.rollback()
+            raise HTTPException(status.HTTP_409_CONFLICT, "Cannot delete branch: it is still referenced.") from exc
+        return None
+    finally:
+        db.info.pop("ignore_tenant_scope", None)
+
+
 @platform.post("/companies/{company_id}/branches", response_model=schemas.BranchOut, status_code=status.HTTP_201_CREATED)
 def platform_create_branch(company_id: int, payload: schemas.BranchCreate, db: Session = Depends(get_db), actor: models.User = Depends(require_platform_admin)):
     company = db.get(models.Company, company_id)
     if company is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Company not found")
+    if company.max_branches is not None:
+        branch_count = db.query(models.Branch.id).filter(models.Branch.company_id == company_id).count()
+        if branch_count >= company.max_branches:
+            raise HTTPException(status.HTTP_409_CONFLICT, f"Company branch limit reached ({company.max_branches})")
     raw_code = (payload.code or "").strip()
     if not raw_code:
-        base = payload.name.strip().lower().replace(" ", "-")[:30] or "branch"
-        code = base
-        i = 2
-        while db.query(models.Branch).filter(models.Branch.company_id == company_id, models.Branch.code == code).first():
-            code = f"{base}-{i}"; i += 1
+        code = unique_code(db, models.Branch, company_id, payload.name, "br", max_length=50)
     else:
         code = raw_code
     branch = models.Branch(company_id=company_id, name=payload.name.strip(), code=code, location=payload.location)  # type: ignore
@@ -310,12 +412,331 @@ def platform_create_branch(company_id: int, payload: schemas.BranchCreate, db: S
     return branch
 
 
+@platform.get("/companies/{company_id}/safes", response_model=List[schemas.SafeOut])
+def platform_list_safes(company_id: int, db: Session = Depends(get_db), _: models.User = Depends(require_platform_admin)):
+    if db.get(models.Company, company_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Company not found")
+    db.info["ignore_tenant_scope"] = True
+    return db.query(models.Safe).filter(models.Safe.company_id == company_id).order_by(models.Safe.id).all()
+
+
+@platform.post("/companies/{company_id}/safes", status_code=status.HTTP_201_CREATED)
+def platform_create_safe(company_id: int, payload: schemas.SafeCreate, db: Session = Depends(get_db), actor: models.User = Depends(require_platform_admin)):
+    company = db.get(models.Company, company_id)
+    if company is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Company not found")
+    db.info["ignore_tenant_scope"] = True
+    db.info["allow_company_provisioning"] = True
+    branch = db.query(models.Branch).filter(
+        models.Branch.id == payload.branch_id,
+        models.Branch.company_id == company_id,
+        models.Branch.is_active.is_(True),
+    ).one_or_none()
+    if branch is None:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Choose an active branch belonging to this company")
+    if company.max_safes_per_branch is not None:
+        count = db.query(models.Safe).filter(models.Safe.branch_id == branch.id).count()
+        if count >= company.max_safes_per_branch:
+            raise HTTPException(status.HTTP_409_CONFLICT, "Branch safe limit reached")
+    code = (payload.code or "").strip() or unique_code(db, models.Safe, company_id, payload.name, "SAFE", max_length=50)
+    safe = models.Safe(company_id=company_id, branch_id=branch.id, name=payload.name.strip(), code=code, balance=payload.opening_balance, is_active=payload.is_active)
+    cash_parent = db.query(models.ChartAccount).filter(models.ChartAccount.company_id == company_id, models.ChartAccount.code == "1011").first()
+    if cash_parent is not None:
+        acc = models.ChartAccount(company_id=company_id, code=unique_code(db, models.ChartAccount, company_id, payload.name, "CASH", max_length=50), name=f"Safe: {payload.name.strip()}", type="asset", parent_id=cash_parent.id, is_group=False, balance=payload.opening_balance, is_active=payload.is_active)
+        db.add(acc)
+        db.flush()
+        safe.chart_account_id = acc.id
+    db.add(safe)
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, "Safe code already exists for this company") from exc
+    finally:
+        db.info.pop("allow_company_provisioning", None)
+        db.info.pop("ignore_tenant_scope", None)
+    audit(db, actor, "create", "safe", safe, f"{safe.code} · {branch.name}")
+    db.commit()
+    db.refresh(safe)
+    return safe
+
+
+@platform.patch("/companies/{company_id}/safes/{safe_id}", response_model=schemas.SafeOut)
+def platform_update_safe(
+    company_id: int,
+    safe_id: int,
+    payload: schemas.SafeUpdate,
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(require_platform_admin),
+):
+    db.info["ignore_tenant_scope"] = True
+    safe = db.query(models.Safe).filter(
+        models.Safe.id == safe_id,
+        models.Safe.company_id == company_id,
+    ).one_or_none()
+    if safe is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Safe not found")
+    data = payload.model_dump(exclude_unset=True)
+    if "name" in data and data["name"] is not None:
+        safe.name = data["name"].strip()
+    if "code" in data and data["code"] is not None:
+        safe.code = data["code"].strip() or unique_code(db, models.Safe, company_id, safe.name, "SAFE")
+    if "branch_id" in data and data["branch_id"] is not None:
+        branch = db.query(models.Branch).filter(
+            models.Branch.id == data["branch_id"],
+            models.Branch.company_id == company_id,
+            models.Branch.is_active.is_(True),
+        ).one_or_none()
+        if branch is None:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Choose an active branch belonging to this company")
+        safe.branch_id = data["branch_id"]
+    if "is_active" in data and data["is_active"] is not None:
+        safe.is_active = data["is_active"]
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, "Safe code already exists for this company") from exc
+    finally:
+        db.info.pop("ignore_tenant_scope", None)
+    db.refresh(safe)
+    audit(db, actor, "update", "safe", safe, f"{safe.code} · {company_id}")
+    db.commit()
+    return safe
+
+
+@platform.get("/companies/{company_id}/banks", response_model=List[schemas.BankOut])
+def platform_list_banks(company_id: int, db: Session = Depends(get_db), _: models.User = Depends(require_platform_admin)):
+    if db.get(models.Company, company_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Company not found")
+    db.info["ignore_tenant_scope"] = True
+    return db.query(models.Bank).filter(models.Bank.company_id == company_id).order_by(models.Bank.id).all()
+
+
+@platform.post("/companies/{company_id}/banks", response_model=schemas.BankOut, status_code=status.HTTP_201_CREATED)
+def platform_create_bank(company_id: int, payload: schemas.BankCreate, db: Session = Depends(get_db), actor: models.User = Depends(require_platform_admin)):
+    company = db.get(models.Company, company_id)
+    if company is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Company not found")
+    code = (payload.code or "").strip() or unique_code(db, models.Bank, company_id, payload.name, "BANK", max_length=50)
+    db.info["ignore_tenant_scope"] = True
+    db.info["allow_company_provisioning"] = True
+    branch_id = payload.branch_id
+    if branch_id is not None:
+        branch = db.query(models.Branch).filter(
+            models.Branch.id == branch_id,
+            models.Branch.company_id == company_id,
+            models.Branch.is_active.is_(True),
+        ).first()
+        if branch is None:
+            raise HTTPException(422, "فرع غير موجود في هذه الشركة")
+    bank = models.Bank(
+        company_id=company_id,
+        name=payload.name.strip(),
+        code=code,
+        account_number=payload.account_number.strip() if payload.account_number else None,
+        balance=payload.opening_balance,
+        is_active=payload.is_active,
+        branch_id=branch_id,
+    )
+    bank_parent = db.query(models.ChartAccount).filter(models.ChartAccount.company_id == company_id, models.ChartAccount.code == "1010").first()
+    if bank_parent is not None:
+        acc = models.ChartAccount(company_id=company_id, code=unique_code(db, models.ChartAccount, company_id, payload.name, "BANK", max_length=50), name=f"Bank: {payload.name.strip()}", type="asset", parent_id=bank_parent.id, is_group=False, balance=payload.opening_balance, is_active=payload.is_active)
+        db.add(acc)
+        db.flush()
+        bank.chart_account_id = acc.id
+    db.add(bank)
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, "Bank code already exists for this company") from exc
+    finally:
+        db.info.pop("allow_company_provisioning", None)
+        db.info.pop("ignore_tenant_scope", None)
+    db.refresh(bank)
+    audit(db, actor, "create", "bank", bank, f"{bank.code} · {company.name}")
+    db.commit()
+    return bank
+
+
+@platform.patch("/companies/{company_id}/banks/{bank_id}", response_model=schemas.BankOut)
+def platform_update_bank(
+    company_id: int,
+    bank_id: int,
+    payload: schemas.BankUpdate,
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(require_platform_admin),
+):
+    db.info["ignore_tenant_scope"] = True
+    bank = db.query(models.Bank).filter(
+        models.Bank.id == bank_id,
+        models.Bank.company_id == company_id,
+    ).one_or_none()
+    if bank is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Bank not found")
+    data = payload.model_dump(exclude_unset=True)
+    if "name" in data and data["name"] is not None:
+        bank.name = data["name"].strip()
+    if "code" in data and data["code"] is not None:
+        bank.code = data["code"].strip() or unique_code(db, models.Bank, company_id, bank.name, "BANK")
+    if "account_number" in data:
+        bank.account_number = data["account_number"].strip() if data["account_number"] else None
+    if "is_active" in data and data["is_active"] is not None:
+        bank.is_active = data["is_active"]
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, "Bank code already exists for this company") from exc
+    finally:
+        db.info.pop("ignore_tenant_scope", None)
+    db.refresh(bank)
+    audit(db, actor, "update", "bank", bank, f"{bank.code} · {company_id}")
+    db.commit()
+    return bank
+
+
+@platform.delete("/companies/{company_id}/banks/{bank_id}", status_code=status.HTTP_204_NO_CONTENT)
+def platform_delete_bank(
+    company_id: int,
+    bank_id: int,
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(require_platform_admin),
+):
+    db.info["ignore_tenant_scope"] = True
+    bank = db.query(models.Bank).filter(
+        models.Bank.id == bank_id,
+        models.Bank.company_id == company_id,
+    ).one_or_none()
+    if bank is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Bank not found")
+    referenced_payment = db.query(models.Payment.id).filter(models.Payment.bank_id == bank_id).first()
+    if referenced_payment is not None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "لا يمكن حذف البنك لوجود حركات مالية مسجلة عليه. عطّله بدلًا من ذلك.",
+        )
+    audit(db, actor, "delete", "bank", bank_id, f"{bank.code} · {company_id}")
+    db.delete(bank)
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "لا يمكن حذف البنك لوجود حركات مرتبطة به.",
+        ) from exc
+    finally:
+        db.info.pop("ignore_tenant_scope", None)
+    return None
+
+
 @platform.get("/companies/{company_id}/warehouses", response_model=List[schemas.WarehouseOut])
 def platform_list_warehouses(company_id: int, db: Session = Depends(get_db), _: models.User = Depends(require_platform_admin)):
     company = db.get(models.Company, company_id)
     if company is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Company not found")
+    db.info["ignore_tenant_scope"] = True
     return db.query(models.Warehouse).filter(models.Warehouse.company_id == company_id).order_by(models.Warehouse.id).all()
+
+
+@platform.patch("/companies/{company_id}/warehouses/{warehouse_id}", response_model=schemas.WarehouseOut)
+def platform_update_warehouse(
+    company_id: int,
+    warehouse_id: int,
+    payload: schemas.WarehouseUpdate,
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(require_platform_admin),
+):
+    db.info["ignore_tenant_scope"] = True
+    warehouse = db.query(models.Warehouse).filter(
+        models.Warehouse.id == warehouse_id,
+        models.Warehouse.company_id == company_id,
+    ).one_or_none()
+    if warehouse is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Warehouse not found")
+
+    data = payload.model_dump(exclude_unset=True)
+    branch_id = data.get("branch_id")
+    if branch_id is not None:
+        branch = db.query(models.Branch).filter(
+            models.Branch.id == branch_id,
+            models.Branch.company_id == company_id,
+        ).one_or_none()
+        if branch is None:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Branch does not belong to this company")
+        company = db.get(models.Company, company_id)
+        if company and company.max_warehouses_per_branch is not None:
+            count = db.query(models.Warehouse).filter(
+                models.Warehouse.branch_id == branch_id,
+                models.Warehouse.id != warehouse_id,
+            ).count()
+            if count >= company.max_warehouses_per_branch:
+                raise HTTPException(status.HTTP_409_CONFLICT, "Branch warehouse limit reached")
+    if "name" in data and data["name"] is not None:
+        warehouse.name = data["name"].strip()
+    if "code" in data and data["code"] is not None:
+        warehouse.code = data["code"].strip() or unique_code(
+            db, models.Warehouse, company_id, warehouse.name, "WH", max_length=50
+        )
+    if "location" in data:
+        warehouse.location = data["location"]
+    if "is_active" in data and data["is_active"] is not None:
+        warehouse.is_active = data["is_active"]
+    if branch_id is not None:
+        warehouse.branch_id = branch_id
+    audit(db, actor, "update", "warehouse", warehouse, f"{warehouse.code} · {company_id}")
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, "Warehouse code or name already exists") from exc
+    db.refresh(warehouse)
+    return warehouse
+
+
+@platform.delete("/companies/{company_id}/warehouses/{warehouse_id}", status_code=status.HTTP_204_NO_CONTENT)
+def platform_delete_warehouse(
+    company_id: int,
+    warehouse_id: int,
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(require_platform_admin),
+):
+    db.info["ignore_tenant_scope"] = True
+    warehouse = db.query(models.Warehouse).filter(
+        models.Warehouse.id == warehouse_id,
+        models.Warehouse.company_id == company_id,
+    ).one_or_none()
+    if warehouse is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Warehouse not found")
+    referenced_product = db.query(models.Product.id).filter(models.Product.warehouse_id == warehouse_id).first()
+    if referenced_product is None:
+        referenced_product = db.query(models.ProductStock.product_id).filter(models.ProductStock.warehouse_id == warehouse_id).first()
+    if referenced_product is None:
+        referenced_product = db.query(models.StockMovement.id).filter(models.StockMovement.warehouse_id == warehouse_id).first()
+    if referenced_product is None:
+        referenced_product = db.query(models.PurchaseOrder.id).filter(models.PurchaseOrder.warehouse_id == warehouse_id).first()
+    if referenced_product is None:
+        referenced_product = db.query(models.SalesOrder.id).filter(models.SalesOrder.warehouse_id == warehouse_id).first()
+    if referenced_product is None:
+        referenced_product = db.query(models.Stocktake.id).filter(models.Stocktake.warehouse_id == warehouse_id).first()
+    if referenced_product is not None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "لا يمكن حذف المخزن لارتباطه بمنتجات أو حركات أو مستندات. عطّله بدلًا من ذلك.",
+        )
+    audit(db, actor, "delete", "warehouse", warehouse.id, f"{warehouse.code} · {company_id}")
+    db.delete(warehouse)
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "لا يمكن حذف المخزن لارتباطه بمنتجات أو حركات مخزون أو مستندات. عطّله بدلًا من ذلك.",
+        ) from exc
+    return None
 
 
 @platform.post("/companies/{company_id}/warehouses", response_model=schemas.WarehouseOut, status_code=status.HTTP_201_CREATED)
@@ -338,14 +759,9 @@ def platform_create_warehouse(company_id: int, payload: schemas.WarehouseCreate,
         count = db.query(models.Warehouse).filter(models.Warehouse.branch_id == branch_id).count()
         if count >= company.max_warehouses_per_branch:  # type: ignore
             raise HTTPException(status.HTTP_409_CONFLICT, f"Branch warehouse limit reached ({company.max_warehouses_per_branch})")
-    code = (payload.code or "").strip()
-    if not code:
-        # Auto-generate a unique code per company.
-        count = db.query(models.Warehouse).filter(models.Warehouse.company_id == company_id).count()
-        code = f"WH-{count + 1:03d}"
-        while db.query(models.Warehouse).filter(models.Warehouse.company_id == company_id, models.Warehouse.code == code).first():
-            count += 1
-            code = f"WH-{count + 1:03d}"
+    code = (payload.code or "").strip() or unique_code(
+        db, models.Warehouse, company_id, payload.name, "WH", max_length=50
+    )
     wh = models.Warehouse(company_id=company_id, branch_id=branch_id, name=payload.name.strip(), code=code, location=payload.location, is_active=payload.is_active)  # type: ignore
     db.add(wh)
     try:
@@ -396,16 +812,15 @@ def create_branch(
     db: Session = Depends(get_db),
     user: models.User = Depends(require_manager),
 ):
-    raw_code = (payload.code or "").strip()
-    if not raw_code:
-        base = payload.name.strip().lower().replace(" ", "-")[:30] or "branch"
-        code = base
-        i = 2
-        company_id = db.info["company_id"]  # type: ignore
-        while db.query(models.Branch).filter(models.Branch.company_id == company_id, models.Branch.code == code).first():
-            code = f"{base}-{i}"; i += 1
-    else:
-        code = raw_code.lower()
+    company_id = db.info["company_id"]
+    company = db.get(models.Company, company_id)
+    if company is not None and company.max_branches is not None:
+        branch_count = db.query(models.Branch.id).filter(models.Branch.company_id == company_id).count()
+        if branch_count >= company.max_branches:
+            raise HTTPException(status.HTTP_409_CONFLICT, f"Company branch limit reached ({company.max_branches})")
+    code = (payload.code or "").strip().lower() or unique_code(
+        db, models.Branch, company_id, payload.name, "br", max_length=50
+    )
     branch = models.Branch(
         company_id=db.info["company_id"],  # type: ignore
         name=payload.name.strip(),  # type: ignore
@@ -448,12 +863,30 @@ def create_employee(
     role = user_role(actor)
     if payload.role != "staff" and role != "admin":
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Only a company admin can assign manager or admin roles")
-    if payload.role == "staff" and not payload.branch_ids and not payload.warehouse_ids:
-        raise HTTPException(422, "Assign at least one branch or warehouse to a staff member")
     company_id = db.info["company_id"]
-    _check_access_targets(db, company_id, payload.branch_ids, payload.warehouse_ids)
+    branch_ids = [
+        branch.id for branch in db.query(models.Branch).filter(models.Branch.company_id == company_id, models.Branch.is_active.is_(True)).all()
+    ] if payload.all_branches else payload.branch_ids
+    if payload.role == "staff" and not branch_ids and not payload.warehouse_ids:
+        raise HTTPException(422, "Assign all branches or at least one branch or warehouse to a staff member")
+    _check_access_targets(db, company_id, branch_ids, payload.warehouse_ids)
+    department = None
+    if payload.department_id is not None:
+        department = db.query(models.Department).filter(models.Department.id == payload.department_id, models.Department.company_id == company_id, models.Department.is_active.is_(True)).one_or_none()
+        if department is None:
+            raise HTTPException(422, "Department does not belong to this company or is inactive")
+    from sqlalchemy import func
+    employee_count = db.query(func.count(models.UserCompanyMembership.id)).filter(models.UserCompanyMembership.company_id == company_id).scalar() or 0
+    next_number = employee_count + 1
+    existing_codes = {code for (code,) in db.query(models.UserCompanyMembership.employee_code).filter(models.UserCompanyMembership.company_id == company_id).all() if code}
+    while str(next_number) in existing_codes:
+        next_number += 1
+    employee_code = str(next_number)
+    login_username = payload.username.strip().lower()
+    if db.query(models.User.id).filter(models.User.username == login_username).first():
+        raise HTTPException(status.HTTP_409_CONFLICT, "Username already exists")
     employee = models.User(
-        username=payload.username.strip().lower(),
+        username=login_username,
         full_name=payload.full_name,
         hashed_password=hash_password(payload.password),
         role=payload.role,
@@ -466,9 +899,12 @@ def create_employee(
                 user_id=employee.id,
                 company_id=company_id,
                 role=payload.role,
+                employee_code=employee_code,
+                department_id=department.id if department else None,
+                all_branches=payload.all_branches,
             )
         )
-        _replace_access(db, employee, company_id, payload.branch_ids, payload.warehouse_ids)
+        _replace_access(db, employee, company_id, branch_ids, payload.warehouse_ids)
         audit(db, actor, "create", "user", employee, f"{employee.username} ({payload.role})")
         db.commit()
     except IntegrityError as exc:
@@ -505,6 +941,19 @@ def update_employee(
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Only a company admin can manage managers and admins")
     if data.get("role") not in (None, "staff") and role != "admin":
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Only a company admin can assign manager or admin roles")
+    if "department_id" in data:
+        department_id = data["department_id"]
+        if department_id is not None:
+            department = db.query(models.Department).filter(
+                models.Department.id == department_id,
+                models.Department.company_id == company_id,
+                models.Department.is_active.is_(True),
+            ).one_or_none()
+            if department is None:
+                raise HTTPException(422, "Department does not belong to this company or is inactive")
+        membership.department_id = department_id  # type: ignore
+    if "all_branches" in data:
+        membership.all_branches = bool(data["all_branches"])  # type: ignore
     if data.get("role") is not None:
         if employee.id == actor.id and data["role"] != "admin":  # type: ignore
             raise HTTPException(status.HTTP_409_CONFLICT, "You cannot demote your own account")
@@ -534,6 +983,8 @@ def update_employee(
                 .filter(models.UserBranchAccess.user_id == employee.id)
                 .all()
             ]
+        if data.get("all_branches", membership.all_branches):
+            branch_ids = [branch.id for branch in db.query(models.Branch).filter(models.Branch.company_id == company_id, models.Branch.is_active.is_(True)).all()]
         if warehouse_ids is None:
             warehouse_ids = [
                 warehouse_id
@@ -542,7 +993,7 @@ def update_employee(
                 .all()
             ]
         if not branch_ids and not warehouse_ids:
-            raise HTTPException(422, "Assign at least one branch or warehouse to a staff member")
+            raise HTTPException(422, "Assign all branches or at least one branch or warehouse to a staff member")
     if "password" in data and data["password"]:
         employee.hashed_password = hash_password(data["password"])  # type: ignore
     if "full_name" in data:

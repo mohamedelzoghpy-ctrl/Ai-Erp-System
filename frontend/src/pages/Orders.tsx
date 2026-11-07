@@ -1,16 +1,19 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { api } from "../api";
+import { useAuth } from "../auth";
 import { useI18n } from "../i18n";
 import { ReturnDialog } from "./Returns";
 import { dateTime, money, num } from "../format";
 import { useAction, useFetch, usePagedList } from "../hooks";
-import type { Order, OrderStatus, Party, Product, Warehouse } from "../types";
+import type { Order, OrderStatus, Party, Product, SalesRep, Warehouse } from "../types";
 import { Alert, Empty, Field, Loading, Lookup, Modal, PageHeader, Pager, PaymentBadge, StatusBadge } from "../ui";
 
 type Kind = "purchase" | "sales";
 
 interface KindConfig {
   title: string;
+  /** singular word for one document, used across headings and confirmations */
+  orderWord: string;
   path: string;
   partyPath: string;
   partyField: "supplier_id" | "customer_id";
@@ -31,14 +34,15 @@ interface KindConfig {
 
 const CONFIG: Record<Kind, KindConfig> = {
   purchase: {
-    title: "أوامر الشراء",
+    title: "نقطة مشتريات",
+    orderWord: "الفاتورة",
     path: "/purchase-orders",
     partyPath: "/suppliers",
     partyField: "supplier_id",
     partyLabel: "المورد",
     priceField: "unit_cost",
     priceLabel: "تكلفة الوحدة",
-    newLabel: "+ أمر شراء جديد",
+    newLabel: "+ فاتورة شراء جديدة",
     commit: { path: "receive", label: "استلام البضاعة", confirmText: "تأكيد استلام البضاعة؟ ستزيد كميات المخزون ويُحدَّث سعر التكلفة." },
     doneStatus: "received",
     docPrefix: "purchase-order",
@@ -47,15 +51,16 @@ const CONFIG: Record<Kind, KindConfig> = {
     refundLabel: "المبلغ المستلم نقداً من المورد الآن",
   },
   sales: {
-    title: "أوامر البيع",
+    title: "مسودة المبيعات",
+    orderWord: "المسودة",
     path: "/sales-orders",
     partyPath: "/customers",
     partyField: "customer_id",
     partyLabel: "العميل",
     priceField: "unit_price",
     priceLabel: "سعر الوحدة",
-    newLabel: "+ أمر بيع جديد",
-    commit: { path: "confirm", label: "تأكيد البيع", confirmText: "تأكيد أمر البيع؟ ستُخصم الكميات من المخزون." },
+    newLabel: "+ مسودة مبيعات جديدة",
+    commit: { path: "confirm", label: "تحويل إلى فاتورة مبيعات", confirmText: "تحويل المسودة إلى فاتورة مبيعات؟ ستُخصم الكميات من الأرصدة وتصبح فاتورة مبيعات مؤكدة." },
     doneStatus: "confirmed",
     docPrefix: "invoice",
     returnPath: "/sales-returns",
@@ -79,12 +84,11 @@ function warehouseName(list: Warehouse[] | null, id: number): string {
 function OrdersScreen({ kind }: { kind: Kind }) {
   const cfg = CONFIG[kind];
   const { t } = useI18n();
-  const [status, setStatus] = useState("");
+  const [status] = useState(kind === "sales" ? "draft" : "");
   const [creating, setCreating] = useState(false);
   const [viewId, setViewId] = useState<number | null>(null);
 
-  const [cashier, setCashier] = useState("");
-  const orders = usePagedList<Order>(cfg.path, kind === "sales" ? { status_filter: status, cashier: cashier.trim() } : { status_filter: status });
+  const orders = usePagedList<Order>(cfg.path, { status_filter: status });
   const warehouses = useFetch(() => api.get<Warehouse[]>("/warehouses?limit=500"), "wh");
 
   const view = viewId != null ? orders.data?.find((o) => o.id === viewId) ?? null : null;
@@ -92,13 +96,6 @@ function OrdersScreen({ kind }: { kind: Kind }) {
   return (
     <>
       <PageHeader title={kind === "purchase" ? t("orders.purchaseTitle") : t("orders.salesTitle")}>
-        <select value={status} onChange={(e) => setStatus(e.target.value)} aria-label={t("orders.status")}>
-          <option value="">{t("orders.all")}</option>
-          <option value="draft">مسودة</option>
-          <option value={cfg.doneStatus}>{cfg.doneStatus === "received" ? t("orders.receive") : t("orders.confirmSale")}</option>
-          <option value="cancelled">ملغي</option>
-        </select>
-        {kind === "sales" && <input value={cashier} onChange={(e) => setCashier(e.target.value)} placeholder={t("orders.cashier") + " (اسم المستخدم)"} aria-label={t("orders.cashier")} style={{ width: 170 }} />}
         <button className="btn btn-primary" onClick={() => setCreating(true)}>
           {kind === "purchase" ? t("orders.newPurchase") : t("orders.newSale")}
         </button>
@@ -113,12 +110,11 @@ function OrdersScreen({ kind }: { kind: Kind }) {
           <table>
             <thead>
               <tr>
-                <th>رقم الأمر</th>
+                <th>رقم {cfg.orderWord}</th>
                 <th>التاريخ</th>
                 <th>{cfg.partyLabel}</th>
                 <th>المخزن</th>
                 <th>الحالة</th>
-                {kind === "sales" && <th>الكاشير</th>}
                 <th className="num">الإجمالي</th>
                 <th>السداد</th>
                 <th />
@@ -134,7 +130,6 @@ function OrdersScreen({ kind }: { kind: Kind }) {
                   <td>
                     <StatusBadge status={o.status} />
                   </td>
-                  {kind === "sales" && <td dir="ltr">{o.created_by_name ?? "—"}</td>}
                   <td className="num">{money(o.total_amount)}</td>
                   <td>
                     <PaymentBadge status={o.payment_status} />
@@ -149,7 +144,7 @@ function OrdersScreen({ kind }: { kind: Kind }) {
             </tbody>
           </table>
         ) : (
-          <Empty>{status || cashier ? "لا نتائج مطابقة" : t("orders.empty")}</Empty>
+          <Empty>{t("orders.empty")}</Empty>
         )}
         <Pager list={orders} />
       </div>
@@ -205,12 +200,37 @@ function OrderForm({
   onClose: () => void;
   onSaved: (id: number) => void;
 }) {
+  const { user } = useAuth();
+  const safes = useFetch(() => api.get<{ id: number; name: string; is_active: boolean; branch_id: number }[]>("/safes"), "purchase-order-safes");
   const [party, setParty] = useState<Party | null>(null);
   const [warehouse, setWarehouse] = useState(warehouses.length === 1 ? String(warehouses[0].id) : "");
+  const [paymentMode, setPaymentMode] = useState<"cash" | "credit">("credit");
+  const [safeId, setSafeId] = useState("");
+  const [discountMode, setDiscountMode] = useState<"amount" | "percent">("amount");
+  const [discountValue, setDiscountValue] = useState("");
+  const [taxEnabled, setTaxEnabled] = useState(true);
   const [notes, setNotes] = useState("");
+  const reps = useFetch(() => api.get<SalesRep[]>("/reps?active_only=true"), "sales-order-reps");
+  const [repId, setRepId] = useState("");
   const [lines, setLines] = useState<Line[]>([newLine()]);
   const { busy, error, run } = useAction();
 
+  const isPurchaseOrder = cfg.priceField === "unit_cost";
+
+  // Picking a warehouse resets the safe; the effect below auto-fills it from the
+  // safe(s) of the branch the selected warehouse belongs to.
+  const pickWarehouse = (id: string) => {
+    setWarehouse(id);
+    setSafeId("");
+  };
+
+  useEffect(() => {
+    if (warehouse === "" || !safes.data) return;
+    const branchId = warehouses.find((w) => String(w.id) === warehouse)?.branch_id;
+    if (branchId === undefined) return;
+    const branchSafe = safes.data.find((s) => s.is_active && s.branch_id === branchId);
+    setSafeId((current) => (current === "" && branchSafe ? String(branchSafe.id) : current));
+  }, [warehouse, safes.data, warehouses]);
   const defaultPrice = (p: Product | undefined) => (p ? (cfg.priceField === "unit_cost" ? p.cost_price : p.sale_price) : "");
 
   const patch = (key: number, change: Partial<Line>) => setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...change } : l)));
@@ -219,7 +239,12 @@ function OrderForm({
   const lineTotal = (l: Line) => (Number(l.quantity) || 0) * (Number(l.price) || 0);
   const total = lines.reduce((s, l) => s + lineTotal(l), 0);
   const filled = lines.filter((l) => l.product);
-  const valid = !!party && !!warehouse && filled.length > 0 && filled.every((l) => Number.isInteger(Number(l.quantity)) && Number(l.quantity) > 0 && Number(l.price) >= 0);
+  const discountAmount = discountMode === "percent" ? total * (Number(discountValue) || 0) / 100 : Number(discountValue) || 0;
+  const taxableAmount = Math.max(0, total - discountAmount);
+  const vatAmount = isPurchaseOrder && taxEnabled ? Math.round(taxableAmount * 0.14 * 100) / 100 : 0;
+  const netInvoice = taxableAmount + vatAmount;
+  const validDiscount = !isPurchaseOrder || (Number.isFinite(Number(discountValue || 0)) && Number(discountValue || 0) >= 0 && (discountMode === "percent" ? Number(discountValue || 0) <= 100 : discountAmount <= total));
+  const valid = !!party && !!warehouse && filled.length > 0 && validDiscount && (!isPurchaseOrder || paymentMode === "credit" || !!safeId) && filled.every((l) => Number.isInteger(Number(l.quantity)) && Number(l.quantity) > 0 && Number(l.price) >= 0);
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
@@ -229,6 +254,7 @@ function OrderForm({
         [cfg.partyField]: party!.id,
         warehouse_id: Number(warehouse),
         notes: notes.trim() || null,
+        ...(isPurchaseOrder ? { payment_mode: paymentMode, safe_id: paymentMode === "cash" ? Number(safeId) : null, discount_mode: discountMode, discount_value: discountValue || "0", tax_rate: taxEnabled ? "14" : "0" } : { rep_id: repId === "" ? null : Number(repId), safe_id: safeId === "" ? null : Number(safeId) }),
         items: filled.map((l) => ({ product_id: l.product!.id, quantity: Number(l.quantity), [cfg.priceField]: l.price })),
       });
       onSaved(created.id);
@@ -236,25 +262,63 @@ function OrderForm({
   };
 
   return (
-    <Modal title={cfg.newLabel.replace("+ ", "")} onClose={onClose} wide>
-      <form onSubmit={submit}>
-        <Alert>{error}</Alert>
-        <div className="form-grid">
-          <Field label={cfg.partyLabel}>
-            <Lookup<Party> path={cfg.partyPath} params={{ is_active: true }} value={party} onChange={setParty} label={(p) => p.name} placeholder={`ابحث عن ${cfg.partyLabel}…`} autoFocus />
-          </Field>
-          <Field label="المخزن">
-            <select value={warehouse} onChange={(e) => setWarehouse(e.target.value)} required>
-              <option value="">— اختر —</option>
-              {warehouses.map((w) => (
-                <option key={w.id} value={w.id}>
-                  {w.name}
-                </option>
-              ))}
-            </select>
-          </Field>
-        </div>
+    <Modal title={cfg.newLabel.replace("+ ", "")} onClose={onClose} fullscreen>
+      <form onSubmit={submit} className="purchase-order-editor">
+        <Alert>{error || (isPurchaseOrder ? safes.error : null)}</Alert>
+        <section className="quotation-editor" aria-label="بيانات الفاتورة">
+          <header className="quotation-editor-head">
+            <h2>{cfg.newLabel.replace("+ ", "")}</h2>
+            <div>{cfg.partyField === "customer_id" ? "رقم المسودة" : "رقم الفاتورة"}: <strong>يُولَّد عند الحفظ</strong></div>
+            <div>التاريخ: <strong>{dateTime(new Date().toISOString())}</strong></div>
+          </header>
+          <div className="quotation-editor-meta pos-document-meta">
+            <div className="quotation-meta-column">
+              <Field label={cfg.partyLabel}>
+                <Lookup<Party> path={cfg.partyPath} params={{ is_active: true }} value={party} onChange={setParty} label={(p) => p.name} placeholder={`ابحث عن ${cfg.partyLabel}…`} autoFocus />
+              </Field>
+              <Field label="اسم المخزن">
+                <select value={warehouse} onChange={(e) => pickWarehouse(e.target.value)} required>
+                  <option value="">— اختر المخزن —</option>
+                  {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+                </select>
+              </Field>
+            </div>
+            <div className="quotation-meta-column">
+              {isPurchaseOrder ? <>
+                <Field label="مسؤول المشتريات">
+                  <input value={user?.full_name || user?.username || ""} readOnly aria-label="مسؤول المشتريات" />
+                </Field>
+                <Field label="طريقة الدفع">
+                  <select value={paymentMode} onChange={(e) => setPaymentMode(e.target.value as "cash" | "credit")} aria-label="طريقة الدفع">
+                    <option value="cash">نقدي</option>
+                    <option value="credit">آجل</option>
+                  </select>
+                </Field>
+                {paymentMode === "cash" && <Field label="اسم الخزينة">
+                  <select value={safeId} onChange={(e) => setSafeId(e.target.value)} required aria-label="اسم الخزينة">
+                    <option value="">— اختر الخزينة —</option>
+                    {(safes.data ?? []).filter((safe) => safe.is_active).map((safe) => <option key={safe.id} value={safe.id}>{safe.name}</option>)}
+                  </select>
+                </Field>}
+              </> : <>
+                <Field label="مندوب المبيعات">
+                  <select value={repId} onChange={(e) => setRepId(e.target.value)} aria-label="مندوب المبيعات">
+                    <option value="">— بدون مندوب —</option>
+                    {(reps.data ?? []).map((rep) => <option key={rep.id} value={rep.id}>{rep.name}</option>)}
+                  </select>
+                </Field>
+                <Field label="اسم الخزينة">
+                  <select value={safeId} onChange={(e) => setSafeId(e.target.value)} aria-label="اسم الخزينة">
+                    <option value="">— اختر الخزينة —</option>
+                    {(safes.data ?? []).filter((safe) => safe.is_active).map((safe) => <option key={safe.id} value={safe.id}>{safe.name}</option>)}
+                  </select>
+                </Field>
+              </>}
+            </div>
+          </div>
+        </section>
 
+        <div className="card card-pad pos-items-card purchase-order-items">
         <table className="lines">
           <thead>
             <tr>
@@ -310,32 +374,72 @@ function OrderForm({
         <button type="button" className="btn btn-sm" onClick={() => setLines((ls) => [...ls, newLine()])}>
           + إضافة سطر
         </button>
-
-        <div className="total-row">
-          <span>الإجمالي</span>
-          <span>{money(total)}</span>
         </div>
 
-        <Field label="ملاحظات">
-          <textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
-        </Field>
-        <p className="muted" style={{ fontSize: 13, marginTop: 0 }}>
-          يُحفظ الأمر كمسودة ولا يتأثر المخزون حتى {cfg.commit.label}.
-        </p>
-        <div className="form-actions">
-          <button className="btn btn-primary" disabled={busy || !valid}>
-            {busy ? "جارٍ الحفظ…" : "حفظ كمسودة"}
-          </button>
-          <button type="button" className="btn" onClick={onClose}>
-            إلغاء
-          </button>
-        </div>
+        <section className="card card-pad pos-summary-card purchase-order-summary">
+          <div className="purchase-cost-breakdown">
+            <div className="pos-summary-total">
+              <span className="label">إجمالي الأصناف</span>
+              <strong>{money(total)}</strong>
+            </div>
+            {isPurchaseOrder && <>
+              <Field label="الخصم">
+                <div className="pos-discount-inputs">
+                  <select value={discountMode} onChange={(e) => setDiscountMode(e.target.value as "amount" | "percent")} aria-label="نوع الخصم">
+                    <option value="amount">قيمة</option>
+                    <option value="percent">نسبة مئوية</option>
+                  </select>
+                  <input dir="ltr" type="number" min="0" max={discountMode === "percent" ? 100 : total} step="0.01" value={discountValue} onChange={(e) => setDiscountValue(e.target.value)} aria-label="قيمة الخصم" placeholder={discountMode === "percent" ? "0%" : "0.00"} />
+                </div>
+                <span className="field-hint">قيمة الخصم: {money(discountAmount)}</span>
+                {!validDiscount && <span className="field-hint low">الخصم لا يتجاوز إجمالي الأصناف.</span>}
+              </Field>
+              <Field label="ضريبة القيمة المضافة">
+                <select value={taxEnabled ? "with-tax" : "without-tax"} onChange={(e) => setTaxEnabled(e.target.value === "with-tax")} aria-label="تطبيق ضريبة القيمة المضافة">
+                  <option value="with-tax">بالضريبة (14%)</option>
+                  <option value="without-tax">بدون ضريبة</option>
+                </select>
+                <span className="field-hint">قيمة الضريبة: {money(vatAmount)}</span>
+              </Field>
+              <div className="pos-summary-total pos-summary-net">
+                <span className="label">صافي قيمة الفاتورة</span>
+                <strong>{money(netInvoice)}</strong>
+              </div>
+            </>}
+          </div>
+          {!isPurchaseOrder && (
+            <Field label="مندوب المبيعات">
+              <select value={repId} onChange={(e) => setRepId(e.target.value)} aria-label="مندوب المبيعات">
+                <option value="">— بدون مندوب —</option>
+                {(reps.data ?? []).filter((r) => r.is_active).map((r) => (
+                  <option key={r.id} value={r.id}>{r.name}</option>
+                ))}
+              </select>
+            </Field>
+          )}
+          <Field label="ملاحظات">
+            <textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
+          </Field>
+          <p className="muted" style={{ fontSize: 13, textAlign: "center", margin: "4px 0 0" }}>
+            {cfg.partyField === "customer_id"
+              ? "تُحفظ كمسودة مبيعات بدون أي خصم من الأرصدة — التحويل إلى فاتورة مبيعات هو الذي يخصم المخزون."
+              : "يتم استلام البضاعة وتحديث المخزون فور حفظ الفاتورة."}
+          </p>
+          <div className="pos-summary-actions">
+            <button className="btn btn-primary pos-summary-primary" disabled={busy || !valid}>
+              {busy ? "جارٍ الحفظ…" : cfg.partyField === "customer_id" ? "حفظ المسودة" : "حفظ فاتورة الشراء"}
+            </button>
+            <button type="button" className="btn" onClick={onClose}>إلغاء</button>
+          </div>
+        </section>
       </form>
     </Modal>
   );
 }
 
 // -------------------------------------------------------------- order detail
+// PDF printing is shared: api.printPdf(path) sends the document to the browser print dialog.
+
 function OrderDetail({
   cfg,
   order,
@@ -353,6 +457,7 @@ function OrderDetail({
 }) {
   const { busy, error, run } = useAction();
   const isDraft = order.status === "draft";
+  const isSales = cfg.partyField === "customer_id";
   const [returning, setReturning] = useState(false);
 
   const transition = (path: string, confirmText: string) => {
@@ -364,7 +469,7 @@ function OrderDetail({
   };
 
   return (
-    <Modal title={`${cfg.title.replace("أوامر", "أمر")} #${order.id}`} onClose={onClose} wide>
+    <Modal title={`${cfg.orderWord.startsWith("ال") ? cfg.orderWord : `ال${cfg.orderWord}`} #${order.id}`} onClose={onClose} wide>
       <Alert>{error}</Alert>
       <div className="form-grid" style={{ marginBottom: 12 }}>
         <div>
@@ -383,6 +488,18 @@ function OrderDetail({
           <span className="muted">الحالة: </span>
           <StatusBadge status={order.status} />
         </div>
+        {order.rep_name !== undefined && (
+          <div>
+            <span className="muted">مندوب المبيعات: </span>
+            {order.rep_name ?? "—"}
+          </div>
+        )}
+        {order.safe_name !== undefined && order.safe_name !== null && (
+          <div>
+            <span className="muted">اسم الخزينة: </span>
+            {order.safe_name}
+          </div>
+        )}
       </div>
       {order.notes && (
         <p>
@@ -430,6 +547,9 @@ function OrderDetail({
       )}
 
       <div className="form-actions" style={{ marginBottom: 4 }}>
+        <button className="btn" disabled={busy} onClick={() => void run(() => api.printPdf(`${cfg.path}/${order.id}/pdf`))}>
+          🖨 طباعة
+        </button>
         <button className="btn" disabled={busy} onClick={() => void run(() => api.download(`${cfg.path}/${order.id}/pdf`, `${cfg.docPrefix}-${order.id}.pdf`))}>
           ⬇ تنزيل PDF
         </button>
@@ -440,17 +560,42 @@ function OrderDetail({
 
       {isDraft ? (
         <div className="form-actions">
-          <button className="btn btn-primary" disabled={busy} onClick={() => transition(cfg.commit.path, cfg.commit.confirmText)}>
-            {cfg.commit.label}
-          </button>
-          <button className="btn btn-danger" disabled={busy} onClick={() => transition("cancel", "إلغاء هذا الأمر؟ لا يمكن التراجع.")}>
-            إلغاء الأمر
-          </button>
+          {isSales ? (
+            <>
+              <button
+                className="btn btn-primary"
+                disabled={busy}
+                onClick={() => transition(cfg.commit.path, cfg.commit.confirmText)}
+              >
+                ✅ {cfg.commit.label}
+              </button>
+              <button
+                className="btn btn-success"
+                title="نسخة رسمية من بيان الأسعار — بدون أي خصم من الأرصدة"
+                disabled={busy}
+                onClick={() => void run(() => api.download(`${cfg.path}/${order.id}/quotation.pdf`, `quotation-SO-${order.id}.pdf`))}
+              >
+                🧾 تحويل إلى بيان أسعار مبيعات
+              </button>
+              <button className="btn btn-danger" disabled={busy} onClick={() => transition("cancel", `إلغاء ${cfg.orderWord}؟ لا يمكن التراجع.`)}>
+                إلغاء {cfg.orderWord}
+              </button>
+            </>
+          ) : (
+            <>
+              <button className="btn btn-primary" disabled={busy} onClick={() => transition(cfg.commit.path, cfg.commit.confirmText)}>
+                {cfg.commit.label}
+              </button>
+              <button className="btn btn-danger" disabled={busy} onClick={() => transition("cancel", `إلغاء ${cfg.orderWord}؟ لا يمكن التراجع.`)}>
+                إلغاء {cfg.orderWord}
+              </button>
+            </>
+          )}
         </div>
       ) : (
         <>
           <p className="muted" style={{ marginBottom: 8 }}>
-            {order.status === "cancelled" ? "هذا الأمر ملغي." : "تم تنفيذ هذا الأمر وتحديث المخزون."}
+            {order.status === "cancelled" ? `${cfg.orderWord} ملغاة.` : isSales ? "تم تحويل المسودة إلى فاتورة مبيعات وخصم الكميات من الأرصدة." : `تم تنفيذ ${cfg.orderWord} وتحديث المخزون.`}
           </p>
           {order.status === cfg.doneStatus && order.items.some((i) => i.quantity > (i.returned_quantity ?? 0)) && (
             <div className="form-actions">

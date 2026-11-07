@@ -55,6 +55,39 @@ def total(c, pid):
     return ok(c.get(f"/products/{pid}"))["quantity"]
 
 
+def test_data_io_warehouse_stock_export_and_undo_routes(api):
+    from io import BytesIO
+    import openpyxl
+
+    warehouse, _ = make_warehouses(api)
+    product = make_product(api, "DATA-IO", 5, warehouse["id"])
+
+    export_response = api.get(f"/data-io/warehouses/stock/xlsx?warehouse_id={warehouse['id']}")
+    assert export_response.status_code == 200, export_response.text
+    assert export_response.headers["content-type"].startswith("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    assert export_response.content[:2] == b"PK"
+    workbook = openpyxl.load_workbook(BytesIO(export_response.content))
+    sheet = workbook.active
+    header_row = next(row for row in range(1, sheet.max_row + 1) if sheet.cell(row, 1).value == "الكود (SKU)")
+    data_row = next(row for row in range(header_row + 1, sheet.max_row + 1) if sheet.cell(row, 1).value == "DATA-IO")
+    sheet.cell(data_row, 5).value = 7
+    edited = BytesIO()
+    workbook.save(edited)
+
+    upload = api.post(
+        f"/data-io/warehouses/stock/xlsx?warehouse_id={warehouse['id']}",
+        files={"file": ("stock.xlsx", edited.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+    )
+    assert upload.status_code == 200, upload.text
+    assert upload.json()["applied"] == 1
+    assert total(api, product["id"]) == 7
+
+    undo = api.post(f"/data-io/warehouses/stock/undo?warehouse_id={warehouse['id']}")
+    assert undo.status_code == 200, undo.text
+    assert undo.json()["products"] == 1
+    assert total(api, product["id"]) == 5
+
+
 def test_opening_stock_sits_in_the_products_warehouse(api):
     w1, w2 = make_warehouses(api)
     p = make_product(api, "A", 10, w1["id"])
@@ -72,6 +105,35 @@ def test_sales_can_only_take_what_the_warehouse_holds(api):
     r = api.post(f"/sales-orders/{order['id']}/confirm")
     assert r.status_code == 409 and "Shop" in r.text, r.text  # 10 in total, but none of it in this warehouse
     assert total(api, p["id"]) == 10
+
+
+def test_price_quotation_checkout_records_payment_and_deducts_stock(api):
+    warehouse, _ = make_warehouses(api)
+    product = make_product(api, "QUOTE-A", 8, warehouse["id"])
+    customer = ok(api.post("/customers", json={"name": "Quotation Customer"}), 201)
+
+    receipt = ok(api.post("/pos/checkout", json={
+        "customer_id": customer["id"],
+        "warehouse_id": warehouse["id"],
+        "items": [{"product_id": product["id"], "quantity": 3, "unit_price": "12.50"}],
+        "amount_paid": "20.00",
+        "method": "cash",
+        "notes": "Quotation-style sale",
+    }), 201)
+
+    order = ok(api.get(f"/sales-orders/{receipt['order_id']}"))
+    assert order["status"] == "confirmed"
+    assert receipt["total"] == "37.50"
+    assert receipt["paid"] == "20.00"
+    assert receipt["balance_due"] == "17.50"
+    assert total(api, product["id"]) == 5
+    payments = ok(api.get("/payments?kind=receipt"))
+    assert any(p["customer_id"] == customer["id"] and p["amount"] == "20.00" for p in payments)
+
+    quotation = api.get(f"/sales-orders/{receipt['order_id']}/quotation.pdf")
+    assert quotation.status_code == 200, quotation.text
+    assert quotation.headers["content-type"].startswith("application/pdf")
+    assert "quotation-SO-" in quotation.headers["content-disposition"]
 
 
 def test_transfer_moves_stock_between_warehouses_and_keeps_the_total(api):
@@ -109,13 +171,60 @@ def test_transfer_validation_is_all_or_nothing(api):
     ok(api.get("/stock-transfers/999"), 404)
 
 
-def test_purchase_return_and_adjustment_use_the_right_warehouse(api):
+def test_purchase_credit_invoice_is_received_immediately_and_remains_unpaid(api):
+    warehouse, _ = make_warehouses(api)
+    product = make_product(api, "CREDIT-A", 0, warehouse["id"])
+    supplier = ok(api.post("/suppliers", json={"name": "Credit Supplier"}), 201)
+
+    purchase = ok(api.post("/purchase-orders", json={
+        "supplier_id": supplier["id"],
+        "warehouse_id": warehouse["id"],
+        "payment_mode": "credit",
+        "items": [{"product_id": product["id"], "quantity": 4, "unit_cost": "6.25"}],
+    }), 201)
+
+    assert purchase["status"] == "received"
+    assert purchase["payment_status"] == "unpaid"
+    assert purchase["paid_amount"] == "0.00"
+    assert purchase["balance_due"] == "28.50"
+    assert by_wh(api, product["id"]) == {warehouse["id"]: 4}
+    assert ok(api.get("/payments?supplier_id=%d" % supplier["id"])) == []
+
+
+def test_purchase_invoice_can_disable_vat(api):
+    warehouse, _ = make_warehouses(api)
+    product = make_product(api, "NO-VAT-A", 0, warehouse["id"])
+    supplier = ok(api.post("/suppliers", json={"name": "No VAT Supplier"}), 201)
+
+    purchase = ok(api.post("/purchase-orders", json={
+        "supplier_id": supplier["id"],
+        "warehouse_id": warehouse["id"],
+        "payment_mode": "credit",
+        "discount_mode": "amount",
+        "discount_value": "5",
+        "tax_rate": "0",
+        "items": [{"product_id": product["id"], "quantity": 2, "unit_cost": "20"}],
+    }), 201)
+
+    assert purchase["status"] == "received"
+    assert purchase["total_amount"] == "35.00"
+    assert purchase["balance_due"] == "35.00"
+    assert by_wh(api, product["id"]) == {warehouse["id"]: 2}
+
+
+def test_purchase_cash_invoice_is_received_and_paid_immediately(api):
     w1, w2 = make_warehouses(api)
     p = make_product(api, "A", 0, w1["id"])
     sup = ok(api.post("/suppliers", json={"name": "S"}), 201)
-    po = ok(api.post("/purchase-orders", json={"supplier_id": sup["id"], "warehouse_id": w2["id"], "items": [{"product_id": p["id"], "quantity": 8, "unit_cost": "4"}]}), 201)
-    ok(api.post(f"/purchase-orders/{po['id']}/receive"))
-    assert by_wh(api, p["id"]) == {w2["id"]: 8}  # received where the order says, not in the product's own warehouse
+    safe = ok(api.post("/safes", json={"name": "Purchase Cash", "branch_id": w2["branch_id"]}), 201)
+    po = ok(api.post("/purchase-orders", json={"supplier_id": sup["id"], "warehouse_id": w2["id"], "payment_mode": "cash", "safe_id": safe["id"], "items": [{"product_id": p["id"], "quantity": 8, "unit_cost": "4"}]}), 201)
+    assert po["status"] == "received"
+    assert po["payment_status"] == "paid"
+    assert po["paid_amount"] == "36.48"
+    assert by_wh(api, p["id"]) == {w2["id"]: 8}  # received where the order says, immediately on creation
+    assert {r["warehouse_id"]: r["quantity"] for r in ok(api.get(f"/products/{p['id']}/stock"))} == {w2["id"]: 8}
+    payments = ok(api.get("/payments?supplier_id=%d" % sup["id"]))
+    assert len(payments) == 1 and payments[0]["amount"] == "36.48" and payments[0]["safe_id"] == safe["id"]
     line = ok(api.get(f"/purchase-orders/{po['id']}"))["items"][0]["id"]
     ok(api.post("/purchase-returns", json={"order_id": po["id"], "items": [{"order_item_id": line, "quantity": 3}]}), 201)
     assert by_wh(api, p["id"]) == {w2["id"]: 5}

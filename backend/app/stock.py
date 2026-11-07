@@ -42,14 +42,27 @@ def move_stock(db: Session, product: models.Product, warehouse_id: int, change: 
     if change == 0:
         return
     row = db.get(models.ProductStock, (product.id, warehouse_id))
-    if row is None:
-        if change < 0:
-            raise HTTPException(status.HTTP_409_CONFLICT, "Insufficient stock: " + shortage_message(db, product, warehouse_id, -change))
-        company_id = getattr(product, "company_id", None)
-        row = models.ProductStock(product_id=product.id, warehouse_id=warehouse_id, company_id=company_id, quantity=0)  # type: ignore
-        db.add(row)
-    if row.quantity + change < 0:  # type: ignore
+    if row is None and change < 0:
         raise HTTPException(status.HTTP_409_CONFLICT, "Insufficient stock: " + shortage_message(db, product, warehouse_id, -change))
+    if row is not None and row.quantity + change < 0:  # type: ignore
+        raise HTTPException(status.HTTP_409_CONFLICT, "Insufficient stock: " + shortage_message(db, product, warehouse_id, -change))
+    if row is None:
+        # First movement for this (product, warehouse). Two concurrent transactions
+        # can both see no row; create it inside a savepoint so the loser re-fetches
+        # the winner's row and applies its change instead of failing with a 500.
+        from sqlalchemy.exc import IntegrityError
+        company_id = getattr(product, "company_id", None)
+        for _ in range(2):
+            try:
+                with db.begin_nested():
+                    db.add(models.ProductStock(product_id=product.id, warehouse_id=warehouse_id, company_id=company_id, quantity=change))  # type: ignore
+                db.add(models.StockMovement(product_id=product.id, warehouse_id=warehouse_id, company_id=company_id, change=change, reason=reason, reference=reference))  # type: ignore
+                product.quantity += change  # type: ignore
+                return
+            except IntegrityError:
+                row = db.get(models.ProductStock, (product.id, warehouse_id))
+                if row is None:
+                    raise
     row.quantity += change  # type: ignore
     product.quantity += change  # type: ignore
     company_id = getattr(product, "company_id", None)

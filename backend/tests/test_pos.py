@@ -4,7 +4,7 @@ import pytest
 from fastapi import HTTPException
 
 from app import models
-from app.routers.pos import _load_checkout_products
+from app.routers.pos import _load_checkout_products, list_pos_invoices
 
 
 class FakeQuery:
@@ -61,3 +61,13 @@ def test_checkout_without_product_lines_does_not_query_database():
 
     assert _load_checkout_products(db, []) == {}
     assert db.query_models == []
+
+
+def test_pos_invoice_endpoint_requires_authenticated_user():
+    from fastapi import HTTPException
+    from app.deps import get_current_user
+
+    with pytest.raises(HTTPException) as exc_info:
+        get_current_user()
+
+    assert exc_info.value.status_code == 401

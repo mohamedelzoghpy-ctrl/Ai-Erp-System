@@ -12,6 +12,53 @@ class ORMModel(BaseModel):
 
 
 # ---------- Warehouses ----------
+class DepartmentCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=150)
+    code: Optional[str] = Field(default=None, min_length=1, max_length=50)
+    description: Optional[str] = None
+    is_active: bool = True
+
+
+class DepartmentOut(ORMModel):
+    id: int
+    company_id: int
+    name: str
+    code: str
+    description: Optional[str] = None
+    is_active: bool
+    created_at: datetime
+
+
+# ---------- Sales representatives ----------
+class SalesRepCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=150)
+    code: Optional[str] = Field(default=None, min_length=1, max_length=50)
+    phone: Optional[str] = Field(default=None, max_length=40)
+    branch_ids: List[int] = Field(default_factory=list)
+    commission_percent: Decimal = Field(default=Decimal("0"), ge=0, le=100)
+    is_active: bool = True
+
+
+class SalesRepUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=150)
+    phone: Optional[str] = Field(default=None, max_length=40)
+    branch_ids: Optional[List[int]] = None
+    commission_percent: Optional[Decimal] = Field(default=None, ge=0, le=100)
+    is_active: Optional[bool] = None
+
+
+class SalesRepOut(ORMModel):
+    id: int
+    company_id: int
+    name: str
+    code: str
+    phone: Optional[str] = None
+    branch_ids: List[int] = []
+    commission_percent: Decimal
+    is_active: bool
+    created_at: datetime
+
+
 class WarehouseBase(BaseModel):
     name: str = Field(min_length=1, max_length=150)
     code: str = Field(min_length=1, max_length=50)
@@ -41,11 +88,23 @@ class WarehouseOut(WarehouseBase, ORMModel):
 class SafeBase(BaseModel):
     name: str = Field(min_length=1, max_length=150)
     code: str = Field(min_length=1, max_length=50)
+    branch_id: int
     is_active: bool = True
 
 
-class SafeCreate(SafeBase):
-    opening_balance: Decimal = Field(default=Decimal("0"))
+class SafeCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=150)
+    code: Optional[str] = Field(default=None, min_length=1, max_length=50)
+    branch_id: Optional[int] = None
+    is_active: bool = True
+    opening_balance: Decimal = Field(default=Decimal("0"), ge=0)
+
+
+class SafeUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=150)
+    code: Optional[str] = Field(default=None, min_length=1, max_length=50)
+    branch_id: Optional[int] = None
+    is_active: Optional[bool] = None
 
 
 class SafeOut(SafeBase, ORMModel):
@@ -62,24 +121,36 @@ class BankBase(BaseModel):
 
 
 class BankCreate(BankBase):
-    opening_balance: Decimal = Field(default=Decimal("0"))
+    code: Optional[str] = Field(default=None, min_length=1, max_length=50)
+    opening_balance: Decimal = Field(default=Decimal("0"), ge=0)
+    branch_id: Optional[int] = None  # NULL = الشركة ككل
+
+
+class BankUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=150)
+    code: Optional[str] = Field(default=None, min_length=1, max_length=50)
+    account_number: Optional[str] = None
+    is_active: Optional[bool] = None
 
 
 class BankOut(BankBase, ORMModel):
     id: int
     balance: Decimal
+    branch_id: Optional[int] = None
+    branch_name: Optional[str] = None
     created_at: datetime
 
 
 # ---------- Suppliers / Customers (same shape) ----------
 class PartyBase(BaseModel):
     name: str = Field(min_length=1, max_length=150)
+    code: Optional[str] = Field(default=None, max_length=50)  # auto-generated when empty
     contact_person: Optional[str] = None
     phone: Optional[str] = None
     email: Optional[str] = None
     address: Optional[str] = None
     is_active: bool = True
-    opening_balance: Decimal = Decimal("0")
+    opening_balance: Decimal = Field(default=Decimal("0"), ge=0)
 
 
 class PartyUpdate(BaseModel):
@@ -89,7 +160,7 @@ class PartyUpdate(BaseModel):
     email: Optional[str] = None
     address: Optional[str] = None
     is_active: Optional[bool] = None
-    opening_balance: Optional[Decimal] = None
+    opening_balance: Optional[Decimal] = Field(default=None, ge=0)
 
 
 class SupplierCreate(PartyBase):
@@ -132,9 +203,12 @@ class ProductBase(BaseModel):
     is_active: bool = True
     warehouse_id: Optional[int] = None
     supplier_id: Optional[int] = None
+    # صورة من رابط إنترنت (الملفات المرفوعة تُحفظ بالبايتات وتُصدَر عبر /products/{id}/image)
+    image_url: Optional[str] = Field(default=None, max_length=500)
 
 
 class ProductCreate(ProductBase):
+    sku: Optional[str] = Field(default=None, min_length=1, max_length=60)
     # Opening balance only; afterwards quantity changes via purchases/sales/adjustments.
     quantity: int = Field(default=0, ge=0)
 
@@ -149,12 +223,14 @@ class ProductUpdate(BaseModel):
     is_active: Optional[bool] = None
     warehouse_id: Optional[int] = None
     supplier_id: Optional[int] = None
+    image_url: Optional[str] = Field(default=None, max_length=500)
 
 
 class ProductOut(ProductBase, ORMModel):
     id: int
     quantity: int  # total over all warehouses
     warehouse_quantity: Optional[int] = None  # only when the list was asked for one warehouse (?stock_warehouse_id=)
+    image_uploaded: bool = False
     created_at: datetime
 
 
@@ -197,6 +273,11 @@ class PurchaseOrderCreate(BaseModel):
     supplier_id: int
     warehouse_id: int
     notes: Optional[str] = None
+    payment_mode: Literal["cash", "credit"] = "credit"
+    safe_id: Optional[int] = None
+    discount_mode: Literal["amount", "percent"] = "amount"
+    discount_value: Decimal = Field(default=Decimal("0"), ge=0)
+    tax_rate: Decimal = Field(default=Decimal("14"), ge=0, le=100)
     items: List[PurchaseItemIn] = Field(min_length=1)
 
 
@@ -237,6 +318,8 @@ class SalesOrderCreate(BaseModel):
     customer_id: int
     warehouse_id: int
     notes: Optional[str] = None
+    rep_id: Optional[int] = None  # مندوب المبيعات المسجل على الفاتورة
+    safe_id: Optional[int] = None  # اسم الخزينة المقترحة لتحصيل الفاتورة
     items: List[SalesItemIn] = Field(min_length=1)
 
 
@@ -247,6 +330,10 @@ class SalesOrderOut(ORMModel):
     warehouse_id: int
     status: str
     notes: Optional[str]
+    rep_id: Optional[int] = None
+    rep_name: Optional[str] = None
+    safe_id: Optional[int] = None
+    safe_name: Optional[str] = None
     total_amount: Decimal
     created_by_name: Optional[str] = None
     created_at: datetime
@@ -288,13 +375,16 @@ class UserOut(ORMModel):
     is_platform_admin: bool = False
     active_company_id: Optional[int] = None
     created_at: datetime
+    branch_ids: List[int] = []
+    warehouse_ids: List[int] = []
 
 
 class CompanyCreate(BaseModel):
     name: str = Field(min_length=1, max_length=150)
-    code: str = Field(min_length=1, max_length=50)
+    code: Optional[str] = Field(default=None, min_length=1, max_length=50)
     max_warehouses_per_branch: Optional[int] = Field(default=None, gt=0)
     max_safes_per_branch: Optional[int] = Field(default=None, gt=0)
+    max_branches: Optional[int] = Field(default=None, gt=0)
     admin_username: str = Field(min_length=3, max_length=60)
     admin_password: str = Field(min_length=8, max_length=128)
     admin_full_name: Optional[str] = None
@@ -304,6 +394,7 @@ class CompanyUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=150)
     max_warehouses_per_branch: Optional[int] = Field(default=None, gt=0)
     max_safes_per_branch: Optional[int] = Field(default=None, gt=0)
+    max_branches: Optional[int] = Field(default=None, gt=0)
     is_active: Optional[bool] = None
 
 
@@ -313,6 +404,7 @@ class CompanyOut(ORMModel):
     code: str
     max_warehouses_per_branch: Optional[int]
     max_safes_per_branch: Optional[int]
+    max_branches: Optional[int] = None
     is_active: bool
     created_at: datetime
 
@@ -332,6 +424,13 @@ class BranchCreate(BaseModel):
     location: Optional[str] = None
 
 
+class BranchUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=150)
+    code: Optional[str] = Field(default=None, min_length=1, max_length=50)
+    location: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
 class BranchOut(ORMModel):
     id: int
     company_id: int
@@ -342,8 +441,13 @@ class BranchOut(ORMModel):
     created_at: datetime
 
 
-class EmployeeCreate(SetupAdmin):
+class EmployeeCreate(BaseModel):
+    username: str = Field(min_length=3, max_length=60)
+    password: str = Field(min_length=8, max_length=128)
+    full_name: Optional[str] = None
     role: Role = "staff"
+    department_id: Optional[int] = None
+    all_branches: bool = False
     branch_ids: List[int] = Field(default_factory=list)
     warehouse_ids: List[int] = Field(default_factory=list)
 
@@ -353,11 +457,17 @@ class EmployeeUpdate(BaseModel):
     role: Optional[Role] = None
     is_active: Optional[bool] = None
     password: Optional[str] = Field(default=None, min_length=8, max_length=128)
+    department_id: Optional[int] = None
+    all_branches: Optional[bool] = None
     branch_ids: Optional[List[int]] = None
     warehouse_ids: Optional[List[int]] = None
 
 
 class EmployeeOut(UserOut):
+    employee_code: str
+    department_id: Optional[int] = None
+    department_name: Optional[str] = None
+    all_branches: bool = False
     branch_ids: List[int]
     warehouse_ids: List[int]
 
@@ -375,6 +485,9 @@ class LowStockItem(ORMModel):
     quantity: int
     reorder_level: int
     shortfall: int
+    image_url: Optional[str] = None
+    image_uploaded: bool = False
+    supplier_name: Optional[str] = None
     warehouse_id: Optional[int]
     supplier_id: Optional[int]
 
@@ -432,6 +545,13 @@ class SalesByCustomer(BaseModel):
     total: Decimal
 
 
+class SalesByProductSupplier(BaseModel):
+    supplier_id: Optional[int] = None
+    supplier_name: str
+    orders: int
+    total: Decimal
+
+
 class SalesByCashier(BaseModel):
     username: Optional[str] = None  # None: orders made before creators were recorded
     orders: int
@@ -447,6 +567,7 @@ class SalesSummary(BaseModel):
     top_products: List[TopProduct]
     by_customer: List[SalesByCustomer] = []
     by_cashier: List[SalesByCashier] = []
+    by_product_supplier: List[SalesByProductSupplier] = []
 
 
 class PurchaseTopProduct(BaseModel):
@@ -494,10 +615,29 @@ class Dashboard(BaseModel):
     purchase_returns_total: Decimal = Decimal("0")
     payables_total: Decimal = Decimal("0")
     stale_shifts: int = 0  # cashier shifts left open too long
+    sales_growth_pct: Optional[float] = None
+    purchases_growth_pct: Optional[float] = None
+    pending_transfers: int = 0
+    cash_liquidity_total: Decimal = Decimal("0")
+    safes_balance_total: Decimal = Decimal("0")
+    banks_balance_total: Decimal = Decimal("0")
 
 
 # ---------- Payments & statements ----------
-PaymentMethod = Literal["cash", "bank", "wallet", "cheque"]
+PaymentMethod = Literal["cash", "bank", "wallet", "cheque", "credit"]  # credit = آجل (يُخصم من رصيد الطرف)
+
+
+class PaymentCategoryOut(ORMModel):
+    id: int
+    name: str
+    kind: Literal["receipt", "payment"] = "receipt"
+    requires_party: bool = True
+
+
+class PaymentCategoryCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=150)
+    kind: Literal["receipt", "payment"] = "receipt"
+    requires_party: bool = True
 
 
 class PaymentCreate(BaseModel):
@@ -505,6 +645,7 @@ class PaymentCreate(BaseModel):
     supplier_id: Optional[int] = None  # money paid to this supplier
     safe_id: Optional[int] = None  # optional safe (cash box) to debit/credit
     bank_id: Optional[int] = None  # optional bank account to debit/credit
+    category_id: Optional[int] = None  # بند القبض / الصرف (required when the voucher has no party)
     amount: Decimal = Field(gt=0, max_digits=14, decimal_places=2)
     method: PaymentMethod = "cash"
     reference: Optional[str] = Field(default=None, max_length=100)
@@ -512,9 +653,11 @@ class PaymentCreate(BaseModel):
     paid_on: Optional[date] = None  # defaults to today
 
     @model_validator(mode="after")
-    def _exactly_one_party(self):
-        if (self.customer_id is None) == (self.supplier_id is None):
-            raise ValueError("Provide exactly one of customer_id or supplier_id")
+    def _party_shape(self):
+        if self.customer_id is not None and self.supplier_id is not None:
+            raise ValueError("Provide only one of customer_id or supplier_id")
+        if self.customer_id is None and self.supplier_id is None and self.category_id is None:
+            raise ValueError("A voucher with no party requires category_id (بند القبض / الصرف)")
         return self
 
 
@@ -525,6 +668,10 @@ class PaymentOut(ORMModel):
     supplier_id: Optional[int]
     safe_id: Optional[int] = None
     bank_id: Optional[int] = None
+    category_id: Optional[int] = None
+    category_name: Optional[str] = None
+    company_name: Optional[str] = None
+    safe_branch_name: Optional[str] = None
     party_name: Optional[str] = None
     amount: Decimal
     method: str
@@ -536,6 +683,302 @@ class PaymentOut(ORMModel):
 
 
 Day = date  # alias: a field called `date` must not shadow its own type annotation
+
+
+# ---------- Cheques (حافظة الشيكات) ----------
+
+ChequeDirection = Literal["received", "issued"]
+
+
+class ChequeCreate(BaseModel):
+    direction: ChequeDirection
+    number: str = Field(min_length=1, max_length=60)
+    bank_id: int  # البنك المسحوب عليه
+    amount: Decimal = Field(gt=0, max_digits=14, decimal_places=2)
+    customer_id: Optional[int] = None  # required when direction == "received"
+    supplier_id: Optional[int] = None  # required when direction == "issued"
+    cheque_date: Optional[date] = None  # defaults to today
+    due_date: Optional[date] = None
+    notes: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _party_matches_direction(self):
+        if self.direction == "received":
+            if self.customer_id is None or self.supplier_id is not None:
+                raise ValueError("استلام الشيك يتطلب اختيار العميل")
+        else:
+            if self.supplier_id is None or self.customer_id is not None:
+                raise ValueError("صرف الشيك يتطلب اختيار المورد")
+        return self
+
+
+class ChequeOut(ORMModel):
+    id: int
+    direction: ChequeDirection
+    number: str
+    bank_id: int
+    bank_name: Optional[str] = None
+    bank_branch_name: Optional[str] = None
+    company_name: Optional[str] = None
+    amount: Decimal
+    customer_id: Optional[int] = None
+    supplier_id: Optional[int] = None
+    party_name: Optional[str] = None
+    cheque_date: date
+    due_date: Optional[date] = None
+    status: str
+    payment_id: Optional[int] = None
+    notes: Optional[str] = None
+    created_at: datetime
+
+
+class ChequeCollectIn(BaseModel):
+    safe_id: int
+
+
+class ChequeDepositIn(BaseModel):
+    bank_id: int
+
+
+# ---------- Safe / bank statements (from the ledger) ----------
+
+class AccountStatementLine(BaseModel):
+    entry_id: int
+    date: date
+    description: Optional[str] = None
+    reference: Optional[str] = None
+    debit: Decimal  # داخل (للخزينة/البنك)
+    credit: Decimal  # خارج
+    balance: Decimal
+
+
+class AccountStatementOut(BaseModel):
+    account_name: str
+    account_code: str
+    opening: Decimal
+    closing: Decimal
+    total_debit: Decimal
+    total_credit: Decimal
+    lines: List[AccountStatementLine]
+
+
+# ---------- Manufacturing (التصنيفات: قوائم المواد وأوامر التصنيع) ----------
+
+class BomItemIn(BaseModel):
+    component_id: int
+    qty_per_output: Decimal = Field(gt=0, max_digits=12, decimal_places=3)  # كمية المكوّن لكل وحدة ناتجة
+    scrap_pct: Decimal = Field(default=Decimal("0"), ge=0, le=100, max_digits=5, decimal_places=2)
+    notes: Optional[str] = Field(default=None, max_length=200)
+
+
+class BomCreate(BaseModel):
+    product_id: int
+    version: str = Field(default="v1", max_length=20)
+    output_qty: int = Field(default=1, ge=1)  # الكمية الناتجة من القائمة
+    is_active: bool = True
+    notes: Optional[str] = None
+    items: List[BomItemIn] = []
+
+
+class BomItemOut(ORMModel):
+    id: int
+    component_id: int
+    component_name: Optional[str] = None
+    component_code: Optional[str] = None
+    component_unit: Optional[str] = None
+    qty_per_output: Decimal
+    scrap_pct: Decimal
+    notes: Optional[str] = None
+
+
+class BomOut(ORMModel):
+    id: int
+    product_id: int
+    product_name: Optional[str] = None
+    version: str
+    output_qty: int
+    is_active: bool
+    notes: Optional[str] = None
+    items: List[BomItemOut] = []
+    created_at: datetime
+
+
+class ProductionOrderCreate(BaseModel):
+    product_id: int
+    bom_id: Optional[int] = None  # auto-picks the active BOM when omitted
+    qty_planned: int = Field(ge=1)
+    raw_warehouse_id: int
+    output_warehouse_id: int
+    subcontractor_id: Optional[int] = None  # مورد التصنيع الخارجي (اختياري)
+    production_line: Optional[str] = Field(default=None, max_length=100)  # خط الإنتاج
+    scheduled_date: Optional[date] = None
+    notes: Optional[str] = None
+
+
+class ProductionConsumptionOut(ORMModel):
+    component_id: int
+    component_name: Optional[str] = None
+    component_unit: Optional[str] = None
+    qty: int
+    unit_cost: Decimal
+    total_cost: Decimal
+
+
+class ProductionCostIn(BaseModel):
+    cost_type: Literal["labor", "overhead", "subcontract"]
+    amount: Decimal = Field(gt=0, max_digits=14, decimal_places=2)
+    description: Optional[str] = Field(default=None, max_length=200)
+
+
+class ProductionCostOut(ORMModel):
+    id: int
+    cost_type: Literal["labor", "overhead", "subcontract"]
+    amount: Decimal
+    description: Optional[str] = None
+    created_at: datetime
+
+
+class ProductionOrderOut(ORMModel):
+    id: int
+    code: str
+    product_id: int
+    product_name: Optional[str] = None
+    bom_id: Optional[int] = None
+    qty_planned: int
+    qty_produced: int
+    status: str
+    raw_warehouse_id: int
+    raw_warehouse_name: Optional[str] = None
+    output_warehouse_id: int
+    output_warehouse_name: Optional[str] = None
+    subcontractor_id: Optional[int] = None
+    subcontractor_name: Optional[str] = None
+    production_line_id: Optional[int] = None
+    production_line_name: Optional[str] = None
+    scheduled_date: Optional[date] = None
+    is_late: Optional[bool] = None
+    qty_scrapped: int = 0
+    notes: Optional[str] = None
+    consumptions: List[ProductionConsumptionOut] = []
+    costs: List[ProductionCostOut] = []
+    costs_total: Decimal = Decimal("0")
+    batches: List["ProductionBatchOut"] = []
+    children: List["ProductionChildOut"] = []
+    created_at: datetime
+
+
+class ProductionBatchOut(ORMModel):
+    id: int
+    batch_no: str
+    qty: int
+    cost: Decimal
+    qc_status: Literal["pending", "passed", "rejected"]
+    produced_at: datetime
+    notes: Optional[str] = None
+
+
+class ProductionChildOut(ORMModel):
+    id: int
+    code: str
+    product_id: int
+    product_name: Optional[str] = None
+    qty_planned: int
+    status: str
+
+
+class BatchQcIn(BaseModel):
+    result: Literal["passed", "rejected"]
+
+
+class ProductionLineIn(BaseModel):
+    name: str = Field(min_length=1, max_length=150)
+    capacity_per_hour: Optional[int] = Field(default=None, ge=1)
+    hourly_cost: Optional[Decimal] = Field(default=None, ge=0, max_digits=14, decimal_places=2)
+
+
+class ProductionLineOut(ORMModel):
+    id: int
+    name: str
+    capacity_per_hour: Optional[int] = None
+    hourly_cost: Optional[Decimal] = None
+    is_active: bool
+    created_at: datetime
+
+
+class ManufacturingReportLine(BaseModel):
+    order_id: int
+    code: str
+    product_name: Optional[str] = None
+    qty_planned: int
+    qty_produced: int
+    materials: Decimal
+    costs: Decimal
+    total: Decimal
+    unit_cost: Decimal
+    variance: Decimal
+
+
+class ManufacturingByProduct(BaseModel):
+    product_id: int
+    product_name: Optional[str] = None
+    orders: int
+    qty_produced: int
+    total: Decimal
+
+
+class ManufacturingReportOut(BaseModel):
+    date_from: Optional[date] = None
+    date_to: Optional[date] = None
+    lines: List[ManufacturingReportLine]
+    total_orders: int
+    total_qty_produced: int
+    total_materials: Decimal
+    total_costs: Decimal
+    total: Decimal
+    total_variance: Decimal
+    by_product: List[ManufacturingByProduct]
+
+# ---------- Reconciliation (مطابقة أرصدة الشجرة مع الدفتر) ----------
+
+class ReconcileLine(BaseModel):
+    account_id: int
+    code: str
+    name: str
+    type: str
+    stored: Decimal
+    ledger: Decimal
+    drift: Decimal
+
+
+class ReconcileOut(BaseModel):
+    lines: List[ReconcileLine]
+    total_stored: Decimal
+    total_ledger: Decimal
+    total_drift: Decimal
+
+
+class ProductionProduceIn(BaseModel):
+    qty: int = Field(ge=1)  # كمية الدفعة المنتجة
+
+
+class ProductionScrapIn(BaseModel):
+    qty: int = Field(ge=1)  # كمية الهالك
+    notes: Optional[str] = Field(default=None, max_length=200)
+
+
+class WipOrderOut(BaseModel):
+    id: int
+    code: str
+    product_id: int
+    product_name: Optional[str] = None
+    qty_planned: int
+    qty_produced: int
+    remaining: int
+    materials: Decimal
+    costs: Decimal
+    wip_value: Decimal
+    unit_cost: Decimal
+    scheduled_date: Optional[date] = None
 
 
 class StatementLine(BaseModel):
@@ -606,6 +1049,18 @@ class AuditLogOut(ORMModel):
     summary: Optional[str]
 
 
+class UserActivity(BaseModel):
+    """مراقبة المستخدم: سجل نشاطه كاملاً من أول تسجيل دخول حتى الآن."""
+
+    username: str
+    full_name: Optional[str] = None
+    first_login: Optional[datetime] = None
+    last_login: Optional[datetime] = None
+    login_count: int = 0
+    total: int
+    logs: List[AuditLogOut]
+
+
 # ---------- Point of sale ----------
 class PosItem(BaseModel):
     product_id: int
@@ -616,6 +1071,7 @@ class PosCheckout(BaseModel):  # type: ignore
     warehouse_id: int
     items: List[PosItem] = Field(min_length=1)
     customer_id: Optional[int] = None  # default: the shared "walk-in" customer
+    rep_id: Optional[int] = None  # مندوب المبيعات المسجل على الفاتورة
     pay_now: bool = True  # False = sale on the customer's account (needs customer_id)
     method: PaymentMethod = "cash"
     notes: Optional[str] = None
@@ -652,6 +1108,7 @@ class PosInfo(BaseModel):
 class PosCheckout(BaseModel):
     warehouse_id: int
     customer_id: Optional[int] = Field(default=None, description="Omit for a walk-in cash customer (must pay in full).")
+    rep_id: Optional[int] = Field(default=None, description="مندوب المبيعات المسجل على الفاتورة.")
     items: List[SalesItemIn] = Field(min_length=1)
     amount_paid: Optional[Decimal] = Field(default=None, ge=0, description="Defaults to the full total.")
     method: PaymentMethod = "cash"
@@ -670,12 +1127,18 @@ class PosReceipt(BaseModel):
 
 # ---------- Returns ----------
 class ReturnItemIn(BaseModel):
-    order_item_id: int
+    order_item_id: Optional[int] = None
+    product_id: Optional[int] = None  # required when the return is not tied to an order line
     quantity: int = Field(gt=0)
+    unit_price: Optional[Decimal] = Field(default=None, ge=0, description="Used for order-less returns; defaults to the product's sale/cost price")
 
 
 class ReturnCreate(BaseModel):
-    order_id: int
+    order_id: Optional[int] = None  # when omitted the return is standalone (pick products directly)
+    customer_id: Optional[int] = None  # optional party for standalone sales returns
+    supplier_id: Optional[int] = None  # optional party for standalone purchase returns
+    warehouse_id: Optional[int] = None  # required for standalone returns
+    rep_id: Optional[int] = None  # مندوب المبيعات (مرتجع البيع)
     items: List[ReturnItemIn] = Field(min_length=1)
     refund_amount: Decimal = Field(default=Decimal("0"), ge=0, description="Cash exchanged now; the rest changes the balance.")
     method: PaymentMethod = "cash"
@@ -684,7 +1147,7 @@ class ReturnCreate(BaseModel):
 
 class ReturnItemOut(ORMModel):
     id: int
-    order_item_id: int
+    order_item_id: Optional[int] = None  # NULL for standalone returns (no original order line)
     product_id: int
     product_name: Optional[str] = None
     quantity: int
@@ -694,10 +1157,12 @@ class ReturnItemOut(ORMModel):
 class ReturnOut(ORMModel):
     id: int
     kind: str  # sales | purchase
-    order_id: int
-    party_id: int
+    order_id: Optional[int] = None
+    party_id: Optional[int] = None
     party_name: Optional[str] = None
     warehouse_id: int
+    rep_id: Optional[int] = None
+    rep_name: Optional[str] = None
     total_amount: Decimal
     refund_amount: Decimal
     method: str
@@ -815,3 +1280,176 @@ class TransferOut(ORMModel):
     rejection_reason: Optional[str] = None
     created_at: datetime
     items: List[TransferItemOut]
+
+
+# ---------- Chart of Accounts ----------
+class ChartAccountBase(BaseModel):
+    name: str = Field(min_length=1, max_length=150)
+    code: str = Field(min_length=1, max_length=50)
+    type: Literal["asset", "liability", "equity", "revenue", "expense"]
+    is_group: bool = False
+    is_active: bool = True
+
+class ChartAccountCreate(ChartAccountBase):
+    code: Optional[str] = Field(default=None, min_length=1, max_length=50)
+    parent_id: Optional[int] = None
+
+class ChartAccountUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=150)
+    code: Optional[str] = Field(default=None, min_length=1, max_length=50)
+    type: Optional[Literal["asset", "liability", "equity", "revenue", "expense"]] = None
+    is_group: Optional[bool] = None
+    parent_id: Optional[int] = None
+    is_active: Optional[bool] = None
+
+class ChartAccountOut(ChartAccountBase, ORMModel):
+    id: int
+    parent_id: Optional[int]
+    balance: Decimal
+    created_at: datetime
+
+# ---------- Cost Centers ----------
+class CostCenterBase(BaseModel):
+    name: str = Field(min_length=1, max_length=150)
+    code: str = Field(min_length=1, max_length=50)
+    is_active: bool = True
+
+class CostCenterCreate(CostCenterBase):
+    pass
+
+class CostCenterUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=150)
+    code: Optional[str] = Field(default=None, min_length=1, max_length=50)
+    is_active: Optional[bool] = None
+
+class CostCenterOut(CostCenterBase, ORMModel):
+    id: int
+    created_at: datetime
+
+# ---------- Fiscal Years ----------
+class FiscalYearBase(BaseModel):
+    name: str = Field(min_length=1, max_length=50)
+    start_date: date
+    end_date: date
+    is_closed: bool = False
+
+class FiscalYearCreate(FiscalYearBase):
+    pass
+
+class FiscalYearUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=50)
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
+    is_closed: Optional[bool] = None
+
+class FiscalYearOut(FiscalYearBase, ORMModel):
+    id: int
+    created_at: datetime
+
+# ---------- Journal Entries ----------
+class JournalItemBase(BaseModel):
+    account_id: int
+    debit: Decimal = Field(default=Decimal("0"), ge=0)
+    credit: Decimal = Field(default=Decimal("0"), ge=0)
+    cost_center_id: Optional[int] = None
+    notes: Optional[str] = None
+
+class JournalItemCreate(JournalItemBase):
+    pass
+
+class JournalItemOut(JournalItemBase, ORMModel):
+    id: int
+    account_name: Optional[str] = None
+
+class JournalEntryBase(BaseModel):
+    date: Optional[date] = None
+    description: str = Field(min_length=1)
+    reference: Optional[str] = None
+
+class JournalEntryCreate(JournalEntryBase):
+    items: List[JournalItemCreate] = Field(min_length=2)
+
+    @model_validator(mode="after")
+    def _check_balance(self):
+        total_debit = sum(item.debit for item in self.items)
+        total_credit = sum(item.credit for item in self.items)
+        if total_debit != total_credit:
+            raise ValueError(f"Journal entry must balance. Debit ({total_debit}) != Credit ({total_credit})")
+        return self
+
+class JournalEntryUpdate(BaseModel):
+    date: Optional[date] = None
+    description: Optional[str] = Field(default=None, min_length=1)
+    reference: Optional[str] = None
+
+class JournalEntryOut(JournalEntryBase, ORMModel):
+    id: int
+    company_id: int
+    created_by: Optional[int]
+    created_at: datetime
+    items: List[JournalItemOut]
+
+# ---------- Fixed Assets ----------
+class FixedAssetBase(BaseModel):
+    name: str = Field(min_length=1, max_length=150)
+    code: str = Field(min_length=1, max_length=50)
+    asset_type: str = Field(min_length=1, max_length=50)
+    purchase_date: date
+    cost: Decimal = Field(ge=0)
+    accumulated_depreciation: Decimal = Field(default=Decimal("0"), ge=0)
+    current_book_value: Decimal = Field(ge=0)
+    depreciation_method: str = Field(min_length=1, max_length=50)
+    useful_life_years: int = Field(ge=0)
+    salvage_value: Decimal = Field(default=Decimal("0"), ge=0)
+    is_active: bool = True
+
+class FixedAssetCreate(FixedAssetBase):
+    code: Optional[str] = Field(default=None, min_length=1, max_length=50)
+
+class FixedAssetUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=150)
+    code: Optional[str] = Field(default=None, min_length=1, max_length=50)
+    asset_type: Optional[str] = Field(default=None, min_length=1, max_length=50)
+    purchase_date: Optional[date] = None
+    cost: Optional[Decimal] = Field(default=None, ge=0)
+    accumulated_depreciation: Optional[Decimal] = Field(default=None, ge=0)
+    current_book_value: Optional[Decimal] = Field(default=None, ge=0)
+    depreciation_method: Optional[str] = Field(default=None, min_length=1, max_length=50)
+    useful_life_years: Optional[int] = Field(default=None, ge=0)
+    salvage_value: Optional[Decimal] = Field(default=None, ge=0)
+    is_active: Optional[bool] = None
+
+class FixedAssetOut(FixedAssetBase, ORMModel):
+    id: int
+    company_id: int
+    created_at: datetime
+
+# ---------- General Ledger ----------
+class LedgerEntryOut(BaseModel):
+    date: date
+    description: str
+    reference: Optional[str]
+    account_code: str
+    account_name: str
+    account_type: str
+    debit: Decimal
+    credit: Decimal
+    cost_center: Optional[str]
+    notes: Optional[str]
+
+    @classmethod
+    def from_journal_item(cls, je, ji) -> "LedgerEntryOut":
+        account = ji.account
+        cc = ji.cost_center
+        return cls(
+            date=je.date,
+            description=je.description,
+            reference=je.reference,
+            account_code=account.code,
+            account_name=account.name,
+            account_type=account.type,
+            debit=ji.debit,
+            credit=ji.credit,
+            cost_center=cc.code if cc else None,
+            notes=ji.notes,
+        )

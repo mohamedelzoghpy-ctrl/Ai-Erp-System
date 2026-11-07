@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from .. import models, schemas
 from ..accounts import party_balances
 from ..audit import audit
+from ..codegen import unique_code
 from ..pagination import paginate
 from ..database import get_db
 from ..deps import get_current_user, require_manager, user_role
@@ -115,9 +116,27 @@ def _crud(router: APIRouter, model, label: str, create_s, update_s, out_s, kind:
                         f"Branch warehouse limit reached ({company.max_warehouses_per_branch})",
                     )
             data["branch_id"] = branch.id
+            company_id = db.info["company_id"]
+            if not (data.get("code") or "").strip():
+                data["code"] = unique_code(db, models.Warehouse, company_id, data["name"], "WH", max_length=50)
+        if model in (models.Supplier, models.Customer):
+            # party codes are company-scoped; an empty one gets generated from the name
+            company_id = db.info["company_id"]
+            if not (data.get("code") or "").strip():
+                data["code"] = unique_code(
+                    db, model, company_id, data["name"], "SUP" if model is models.Supplier else "CUS", max_length=50
+                )
         if Decimal(str(data.get("opening_balance") or 0)) != 0:
             _ensure_manager_for_balance(user)
         obj = model(**data)
+        if model is models.Supplier:
+            ap = db.query(models.ChartAccount).filter(models.ChartAccount.company_id == db.info["company_id"], models.ChartAccount.code == "2100").first()
+            if ap is not None:
+                obj.chart_account_id = ap.id
+        if model is models.Customer:
+            ar = db.query(models.ChartAccount).filter(models.ChartAccount.company_id == db.info["company_id"], models.ChartAccount.code == "1100").first()
+            if ar is not None:
+                obj.chart_account_id = ar.id
         db.add(obj)
         _commit(db, obj, before=lambda: audit(db, user, "create", entity, obj, obj.name))  # type: ignore
         _attach_balances(db, kind, obj)

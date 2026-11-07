@@ -1,13 +1,15 @@
-fastapi
-uvicorn
-sqlalchemy
-psycopg2-binary
-pydantic
-PyJWT
-python-multipart
-alembic
-reportlab
-arabic-reshaper
-python-bidi
-openpyxl
-tzdata
+# Pinned to the exact versions running in production (docker exec ... pip freeze).
+# Upgrade deliberately: bump a pin, rebuild, run tests — never float.
+fastapi==0.162.0
+uvicorn==0.54.0
+sqlalchemy==2.1.8
+psycopg2-binary==2.9.13
+pydantic==2.14.2
+PyJWT==2.15.1
+python-multipart==0.0.33
+alembic==1.20.1
+reportlab==5.1.0
+arabic-reshaper==3.1.0
+python-bidi==0.6.12
+openpyxl==3.1.5
+tzdata==2026.6
