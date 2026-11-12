@@ -167,6 +167,57 @@ def test_withholding_payment_gl_and_void():
         engine.dispose()
 
 
+def test_official_forms_vat_and_withholding():
+    """النماذج الرسمية: خانات الإقرار الربعي + سجل الخصم والإضافة الشهري ببيانات الممول."""
+    c, engine, _ = _client()
+    try:
+        wh, _ = make_warehouses(c)
+        cust = ok(c.post("/customers", json={"name": "عميل"}), 201)
+        p = ok(c.post("/products", json={"sku": "F1", "name": "صنف", "sale_price": "100",
+                                         "cost_price": "50", "quantity": 50}), 201)
+        supp = ok(c.post("/suppliers", json={
+            "name": "مورد رسمي", "tax_registration_number": "123-456-789",
+        }), 201)
+        assert supp["tax_registration_number"] == "123-456-789"
+        so = ok(c.post("/sales-orders", json={
+            "customer_id": cust["id"], "warehouse_id": wh["id"], "tax_rate": "14",
+            "items": [{"product_id": p["id"], "quantity": 1}],
+        }), 201)
+        ok(c.post(f"/sales-orders/{so['id']}/confirm"))
+        # نموذج القيمة المضافة الربعي: ملف + pdf
+        for path in ["/taxes/vat-return/form-xlsx?period_type=quarter&period=1&year=2026",
+                     "/taxes/vat-return/form-pdf?period_type=quarter&period=1&year=2026",
+                     "/taxes/vat-return/form-xlsx?period_type=month&period=11&year=2026"]:
+            r = c.get(path)
+            assert r.status_code == 200 and len(r.content) > 500, path
+        # فترة غير صالحة → 422
+        assert c.get("/taxes/vat-return/form-xlsx?period_type=quarter&period=7").status_code == 422
+        # نموذج الخصم والإضافة الشهري: سند بمورد له ملف ضريبي ثم نموذج الشهر
+        branch = ok(c.post("/company/branches", json={"name": "فرع نموذج"}), 201)
+        safe = ok(c.post("/safes", json={"name": "خزينة نموذج", "branch_id": branch["id"]}), 201)
+        codes = ok(c.get("/taxes/withholding/codes"))
+        svc = next(x for x in codes if "الخدمات" in x["name"])
+        ok(c.post("/payments", json={
+            "supplier_id": supp["id"], "amount": "5000", "safe_id": safe["id"],
+            "withholding_amount": "150", "withholding_code_id": svc["id"],
+        }), 201)
+        # شهر الفترة الفعلي (اليوم) — النموذج الشهري للشهر الحالي
+        from datetime import date as _date
+        today = _date.today()
+        rep = ok(c.get("/taxes/withholding"))
+        assert len(rep["rows"]) == 1
+        assert rep["rows"][0]["supplier_name"] == "مورد رسمي"
+        for path in [f"/taxes/withholding/form-xlsx?year={today.year}&month={today.month}",
+                     f"/taxes/withholding/form-pdf?year={today.year}&month={today.month}"]:
+            r = c.get(path)
+            assert r.status_code == 200 and len(r.content) > 500, path
+        # شهر بلا سندات → نموذج شاغر 200
+        assert c.get("/taxes/withholding/form-xlsx?year=2030&month=1").status_code == 200
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+        engine.dispose()
+
+
 def test_payroll_tax_progressive_calculation_and_settings():
     c, engine, _ = _client()
     try:

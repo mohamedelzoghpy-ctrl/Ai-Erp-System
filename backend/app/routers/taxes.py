@@ -687,3 +687,218 @@ def payroll_tax_pdf(
         media_type=PDF_MIME,
         headers={"Content-Disposition": f'attachment; filename="payroll-tax-{r["period"]}.pdf"'},
     )
+
+
+# ==================================================== 4) النماذج الرسمية لمصلحة الضرائب
+QUARTER_MONTHS = {1: (1, 3), 2: (4, 6), 3: (7, 9), 4: (10, 12)}
+
+
+def _period_range(year: int, period_type: str, period: int) -> tuple[date, date]:
+    """فترة الإقرار: ربع سنوي (1–4) أو شهري (1–12) — الإقرار الربعي هو الأصل (مادة 61)."""
+    if period_type == "quarter":
+        if period not in QUARTER_MONTHS:
+            raise HTTPException(422, "الربع يجب أن يكون من 1 إلى 4")
+        m1, m2 = QUARTER_MONTHS[period]
+    else:
+        if not (1 <= period <= 12):
+            raise HTTPException(422, "الشهر يجب أن يكون من 1 إلى 12")
+        m1 = m2 = period
+    start = date(year, m1, 1)
+    end = date(year + (m2 // 12), (m2 % 12) + 1, 1) - timedelta(days=1)
+    return start, end
+
+
+def _period_label(period_type: str, period: int, year: int) -> str:
+    if period_type == "quarter":
+        return f"الربع {period} {year}"
+    return f"شهر {period} {year}"
+
+
+def _vat_form_tables(db: Session, company_id: int, start: date, end: date, period_type: str, period: int, year: int) -> list:
+    """خانات إقرار القيمة المضافة الربعي بترتيب النموذج الرسمي.
+
+    النسبة العامة 14% خانة مستقلة، وبقية النسب تُجمَّع تحت خانة «نسب الجدول»
+    مع تفصيلها — الصادرات والمعفاة لا تتبعنا من البيانات الحالية فلا تُعرض.
+    """
+    r = _vat_return(db, company_id, start, end)
+    company = db.get(models.Company, company_id)
+    general = next((b for b in r["sales_by_rate"] if b["rate"] == Decimal("14.00")), None)
+    other_rates = [b for b in r["sales_by_rate"] if b["rate"] != Decimal("14.00")]
+    other_base = sum((b["taxable_base"] for b in other_rates), Decimal("0"))
+    other_tax = sum((b["tax_amount"] for b in other_rates), Decimal("0"))
+
+    def box(no: str, label: str, base, tax=None) -> list:
+        row = [("text", f"({no}) {label}")]
+        if tax is None:
+            row.append(("money", base))
+        else:
+            row.append(("money", base))
+            row.append(("money", tax))
+        return row
+
+    head = [(
+        "بيانات الممول والإقرار",
+        ["البند", "البيان"],
+        [
+            [("text", "اسم الممول"), ("text", company.name if company else "")],
+            [("text", "الملف الضريبي"), ("text", (company.eta_tin if company and company.eta_tin else ""))],
+            [("text", "نوع الفترة"), ("text", _period_label(period_type, period, year))],
+            [("text", "من"), ("text", str(start))],
+            [("text", "إلى"), ("text", str(end))],
+        ],
+    )]
+    boxes = [(
+        "خانات الإقرار",
+        ["البند", "الوعاء / القيمة", "الضريبة"],
+        [
+            box("1", "مبيعات خاضعة للنسبة العامة 14%", general["taxable_base"] if general else Decimal("0"), general["tax_amount"] if general else Decimal("0")),
+            box("2", "مبيعات خاضعة لنسب الجدول (أخرى)", other_base, other_tax),
+            box("3", "إجمالي ضريبة المخرجات", r["output_vat"]),
+            box("4", "ضريبة المدخلات على المشتريات", r["input_vat"]),
+            box("5", "صافي الضريبة المستحقة للسداد", r["net_payable"]),
+            box("6", "إجمالي الوعاء الخاضع", r["taxable_sales_total"]),
+        ],
+    )]
+    detail = [(
+        "تفصيل المبيعات بكل نسبة",
+        ["النسبة %", "عدد الفواتير", "الوعاء", "الضريبة"],
+        [[("money", b["rate"]), ("int", b["invoices"]), ("money", b["taxable_base"]), ("money", b["tax_amount"])] for b in r["sales_by_rate"]],
+    )]
+    monthly = [(
+        "التفصيل الشهري داخل الفترة",
+        ["الشهر", "مخرجات", "مدخلات", "صافي"],
+        [[("text", m["month"]), ("money", m["output_vat"]), ("money", m["input_vat"]), ("money", m["net"])] for m in r["monthly"]],
+    )]
+    return head + boxes + detail + monthly
+
+
+@router.get("/vat-return/form-xlsx")
+def vat_return_form_xlsx(
+    year: Optional[int] = Query(None),
+    period_type: str = Query("quarter", pattern="^(month|quarter)$"),
+    period: Optional[int] = Query(None),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """نموذج إقرار القيمة المضافة الربعي/الشهري بترتيب خانات النموذج الرسمي."""
+    company_id = _company_id(user)
+    y = year or date.today().year
+    p = period or (1 if period_type == "quarter" else date.today().month)
+    start, end = _period_range(y, period_type, p)
+    tables = _vat_form_tables(db, company_id, start, end, period_type, p, y)
+    fname = f"vat-form-{period_type}{p}-{y}"
+    return FastResponse(
+        content=build_tables_xlsx("إقرار ضريبة القيمة المضافة", _period_label(period_type, p, y), tables),
+        media_type=XLSX_MIME,
+        headers={"Content-Disposition": f'attachment; filename="{fname}.xlsx"'},
+    )
+
+
+@router.get("/vat-return/form-pdf")
+def vat_return_form_pdf(
+    year: Optional[int] = Query(None),
+    period_type: str = Query("quarter", pattern="^(month|quarter)$"),
+    period: Optional[int] = Query(None),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    company_id = _company_id(user)
+    y = year or date.today().year
+    p = period or (1 if period_type == "quarter" else date.today().month)
+    start, end = _period_range(y, period_type, p)
+    tables = _vat_form_tables(db, company_id, start, end, period_type, p, y)
+    fname = f"vat-form-{period_type}{p}-{y}"
+    return FastResponse(
+        content=build_tables_pdf("إقرار ضريبة القيمة المضافة", _period_label(period_type, p, y), tables),
+        media_type=PDF_MIME,
+        headers={"Content-Disposition": f'attachment; filename="{fname}.pdf"'},
+    )
+
+
+def _withholding_form_tables(db: Session, company_id: int, start: date, end: date, year: int, month: int) -> list:
+    """نموذج الخصم والإضافة الشهري (المادة 62) — سجل لكل مورد/كود ببيانات الممول."""
+    company = db.get(models.Company, company_id)
+    rep = _withholding_report(db, company_id, start, end)
+    # تجميع (مورد، كود): الوعاء = قيمة السندات، النسبة من الأكواد
+    groups: dict = {}
+    for row in rep["rows"]:
+        key = (row["supplier_id"], row["code_name"])
+        g = groups.setdefault(key, {"supplier_id": row["supplier_id"], "supplier": row["supplier_name"], "code": row["code_name"], "count": 0, "base": Decimal("0"), "tax": Decimal("0"), "cash": Decimal("0")})
+        g["count"] += 1
+        g["base"] += row["amount"]
+        g["tax"] += row["withholding"]
+        g["cash"] += row["net_cash"]
+    rate_by_name = {c.name: c.rate for c in db.query(models.WithholdingCode).filter(models.WithholdingCode.company_id == company_id)}
+    rows = []
+    for g in sorted(groups.values(), key=lambda x: (x["supplier"] or "", x["code"])):
+        supp = db.get(models.Supplier, g["supplier_id"]) if g["supplier_id"] else None
+        tin = supp.tax_registration_number if supp else None
+        rate = rate_by_name.get(g["code"])
+        rows.append([
+            ("text", g["supplier"] or "—"),
+            ("text", tin or ""),
+            ("text", g["code"]),
+            ("int", g["count"]),
+            ("money", g["base"]),
+            ("money", rate if rate is not None else Decimal("0")),
+            ("money", g["tax"]),
+            ("money", g["cash"]),
+        ])
+    head = [(
+        "بيانات الممول",
+        ["البند", "البيان"],
+        [
+            [("text", "اسم الممول (صاحب المنبع)"), ("text", company.name if company else "")],
+            [("text", "الملف الضريبي"), ("text", (company.eta_tin if company and company.eta_tin else ""))],
+            [("text", "الفترة"), ("text", f"شهر {month} {year}")],
+            [("text", "إجمالي ما خصمنا وأضفنا خلال الفترة"), ("money", rep["total_withheld"])],
+            [("text", "إقرار"), ("text", "نقر بأننا خصمنا الضريبة وفق المادة (62) وسنوردها في موعدها")],
+        ],
+    )]
+    body = [(
+        "سجل الخصم والإضافة للفترة",
+        ["المورد (الممول)", "الملف الضريبي", "نوع التوريد", "عدد السندات", "إجمالي الوعاء", "النسبة %", "الضريبة المحتجزة", "النقدية المدفوعة"],
+        rows or [[("text", "لا توجد سندات في هذه الفترة")] + [("text", "")] * 7],
+    )]
+    return head + body
+
+
+@router.get("/withholding/form-xlsx")
+def withholding_form_xlsx(
+    year: Optional[int] = Query(None),
+    month: Optional[int] = Query(None, ge=1, le=12),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """نموذج الخصم والإضافة الشهري — سجل الموردين ببياناتهم الضريبية للورود للمصلحة."""
+    company_id = _company_id(user)
+    y = year or date.today().year
+    m = month or date.today().month
+    start = date(y, m, 1)
+    end = date(y + (m // 12), (m % 12) + 1, 1) - timedelta(days=1)
+    tables = _withholding_form_tables(db, company_id, start, end, y, m)
+    return FastResponse(
+        content=build_tables_xlsx("ضريبة الخصم والإضافة — النموذج الشهري", f"شهر {m} {y}", tables),
+        media_type=XLSX_MIME,
+        headers={"Content-Disposition": f'attachment; filename="withholding-form-{y}-{m:02d}.xlsx"'},
+    )
+
+
+@router.get("/withholding/form-pdf")
+def withholding_form_pdf(
+    year: Optional[int] = Query(None),
+    month: Optional[int] = Query(None, ge=1, le=12),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    company_id = _company_id(user)
+    y = year or date.today().year
+    m = month or date.today().month
+    start = date(y, m, 1)
+    end = date(y + (m // 12), (m % 12) + 1, 1) - timedelta(days=1)
+    tables = _withholding_form_tables(db, company_id, start, end, y, m)
+    return FastResponse(
+        content=build_tables_pdf("ضريبة الخصم والإضافة — النموذج الشهري", f"شهر {m} {y}", tables),
+        media_type=PDF_MIME,
+        headers={"Content-Disposition": f'attachment; filename="withholding-form-{y}-{m:02d}.pdf"'},
+    )

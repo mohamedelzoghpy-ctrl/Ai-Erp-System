@@ -107,6 +107,10 @@ function Locked({ perm }: { perm: string }) {
 function VatTab({ r }: { r: ReturnType<typeof useRange> }) {
   const { t } = useI18n();
   const [tick, setTick] = useState(0);
+  const now = new Date();
+  const [vatFormType, setVatFormType] = useState("quarter");
+  const [vatFormPeriod, setVatFormPeriod] = useState(Math.floor(now.getMonth() / 3) + 1);
+  const [vatFormYear, setVatFormYear] = useState(now.getFullYear());
   const vat = useFetch<VatReturn>(() => api.get<VatReturn>(`/taxes/vat-return${r.range}`), `vat${r.range}${tick}`);
   return (
     <>
@@ -126,6 +130,23 @@ function VatTab({ r }: { r: ReturnType<typeof useRange> }) {
             <ExportButton busy={r.download.busy} onClick={() => r.exportFile(`/taxes/vat-return/xlsx${r.range}`, `vat-${r.from}_${r.to}.xlsx`)}>{t("Excel")}</ExportButton>
             <ExportButton busy={r.download.busy} onClick={() => r.exportFile(`/taxes/vat-return/pdf${r.range}`, `vat-${r.from}_${r.to}.pdf`)}>{t("PDF")}</ExportButton>
             <button className="btn" onClick={() => setTick((x) => x + 1)}>↻</button>
+          </div>
+          <div className="card card-pad" style={{ marginBottom: 14 }}>
+            <h3>{t("النموذج الرسمي لمصلحة الضرائب")}</h3>
+            <div className="row" style={{ gap: 8, alignItems: "center" }}>
+              <select value={vatFormType} onChange={(e) => setVatFormType(e.target.value)}>
+                <option value="quarter">{t("ربع سنوي")}</option>
+                <option value="month">{t("شهري")}</option>
+              </select>
+              <select value={vatFormPeriod} onChange={(e) => setVatFormPeriod(Number(e.target.value))}>
+                {vatFormType === "quarter"
+                  ? [1, 2, 3, 4].map((q) => <option key={q} value={q}>{t("الربع")} {q}</option>)
+                  : Array.from({ length: 12 }, (_, i) => i + 1).map((m) => <option key={m} value={m}>{t("شهر")} {m}</option>)}
+              </select>
+              <input dir="ltr" type="number" min="2015" max="2100" style={{ width: 90 }} value={vatFormYear} onChange={(e) => setVatFormYear(Number(e.target.value))} />
+              <ExportButton busy={r.download.busy} onClick={() => r.exportFile(`/taxes/vat-return/form-xlsx?period_type=${vatFormType}&period=${vatFormPeriod}&year=${vatFormYear}`, `vat-form-${vatFormType}${vatFormPeriod}-${vatFormYear}.xlsx`)}>{t("تنزيل النموذج Excel")}</ExportButton>
+              <ExportButton busy={r.download.busy} onClick={() => r.exportFile(`/taxes/vat-return/form-pdf?period_type=${vatFormType}&period=${vatFormPeriod}&year=${vatFormYear}`, `vat-form-${vatFormType}${vatFormPeriod}-${vatFormYear}.pdf`)}>{t("تنزيل النموذج PDF")}</ExportButton>
+            </div>
           </div>
           <Table
             title={t("تفصيل المبيعات بنسبة الضريبة")}
@@ -149,6 +170,9 @@ function WithholdingTab({ r }: { r: ReturnType<typeof useRange> }) {
   const { t } = useI18n();
   const { can } = useAuth();
   const [tick, setTick] = useState(0);
+  const now = new Date();
+  const [whFormMonth, setWhFormMonth] = useState(now.getMonth() + 1);
+  const [whFormYear, setWhFormYear] = useState(now.getFullYear());
   const rep = useFetch<WithholdingReport>(() => api.get<WithholdingReport>(`/taxes/withholding${r.range}`), `wh${r.range}${tick}`);
   const codes = useFetch<WithholdingCode[]>(() => api.get<WithholdingCode[]>("/taxes/withholding/codes?include_inactive=true"), `whc${tick}`);
   const manage = can("taxes.withholding.manage");
@@ -181,6 +205,18 @@ function WithholdingTab({ r }: { r: ReturnType<typeof useRange> }) {
             <ExportButton busy={r.download.busy} onClick={() => r.exportFile(`/taxes/withholding/xlsx${r.range}`, `withholding-${r.from}_${r.to}.xlsx`)}>{t("Excel")}</ExportButton>
             <ExportButton busy={r.download.busy} onClick={() => r.exportFile(`/taxes/withholding/pdf${r.range}`, `withholding-${r.from}_${r.to}.pdf`)}>{t("PDF")}</ExportButton>
             <button className="btn" onClick={() => setTick((x) => x + 1)}>↻</button>
+          </div>
+          <div className="card card-pad" style={{ marginBottom: 14 }}>
+            <h3>{t("النموذج الشهري الرسمي (المادة 62)")}</h3>
+            <div className="row" style={{ gap: 8, alignItems: "center" }}>
+              <select value={whFormMonth} onChange={(e) => setWhFormMonth(Number(e.target.value))}>
+                {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => <option key={m} value={m}>{t("شهر")} {m}</option>)}
+              </select>
+              <input dir="ltr" type="number" min="2015" max="2100" style={{ width: 90 }} value={whFormYear} onChange={(e) => setWhFormYear(Number(e.target.value))} />
+              <ExportButton busy={r.download.busy} onClick={() => r.exportFile(`/taxes/withholding/form-xlsx?year=${whFormYear}&month=${whFormMonth}`, `withholding-form-${whFormYear}-${String(whFormMonth).padStart(2, "0")}.xlsx`)}>{t("تنزيل النموذج Excel")}</ExportButton>
+              <ExportButton busy={r.download.busy} onClick={() => r.exportFile(`/taxes/withholding/form-pdf?year=${whFormYear}&month=${whFormMonth}`, `withholding-form-${whFormYear}-${String(whFormMonth).padStart(2, "0")}.pdf`)}>{t("تنزيل النموذج PDF")}</ExportButton>
+            </div>
+            <p className="muted" style={{ marginTop: 6 }}>💡 {t("املأ الرقم الضريبي للمورد من بيانات الموردين ليظهر في النموذج")}</p>
           </div>
           <Table
             title={t("سندات الخصم والإضافة")}
