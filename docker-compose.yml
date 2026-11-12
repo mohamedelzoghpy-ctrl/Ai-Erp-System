@@ -23,6 +23,7 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg2://erp:${POSTGRES_PASSWORD}@db:5432/erp_db
       SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in .env}
+      LICENSE_RENEWAL_PASSWORD: ${LICENSE_RENEWAL_PASSWORD:-}
       ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-480}
       CORS_ORIGINS: ${CORS_ORIGINS:-}
       COMPANY_NAME: ${COMPANY_NAME:-MOZAD ERP}
@@ -43,7 +44,7 @@ services:
     ports:
       - "8080:80"
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost/ >/dev/null 2>&1 || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ >/dev/null 2>&1 || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3

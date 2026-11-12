@@ -1,0 +1,11 @@
+[Unit]
+Description=MOZAD ERP uptime/availability monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/env bash /opt/erp/deploy/uptime-monitor.sh
+
+[Install]
+WantedBy=multi-user.target

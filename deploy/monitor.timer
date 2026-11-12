@@ -1,0 +1,9 @@
+[Unit]
+Description=Run MOZAD ERP uptime monitor every 2 minutes
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/env bash /opt/erp/deploy/uptime-monitor.sh
+
+[Install]
+WantedBy=multi-user.target
