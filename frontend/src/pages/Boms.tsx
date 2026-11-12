@@ -142,6 +142,10 @@ export default function Boms() {
   const [editing, setEditing] = useState<Bom | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [deleting, setDeleting] = useState<Bom | null>(null);
+  const [simulatingBom, setSimulatingBom] = useState<Bom | null>(null);
+  const [simQty, setSimQty] = useState<string>("10");
+  const [simResult, setSimResult] = useState<any | null>(null);
+  const [simLoading, setSimLoading] = useState(false);
   const [toggling, setToggling] = useState<number | null>(null);
   const [search, setSearch] = useState("");
   const { busy, error, run } = useAction();
@@ -237,6 +241,18 @@ export default function Boms() {
                   <td className="num">{money(stdCost(bom))}</td>
                   <td><ActiveBadge active={bom.is_active} /></td>
                   <td className="actions">
+                    <button className="btn btn-sm" title="محاكي MRP واستكشاف النواقص" onClick={async () => {
+                      setSimulatingBom(bom);
+                      setSimResult(null);
+                      setSimLoading(true);
+                      try {
+                        const r = await api.get<any>(`/boms/${bom.id}/mrp-simulate?qty_planned=${simQty || "1"}`);
+                        setSimResult(r);
+                      } catch (err) { alert((err as Error).message); }
+                      finally { setSimLoading(false); }
+                    }}>
+                      ⚡ محاكي MRP
+                    </button>{" "}
                     <button className="btn-edit" onClick={() => { setEditing(bom); setShowForm(true); }}>تعديل</button>{" "}
                     <button className={`btn-toggle ${bom.is_active ? "btn-toggle-off" : "btn-toggle-on"}`} disabled={toggling === bom.id} onClick={() => toggleActive(bom)}>{bom.is_active ? "إيقاف" : "تفعيل"}</button>{" "}
                     <button className="btn btn-sm" disabled={toggling === bom.id} onClick={() => { const v = window.prompt("نسخ إلى إصدار (اتركه فارغًا لاقتراح التالي):", ""); if (v !== null) void run(async () => { await api.post(`/boms/${bom.id}/copy`, { version: v || null, is_active: false }); boms.reload(); }); }}>
@@ -244,7 +260,6 @@ export default function Boms() {
                     </button>{" "}
                     <button
                       className="btn-delete"
-                     
                       onClick={() => setDeleting(bom)}
                     >
                       حذف
@@ -286,6 +301,68 @@ export default function Boms() {
               إلغاء
             </button>
           </div>
+        </Modal>
+      )}
+
+      {simulatingBom && (
+        <Modal title={`محاكي تخطيط الاحتياجات (MRP) — ${productsById.get(simulatingBom.product_id)?.name} (${simulatingBom.version})`} onClose={() => setSimulatingBom(null)}>
+          <div style={{ marginBottom: 16, display: "flex", gap: 10, alignItems: "center" }}>
+            <label style={{ fontWeight: 600 }}>الكمية المخططة:</label>
+            <input
+              type="number"
+              min="1"
+              style={{ width: 120 }}
+              value={simQty}
+              onChange={(e) => setSimQty(e.target.value)}
+            />
+            <button
+              className="btn btn-primary"
+              disabled={simLoading}
+              onClick={async () => {
+                setSimLoading(true);
+                try {
+                  const r = await api.get<any>(`/boms/${simulatingBom.id}/mrp-simulate?qty_planned=${simQty || "1"}`);
+                  setSimResult(r);
+                } catch (err) { alert((err as Error).message); }
+                finally { setSimLoading(false); }
+              }}
+            >
+              {simLoading ? "جارٍ الحساب…" : "إعادة المحاكاة"}
+            </button>
+          </div>
+
+          {simResult && (
+            <div>
+              <div style={{ padding: "10px 14px", borderRadius: 8, marginBottom: 14, background: simResult.can_produce_immediately ? "#e6f4ea" : "#fce8e6", color: simResult.can_produce_immediately ? "#137333" : "#c5221f" }}>
+                <strong>{simResult.can_produce_immediately ? "✓ جاهز للتشغيل فوراً: جميع الخامات متوفرة بالكامل في المخزن." : `⚠ يوجد عجز في الخامات — التكلفة التقديرية لتغطية النواقص: ${money(simResult.total_shortage_cost)}`}</strong>
+              </div>
+
+              <table style={{ width: "100%", fontSize: "0.9rem" }}>
+                <thead>
+                  <tr>
+                    <th>الخامة</th>
+                    <th className="num">المطلوب</th>
+                    <th className="num">المتاح بالمخزن</th>
+                    <th className="num">العجز</th>
+                    <th className="num">تكلفة الشراء</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {simResult.items.map((it: any) => (
+                    <tr key={it.component_id} style={{ background: it.has_shortage ? "#fff8f7" : undefined }}>
+                      <td><strong>{it.component_name}</strong> <span style={{ color: "#666", fontSize: "0.8rem" }}>({it.component_sku})</span></td>
+                      <td className="num">{num(it.required_qty)} {it.unit}</td>
+                      <td className="num">{num(it.available_qty)}</td>
+                      <td className="num" style={{ color: it.has_shortage ? "#c5221f" : "#137333", fontWeight: it.has_shortage ? 700 : 400 }}>
+                        {it.has_shortage ? `${num(it.shortage_qty)}` : "—"}
+                      </td>
+                      <td className="num">{it.has_shortage ? money(it.estimated_purchase_cost) : "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </Modal>
       )}
     </>

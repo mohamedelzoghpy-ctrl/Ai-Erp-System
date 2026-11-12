@@ -13,7 +13,7 @@ from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from .. import models, schemas
+from .. import models, schemas, stock
 from ..accounting import AccountingEngine, link_party_coa, seed_default_coa
 from ..audit import audit
 from ..codegen import unique_code
@@ -282,7 +282,7 @@ def create_bom(payload: schemas.BomCreate, db: Session = Depends(get_db), user: 
         company_id=company_id,  # type: ignore
         product_id=payload.product_id,  # type: ignore
         version=payload.version.strip() or "v1",  # type: ignore
-        output_qty=q3(payload.output_qty),  # type: ignore
+        output_qty=int(payload.output_qty),  # type: ignore
         is_active=payload.is_active,  # type: ignore
         notes=payload.notes,  # type: ignore
         created_by=user.id,  # type: ignore
@@ -381,8 +381,82 @@ def copy_bom(
         ))
     db.commit()
     db.refresh(new_bom)
-    audit(db, user, "create", "bom", new_bom, f"نسخة من {src_bom.version} → {version} · {len(src_bom.items)} مكوّن · {len(src_bom.operations)} مرحلة")
+    audit(db, user, "copy", "bom", new_bom, f"نسخ {src_bom.version} → {new_bom.version}")
     return _bom_out(db, new_bom)
+
+
+@boms.get("/{bom_id}/mrp-simulate")
+def simulate_bom_mrp(
+    bom_id: int,
+    qty_planned: float = Query(gt=0, description="الكمية المخطط إنتاجها"),
+    raw_warehouse_id: Optional[int] = Query(default=None, description="مخزن الخامات (اختياري)"),
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+):
+    """محاكي تخطيط الاحتياجات من المواد (MRP Simulation):
+    يفكك بنود شجرة المواد للكمية المخططة ويقارنها بالرصيد المتاح حالياً في المخزن
+    ويحدد بدقة الكمية المطلوبة، المتوفرة، العجز الصافي، والتكلفة التقديرية للشراء."""
+    company_id = db.info["company_id"]
+    bom = db.get(models.Bom, bom_id)
+    if bom is None or bom.company_id != company_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"BOM {bom_id} not found")
+    
+    out_qty = max(dec(bom.output_qty), Decimal("1"))
+    ratio = dec(qty_planned) / out_qty
+
+    lines = []
+    total_shortage_cost = Decimal("0")
+    has_shortage = False
+
+    for item in sorted(bom.items, key=lambda it: it.id):
+        component = db.get(models.Product, item.component_id)
+        if component is None:
+            continue
+        
+        # الكمية المطلوبة شاملة نسبة الهالك المتوقعة في الـ BOM
+        scrap_mult = 1 + (dec(item.scrap_pct) / Decimal("100"))
+        required = q3(dec(item.qty_per_output) * scrap_mult * ratio)
+        
+        # الرصيد المتاح حالياً
+        if raw_warehouse_id is not None:
+            avail = stock.available(db, component.id, raw_warehouse_id)
+        else:
+            avail = stock.total_available(db, component.id)
+        avail = q3(avail)
+
+        shortage = q3(max(Decimal("0"), required - avail))
+        unit_cost = dec(component.cost_price or 0)
+        est_cost = q3(shortage * unit_cost)
+        if shortage > 0:
+            has_shortage = True
+            total_shortage_cost += est_cost
+
+        lines.append({
+            "component_id": component.id,
+            "component_name": component.name,
+            "component_sku": component.sku,
+            "unit": component.unit or "وحدة",
+            "qty_per_output": float(item.qty_per_output),
+            "scrap_pct": float(item.scrap_pct),
+            "required_qty": float(required),
+            "available_qty": float(avail),
+            "shortage_qty": float(shortage),
+            "unit_cost": float(unit_cost),
+            "estimated_purchase_cost": float(est_cost),
+            "has_shortage": shortage > 0,
+        })
+
+    return {
+        "bom_id": bom.id,
+        "product_id": bom.product_id,
+        "product_name": bom.product.name if bom.product else None,
+        "bom_version": bom.version,
+        "qty_planned": float(qty_planned),
+        "warehouse_id": raw_warehouse_id,
+        "can_produce_immediately": not has_shortage,
+        "total_shortage_cost": float(total_shortage_cost),
+        "items": lines,
+    }
 
 
 @boms.patch("/{bom_id}", response_model=schemas.BomOut)

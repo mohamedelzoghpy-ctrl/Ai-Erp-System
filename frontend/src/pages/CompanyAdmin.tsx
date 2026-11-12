@@ -55,6 +55,10 @@ export default function CompanyAdmin({ platform = false, onSaved }: { platform?:
     const v = (currentCompany.data as any)?.je_approval_threshold;
     return v == null ? "" : String(v);
   });
+  const [lockDate, setLockDate] = useState<string>(() => {
+    const v = (currentCompany.data as any)?.accounting_lock_date;
+    return v == null ? "" : String(v);
+  });
   const [bkTick, setBkTick] = useState(0);
   const [curTick, setCurTick] = useState(0);
   const currencies = useFetch(
@@ -551,12 +555,18 @@ export default function CompanyAdmin({ platform = false, onSaved }: { platform?:
           <form onSubmit={async (e) => {
             e.preventDefault();
             try {
-              await api.patch("/company", { je_approval_threshold: jeThreshold === "" ? null : jeThreshold });
-              alert("تم الحفظ");
+              await api.patch("/company", {
+                je_approval_threshold: jeThreshold === "" ? null : jeThreshold,
+                accounting_lock_date: lockDate === "" ? null : lockDate,
+              });
+              alert("تم حفظ إعدادات الشركة بنجاح");
             } catch (err) { alert((err as Error).message); }
           }} className="form-grid">
             <Field label="حد اعتماد القيود" hint="القيود فوق هذا المبلغ من الموظفين تنتظر اعتماد مدير — فارغ = معطّل">
               <input dir="ltr" type="number" step="0.01" min={0} value={jeThreshold} placeholder="معطّل" onChange={(e) => setJeThreshold(e.target.value)} />
+            </Field>
+            <Field label="تاريخ قفل الحسابات (Lock Date)" hint="يمنع إدخال أو ترحيل أي قيود/سندات بتاريخ أقدم من أو يساوي هذا التاريخ">
+              <input type="date" value={lockDate} onChange={(e) => setLockDate(e.target.value)} />
             </Field>
             <button className="btn btn-primary" disabled={busy}>حفظ الإعدادات</button>
           </form>

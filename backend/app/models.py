@@ -68,6 +68,8 @@ class Company(Base):
     eta_building_number = Column(String(20), nullable=True)
     # اعتماد القيود (maker-checker): حد بالعملة — أعلى منه يحتاج اعتماد مدير (NULL = معطل)
     je_approval_threshold = Column(Numeric(14, 2), nullable=True)
+    # قفل الفترات المحاسبية: أي قيد أو سند بتاريخ أقدم من أو يساوي هذا التاريخ ممنوع الترحيل
+    accounting_lock_date = Column(Date, nullable=True)
     is_active = Column(Boolean, nullable=False, default=True, server_default="true")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(
@@ -1382,6 +1384,7 @@ class ChartAccount(TenantOwned, Base):
     parent_id = Column(Integer, ForeignKey("chart_accounts.id", ondelete="CASCADE"), nullable=True, index=True)
     type = Column(String(20), nullable=False)  # asset | liability | equity | revenue | expense
     is_group = Column(Boolean, nullable=False, default=False, server_default="false")
+    requires_cost_center = Column(Boolean, nullable=False, default=False, server_default="false")
     balance = Column(Numeric(14, 2), nullable=False, default=0, server_default="0")
     is_active = Column(Boolean, nullable=False, default=True, server_default="true")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

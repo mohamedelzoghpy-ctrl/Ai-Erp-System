@@ -19,9 +19,18 @@ def local_today() -> _date:
 
 
 def ensure_fiscal_open(db: Session, company_id: int, entry_date: _date) -> None:
-    """ترحيل في سنة مالية أو شهر مالي مقفول ممنوع → 409.
+    """ترحيل في فترة مقفولة ممنوع → 409.
 
-    التواريخ التي لا تغطيها أي سنة/شهر مالي تبقى متاحة (لم يتغير السلوك القديم)."""
+    يفحص:
+    1) تاريخ قفل الحسابات للشركة (accounting_lock_date)
+    2) السنة المالية المقفولة
+    3) الشهر المالي المقفول"""
+    comp_lock = db.query(models.Company.accounting_lock_date).filter(models.Company.id == company_id).scalar()
+    if comp_lock is not None and entry_date <= comp_lock:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"الفترة مقفولة حتى {comp_lock} — لا يمكن الترحيل بتاريخ {entry_date}",
+        )
     closed = db.query(models.FiscalYear).filter(
         models.FiscalYear.company_id == company_id,
         models.FiscalYear.is_closed.is_(True),
@@ -224,6 +233,13 @@ class AccountingEngine:
         for item in items:
             # حسابات المجموعة والحسابات الأجنبية عن الشركة تُرفض مركزيًا هنا
             acc = postable_account(db, company_id, item["account_id"])
+            if (acc.requires_cost_center or acc.type == "expense") and not item.get("cost_center_id"):
+                # نتحقق إذا كان الحساب يتطلب صراحة مركز تكلفة
+                if acc.requires_cost_center:
+                    raise HTTPException(
+                        422,
+                        f"الحساب «{acc.name} ({acc.code})» يتطلب تحديد مركز تكلفة إلزاميًا",
+                    )
             db_item = models.JournalItem(
                 entry_id=db_entry.id,
                 company_id=company_id,

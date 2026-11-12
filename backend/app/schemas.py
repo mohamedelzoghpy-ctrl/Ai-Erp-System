@@ -448,6 +448,8 @@ class CompanyUpdate(BaseModel):
     max_branches: Optional[int] = Field(default=None, gt=0)
     je_approval_threshold: Optional[Decimal] = Field(default=None, ge=0,
         description="حد اعتماد القيود بالعملة — أعلى منه يحتاج اعتماد مدير (NULL = معطل)")
+    accounting_lock_date: Optional[date] = Field(default=None,
+        description="تاريخ قفل الحسابات — يمنع الترحيل بتاريخ أقدم من أو يساوي هذا التاريخ")
     is_active: Optional[bool] = None
 
 
@@ -464,6 +466,7 @@ class CompanyOut(ORMModel):
     max_safes_per_branch: Optional[int]
     max_branches: Optional[int] = None
     license_until: Optional[date] = None  # رخصة الاستخدام — NULL = غير مقيّد
+    accounting_lock_date: Optional[date] = None
     is_active: bool
     created_at: datetime
 
@@ -550,6 +553,34 @@ class LowStockItem(ORMModel):
     supplier_name: Optional[str] = None
     warehouse_id: Optional[int]
     supplier_id: Optional[int]
+
+
+class ReorderForecastItem(BaseModel):
+    product_id: int
+    sku: str
+    name: str
+    current_stock: float
+    daily_sales: float
+    lead_time_days: int
+    safety_stock: float
+    suggested_rop: float
+    reorder_urgency: str  # critical | warning | healthy
+    days_left: Optional[float] = None
+    suggested_order_qty: float
+    unit_cost: float
+    estimated_cost: float
+    supplier_id: Optional[int] = None
+    supplier_name: Optional[str] = None
+    warehouse_id: Optional[int] = None
+
+
+class ReorderForecastOut(BaseModel):
+    days_analyzed: int
+    total_items_analyzed: int
+    critical_count: int
+    warning_count: int
+    total_suggested_investment: float
+    items: List[ReorderForecastItem]
 
 
 class InventoryValuationRow(BaseModel):
@@ -1575,6 +1606,7 @@ class ChartAccountBase(BaseModel):
     code: str = Field(min_length=1, max_length=50)
     type: Literal["asset", "liability", "equity", "revenue", "expense"]
     is_group: bool = False
+    requires_cost_center: bool = False
     is_active: bool = True
 
 class ChartAccountCreate(ChartAccountBase):
@@ -1586,6 +1618,7 @@ class ChartAccountUpdate(BaseModel):
     code: Optional[str] = Field(default=None, min_length=1, max_length=50)
     type: Optional[Literal["asset", "liability", "equity", "revenue", "expense"]] = None
     is_group: Optional[bool] = None
+    requires_cost_center: Optional[bool] = None
     parent_id: Optional[int] = None
     is_active: Optional[bool] = None
 

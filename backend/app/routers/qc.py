@@ -288,3 +288,38 @@ def record_batch_measurements(batch_id: int, payload: QcMeasurementsIn, db: Sess
     audit(db, user, "update", "batch_qc_measurements", batch, f"قياسات جودة الدفعة {batch.batch_no} — الحكم: {'مطابق' if overall else ('غير مطابق' if overall is False else 'جزئي')}")
     db.commit()
     return QcMeasurementsOut(batch_id=batch_id, overall_pass=overall, results=out_rows)
+
+
+@router.post("/batches/{batch_id}/release", response_model=dict)
+def release_batch_qc(
+    batch_id: int,
+    action: Literal["passed", "rejected"],
+    notes: Optional[str] = None,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """اعتماد الجودة والإفراج عن الدفعة (QC Release / Reject):
+    - passed: تُعتمد الدفعة ويُسمح بصرفها واستخدامها في أوامر البيع.
+    - rejected: تُرفض الدفعة وتُحجز من المخزون مع خصم قيمتها ونقلها إلى حساب الهالك."""
+    batch = _batch_or_404(db, batch_id)
+    if batch.qc_status != "pending":
+        raise HTTPException(status.HTTP_409_CONFLICT, f"الدفعة مفحوصة بالفعل وحالتها: {batch.qc_status}")
+    
+    # استدعاء منطق الفحص الرسمي المرتبط بأمر التصنيع
+    from ..routers.manufacturing import qc_production_batch
+    from .. import schemas as _schemas
+    qc_production_batch(
+        order_id=batch.order_id,
+        batch_id=batch.id,
+        payload=_schemas.BatchQcIn(result=action, notes=notes),
+        db=db,
+        user=user,
+    )
+    db.refresh(batch)
+    return {
+        "batch_id": batch.id,
+        "batch_no": batch.batch_no,
+        "order_id": batch.order_id,
+        "qc_status": batch.qc_status,
+        "notes": batch.notes,
+    }

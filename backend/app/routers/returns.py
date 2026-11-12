@@ -218,10 +218,11 @@ def _create_standalone(kind: str, payload: schemas.ReturnCreate, db: Session, us
         if it.unit_price is not None and it.unit_price < 0:
             raise HTTPException(422, "السعر لا يمكن أن يكون سالبًا")
         price = it.unit_price if it.unit_price is not None else getattr(product, c["price"])
+        qty_dec = stock.q3(it.quantity)
         ret.items.append(c["ret_item"](order_item_id=None, product_id=product.id, quantity=it.quantity, unit_price=price))
-        total += price * it.quantity
+        total += price * qty_dec
         if kind == "sales":
-            cogs_total += (product.cost_price or Decimal("0")) * it.quantity
+            cogs_total += (product.cost_price or Decimal("0")) * qty_dec
     if payload.refund_amount > total:
         raise HTTPException(422, "refund_amount cannot exceed the return total")
     ret.total_amount = total

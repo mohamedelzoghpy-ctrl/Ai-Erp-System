@@ -19,7 +19,7 @@ from .. import models, schemas
 from ..audit import audit
 from ..codegen import unique_code
 from ..database import get_db
-from ..deps import get_current_user, require_manager, user_role
+from ..deps import get_current_user, require_manager, require_permission_or_role, user_role
 from ..pagination import paginate
 from ..permissions import apply_field_masks
 
@@ -1886,7 +1886,11 @@ def delete_payroll_run(run_id: int, db: Session = Depends(get_db), user: models.
 
 
 @router.get("/payroll-runs/{run_id}/payslips", response_model=List[schemas.HrPayslipOut])
-def list_run_payslips(run_id: int, db: Session = Depends(get_db), _: models.User = Depends(get_current_user)):
+def list_run_payslips(
+    run_id: int,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_permission_or_role("hr.payslip.view", "admin", "manager")),
+):
     run = db.query(models.HrPayrollRun).filter(models.HrPayrollRun.company_id == db.info["company_id"], models.HrPayrollRun.id == run_id).one_or_none()
     if run is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "المسير غير موجود")
@@ -1899,7 +1903,11 @@ def list_run_payslips(run_id: int, db: Session = Depends(get_db), _: models.User
 
 
 @router.get("/payslips/{payslip_id}", response_model=List[schemas.HrPayslipLineOut])
-def list_payslip_lines(payslip_id: int, db: Session = Depends(get_db), _: models.User = Depends(get_current_user)):
+def list_payslip_lines(
+    payslip_id: int,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_permission_or_role("hr.payslip.view", "admin", "manager")),
+):
     slip = (
         db.query(models.HrPayslip)
         .filter(models.HrPayslip.company_id == db.info["company_id"], models.HrPayslip.id == payslip_id)

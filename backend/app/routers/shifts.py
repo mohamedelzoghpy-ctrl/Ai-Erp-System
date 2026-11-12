@@ -51,7 +51,8 @@ def _totals(db: Session, s: models.Shift) -> dict:
     end = s.closed_at if s.closed_at is not None else func.now()
 
     def window(model):
-        return (model.created_by == s.user_id, model.created_at >= s.opened_at, model.created_at <= end)
+        start = str(s.opened_at) if db.bind and db.bind.dialect.name == "sqlite" else s.opened_at
+        return (model.created_by == s.user_id, model.created_at >= start, model.created_at <= end)
 
     receipts_cash = _sum(db, P.amount, *window(P), P.status == "posted", P.kind == "receipt", P.method == "cash")
     receipts_other = _sum(db, P.amount, *window(P), P.status == "posted", P.kind == "receipt", P.method != "cash")

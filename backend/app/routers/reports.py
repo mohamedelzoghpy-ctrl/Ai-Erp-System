@@ -181,6 +181,141 @@ def low_stock_xlsx(
     return _xlsx_response(content, "report-low-stock.xlsx")
 
 
+# ---------------------------------------------------------------- التنبؤ الذكي بحد الطلب ونقاط إعادة التموين
+@router.get("/reorder-forecast", response_model=schemas.ReorderForecastOut)
+def reorder_forecast(
+    days_analyzed: int = Query(default=30, ge=7, le=180, description="فترة تحليل المبيعات السابقة بالأيام"),
+    default_lead_time: int = Query(default=7, ge=1, le=90, description="زمن التوريد الافتراضي بالأيام"),
+    safety_days: int = Query(default=3, ge=0, le=30, description="أيام مخزون الأمان الإضافية"),
+    warehouse_id: Optional[int] = None,
+    supplier_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+):
+    """محرك التنبؤ الذكي بحد الطلب:
+    يحسب معدل السحب اليومي الفعلي ومخزون الأمان ونقطة إعادة الطلب الديناميكية ROP
+    مع تقدير الأيام المتبقية لنفاد الرصيد واقتراح الكمية وتكلفتها."""
+    company_id = db.info["company_id"]
+    from datetime import timedelta
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days_analyzed)
+
+    # 1. إجمالي كميات المبيعات المؤكدة خلال فترة التحليل
+    SOI = models.SalesOrderItem
+    SO = models.SalesOrder
+    sales_query = (
+        db.query(
+            SOI.product_id,
+            func.coalesce(func.sum(SOI.quantity), 0).label("qty_sold"),
+        )
+        .join(SO, SO.id == SOI.order_id)
+        .filter(
+            SO.company_id == company_id,
+            SO.status.in_(["confirmed", "delivered"]),
+            SO.created_at >= cutoff,
+        )
+    )
+    if warehouse_id:
+        sales_query = sales_query.filter(SO.warehouse_id == warehouse_id)
+    sales_data = dict(sales_query.group_by(SOI.product_id).all())
+
+    # 2. جلب المنتجات النشطة
+    prod_q = db.query(models.Product).filter(
+        models.Product.company_id == company_id,
+        models.Product.is_active.is_(True),
+    )
+    if supplier_id:
+        prod_q = prod_q.filter(models.Product.supplier_id == supplier_id)
+    products = prod_q.all()
+
+    # خريطة أسماء الموردين
+    sup_ids = {p.supplier_id for p in products if p.supplier_id}
+    suppliers = dict(db.query(models.Supplier.id, models.Supplier.name).filter(models.Supplier.id.in_(sup_ids)).all()) if sup_ids else {}
+
+    # الأرصدة الحالية في المخزن المحدد أو الإجمالي
+    PS = models.ProductStock
+    if warehouse_id:
+        stock_map = dict(db.query(PS.product_id, PS.quantity).filter(PS.warehouse_id == warehouse_id).all())
+    else:
+        stock_map = {p.id: float(p.quantity or 0) for p in products}
+
+    items = []
+    critical_count = 0
+    warning_count = 0
+    total_suggested_investment = Decimal("0")
+
+    for p in products:
+        current_stock = float(stock_map.get(p.id, 0))
+        total_sold = float(sales_data.get(p.id, 0))
+        daily_sales = round(total_sold / days_analyzed, 3)
+
+        lead_time = default_lead_time
+        # مخزون الأمان = متوسط السحب اليومي × أيام الأمان
+        safety_stock = round(daily_sales * safety_days, 2)
+        # نقطة الطلب الديناميكية ROP = (السحب اليومي × زمن التوريد) + مخزون الأمان
+        suggested_rop = round((daily_sales * lead_time) + safety_stock, 2)
+
+        # في حال عدم وجود مبيعات سابقة، نعتمد على الحد الثابت كمرجع
+        if suggested_rop == 0 and p.reorder_level:
+            suggested_rop = float(p.reorder_level)
+
+        # حساب الأيام المتبقية لنفاد الرصيد
+        days_left = round(current_stock / daily_sales, 1) if daily_sales > 0 else (999.0 if current_stock > 0 else 0.0)
+
+        # حالة الإلحاح والكمية المقترحة
+        if current_stock <= safety_stock or (days_left <= lead_time and daily_sales > 0):
+            urgency = "critical"
+            critical_count += 1
+        elif current_stock <= suggested_rop:
+            urgency = "warning"
+            warning_count += 1
+        else:
+            urgency = "healthy"
+
+        # كمية الطلب المقترحة: تغطية زمن التوريد + مخزون الأمان + دورة تشغيل 15 يوماً
+        cycle_days = 15
+        target_stock = (daily_sales * (lead_time + cycle_days)) + safety_stock
+        suggested_qty = round(max(0.0, target_stock - current_stock), 2)
+        if suggested_qty == 0 and urgency in ("critical", "warning"):
+            suggested_qty = round(max(float(p.reorder_level or 10), daily_sales * 14), 2)
+
+        unit_cost = float(p.cost_price or 0)
+        est_cost = round(suggested_qty * unit_cost, 2)
+        if urgency in ("critical", "warning"):
+            total_suggested_investment += Decimal(str(est_cost))
+
+        items.append(schemas.ReorderForecastItem(
+            product_id=p.id,
+            sku=p.sku,
+            name=p.name,
+            current_stock=current_stock,
+            daily_sales=daily_sales,
+            lead_time_days=lead_time,
+            safety_stock=safety_stock,
+            suggested_rop=suggested_rop,
+            reorder_urgency=urgency,
+            days_left=days_left if days_left < 999 else None,
+            suggested_order_qty=suggested_qty,
+            unit_cost=unit_cost,
+            estimated_cost=est_cost,
+            supplier_id=p.supplier_id,
+            supplier_name=suppliers.get(p.supplier_id),
+            warehouse_id=warehouse_id or p.warehouse_id,
+        ))
+
+    # ترتيب حسب الأكثر إلحاحاً (critical أولاً ثم warning ثم الأقل أيام متبقية)
+    urgency_weight = {"critical": 0, "warning": 1, "healthy": 2}
+    items.sort(key=lambda x: (urgency_weight[x.reorder_urgency], x.days_left if x.days_left is not None else 999))
+
+    return schemas.ReorderForecastOut(
+        days_analyzed=days_analyzed,
+        total_items_analyzed=len(products),
+        critical_count=critical_count,
+        warning_count=warning_count,
+        total_suggested_investment=float(total_suggested_investment),
+        items=items,
+    )
+
+
 # ---------------------------------------------------------------- inventory valuation
 def _valuation_rows(db: Session) -> List[schemas.InventoryValuationRow]:
     P, W, S = models.Product, models.Warehouse, models.ProductStock

@@ -82,6 +82,7 @@ ROUTE_RULES: List[RouteRule] = [
     _rule("GET", "/boms", "manufacturing.bom.view"),
     _rule("POST", "/boms", "manufacturing.bom.create"),
     _rule("GET", "/boms/{bom_id}", "manufacturing.bom.view"),
+    _rule("GET", "/boms/{bom_id}/mrp-simulate", "manufacturing.bom.view"),
     _rule("PATCH", "/boms/{bom_id}", "manufacturing.bom.update"),
     _rule("DELETE", "/boms/{bom_id}", "manufacturing.bom.delete"),
     # ---------- شجرة الحسابات ----------
@@ -443,6 +444,7 @@ ROUTE_RULES: List[RouteRule] = [
     _rule("GET", "/reports/inventory-valuation", "reports.inventory.valuation"),
     _rule("GET", "/reports/inventory-valuation/xlsx", "reports.inventory.valuation_export"),
     _rule("GET", "/reports/low-stock", "reports.inventory.low_stock"),
+    _rule("GET", "/reports/reorder-forecast", "reports.inventory.low_stock"),
     _rule("GET", "/reports/purchase-suggestions", "reports.inventory.purchase_suggestions"),
     _rule("GET", "/reports/purchase-suggestions/xlsx", "reports.inventory.purchase_suggestions_export"),
     _rule("GET", "/reports/lots-expiring", "reports.inventory.lots_expiring"),
@@ -590,6 +592,7 @@ ROUTE_RULES: List[RouteRule] = [
     _rule("PUT", "/qc/products/{product_id}", "manufacturing.quality.manage"),
     _rule("GET", "/qc/batches/{batch_id}/results", "manufacturing.order.qc"),
     _rule("POST", "/qc/batches/{batch_id}/results", "manufacturing.order.qc"),
+    _rule("POST", "/qc/batches/{batch_id}/release", "manufacturing.order.qc"),
     _rule("POST", "/boms/{bom_id}/copy", "manufacturing.bom.create"),
     _rule("PUT", "/production-orders/{order_id}/schedule", "manufacturing.order.schedule"),
     _rule("GET", "/production-orders/reports/work-centers", "manufacturing.order.report_work_centers"),

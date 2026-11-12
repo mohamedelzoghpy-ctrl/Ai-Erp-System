@@ -76,6 +76,12 @@ export default function LowStock() {
   });
   const low = useFetch(() => api.get<LowStockItem[]>(`/reports/low-stock${fq}`), `lowstock${fq}`);
   const [search, setSearch] = useState("");
+  const [activeTab, setActiveTab] = useState<"alerts" | "forecast">("alerts");
+  const [forecastDays, setForecastDays] = useState(30);
+  const forecast = useFetch(
+    () => api.get<any>(`/reports/reorder-forecast?days_analyzed=${forecastDays}${scopeWarehouse ? `&warehouse_id=${scopeWarehouse}` : ""}${scopeSupplier ? `&supplier_id=${scopeSupplier}` : ""}`),
+    `reorder-forecast-${forecastDays}-${scopeWarehouse}-${scopeSupplier}`
+  );
   const suggestions = useFetch(
     () => api.get<any[]>(`/reports/purchase-suggestions${fq}`), `purch-sugg${fq}`,
   );
@@ -259,19 +265,149 @@ export default function LowStock() {
         )}
       </div>
 
-      <Alert>{low.error || download.error}</Alert>
-      {reorderEdit && reorderNote && <p className="muted" style={{ margin: "0 0 10px", fontSize: 13 }}>{reorderNote}</p>}
-
-      <div className="kpis" style={{ marginBottom: 14 }}>
-        <div className="kpi">
-          <div className="label">{t("منتجات تحت حد الطلب")}</div>
-          <div className={`value${(low.data ?? []).length > 0 ? " low" : ""}`}>{num(low.data?.length ?? 0)}</div>
-        </div>
-        <div className="kpi">
-          <div className="label">إجمالي العجز (وحدات)</div>
-          <div className="value">{num(totalShortfall)}</div>
-        </div>
+      <div style={{ display: "flex", gap: 10, margin: "16px 0 12px", borderBottom: "1px solid #ddd", paddingBottom: 8 }}>
+        <button
+          className={`btn ${activeTab === "alerts" ? "btn-primary" : ""}`}
+          onClick={() => setActiveTab("alerts")}
+        >
+          🚨 تنبيهات نقص المخزون الحالية
+        </button>
+        <button
+          className={`btn ${activeTab === "forecast" ? "btn-primary" : ""}`}
+          onClick={() => setActiveTab("forecast")}
+        >
+          ⚡ التنبؤ الذكي بحد الطلب ونقاط إعادة التموين (ROP)
+        </button>
       </div>
+
+      <Alert>{low.error || download.error || forecast.error}</Alert>
+
+      {activeTab === "forecast" ? (
+        <div className="card card-pad" style={{ marginBottom: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 10 }}>
+            <div>
+              <h3 style={{ margin: "0 0 4px" }}>📊 التنبؤ الديناميكي بنقاط إعادة الطلب (Dynamic ROP)</h3>
+              <p className="muted" style={{ margin: 0, fontSize: "0.85rem" }}>
+                محسوب بناءً على متوسط سرعة السحب اليومي الفعلي وزمن التوريد ومخزون أمان إضافي.
+              </p>
+            </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <label style={{ fontSize: "0.85rem", fontWeight: 600 }}>فترة تحليل المبيعات:</label>
+              <select
+                className="ls-select"
+                style={{ width: 130 }}
+                value={forecastDays}
+                onChange={(e) => setForecastDays(Number(e.target.value))}
+              >
+                <option value={14}>آخر 14 يوماً</option>
+                <option value={30}>آخر 30 يوماً</option>
+                <option value={60}>آخر 60 يوماً</option>
+                <option value={90}>آخر 90 يوماً</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="kpis" style={{ marginBottom: 16 }}>
+            <div className="kpi">
+              <div className="label">أصناف في مرحلة الخطر (Critical)</div>
+              <div className={`value${(forecast.data?.critical_count ?? 0) > 0 ? " low" : ""}`}>
+                {num(forecast.data?.critical_count ?? 0)}
+              </div>
+            </div>
+            <div className="kpi">
+              <div className="label">أصناف قاربت نقطة الطلب (Warning)</div>
+              <div className="value">{num(forecast.data?.warning_count ?? 0)}</div>
+            </div>
+            <div className="kpi">
+              <div className="label">الاستثمار التقديري المقترح للتموين</div>
+              <div className="value">{money(forecast.data?.total_suggested_investment ?? 0)}</div>
+            </div>
+          </div>
+
+          {forecast.loading ? (
+            <Loading />
+          ) : (forecast.data?.items ?? []).length > 0 ? (
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>الكود</th>
+                    <th>المنتج</th>
+                    <th>المورد المعتمد</th>
+                    <th className="num">الرصيد الحالي</th>
+                    <th className="num">السحب اليومي</th>
+                    <th className="num">نقطة الطلب (ROP)</th>
+                    <th className="num">الأيام المتبقية</th>
+                    <th className="num">الكمية المقترحة</th>
+                    <th className="num">التكلفة التقديرية</th>
+                    <th>الحالة</th>
+                    <th>إجراء</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(forecast.data?.items ?? []).map((it: any) => {
+                    const isCrit = it.reorder_urgency === "critical";
+                    const isWarn = it.reorder_urgency === "warning";
+                    return (
+                      <tr key={it.product_id} style={{ background: isCrit ? "rgba(220, 38, 38, 0.06)" : isWarn ? "rgba(245, 158, 11, 0.05)" : undefined }}>
+                        <td dir="ltr"><strong>{it.sku}</strong></td>
+                        <td>{it.name}</td>
+                        <td>{it.supplier_name || "—"}</td>
+                        <td className="num">{num(it.current_stock)}</td>
+                        <td className="num">{num(it.daily_sales)}/يوم</td>
+                        <td className="num" style={{ fontWeight: 600 }}>{num(it.suggested_rop)}</td>
+                        <td className="num" style={{ fontWeight: 700, color: isCrit ? "#dc2626" : isWarn ? "#d97706" : "#16a34a" }}>
+                          {it.days_left != null ? `${it.days_left} يوم` : "—"}
+                        </td>
+                        <td className="num" style={{ fontWeight: 700 }}>{num(it.suggested_order_qty)}</td>
+                        <td className="num">{money(it.estimated_cost)}</td>
+                        <td>
+                          <span style={{
+                            padding: "3px 8px",
+                            borderRadius: 6,
+                            fontSize: "0.8rem",
+                            fontWeight: 600,
+                            background: isCrit ? "#fee2e2" : isWarn ? "#fef3c7" : "#dcfce7",
+                            color: isCrit ? "#991b1b" : isWarn ? "#92400e" : "#166534",
+                          }}>
+                            {isCrit ? "خطر نفاد ⚠️" : isWarn ? "اقترب الطلب ⏳" : "مستقر ✓"}
+                          </span>
+                        </td>
+                        <td>
+                          {it.supplier_id && it.suggested_order_qty > 0 && (
+                            <button
+                              className="btn btn-sm btn-primary"
+                              disabled={creatingPO === it.supplier_id}
+                              onClick={() => createDraftPO(it.supplier_id, it.supplier_name || "المورد")}
+                            >
+                              + أمر شراء
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <Empty>لا توجد بيانات حركة كافية لإجراء التنبؤ</Empty>
+          )}
+        </div>
+      ) : (
+        <>
+          {reorderEdit && reorderNote && <p className="muted" style={{ margin: "0 0 10px", fontSize: 13 }}>{reorderNote}</p>}
+
+          <div className="kpis" style={{ marginBottom: 14 }}>
+            <div className="kpi">
+              <div className="label">{t("منتجات تحت حد الطلب")}</div>
+              <div className={`value${(low.data ?? []).length > 0 ? " low" : ""}`}>{num(low.data?.length ?? 0)}</div>
+            </div>
+            <div className="kpi">
+              <div className="label">إجمالي العجز (وحدات)</div>
+              <div className="value">{num(totalShortfall)}</div>
+            </div>
+          </div>
 
       {low.loading && !low.data ? (
         <Loading />
@@ -429,6 +565,8 @@ export default function LowStock() {
           </div>
         ) : <Empty>لا لوطات قاربت على الانتهاء 🎉</Empty>}
       </div>
+        </>
+      )}
     </div>
   );
 }
