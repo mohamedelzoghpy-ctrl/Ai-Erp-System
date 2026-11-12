@@ -1917,6 +1917,49 @@ class HrAttendance(TenantOwned, Base):
         return self.employee.code if self.employee else None
 
 
+class BiometricDevice(TenantOwned, Base):
+    """جهاز بصمة مسجل (ZKTeco / ADMS / Standalone): عنوان IP، المنفذ، وحالة الاتصال."""
+
+    __tablename__ = "biometric_devices"
+    __table_args__ = (
+        UniqueConstraint("company_id", "ip_address", "port", name="uq_biometric_device_ip_port"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), nullable=False)  # اسم الجهاز (بصمة الباب الرئيسي، بصمة المصنع)
+    device_model = Column(String(50), nullable=True, default="ZKTeco")
+    ip_address = Column(String(45), nullable=False)
+    port = Column(Integer, nullable=False, default=4370, server_default="4370")
+    serial_number = Column(String(100), nullable=True)
+    comm_key = Column(String(50), nullable=True, default="0", server_default="0")
+    branch_id = Column(Integer, ForeignKey("branches.id", ondelete="SET NULL"), nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True, server_default="true")
+    last_sync_at = Column(DateTime(timezone=True), nullable=True)
+    last_status = Column(String(20), nullable=False, default="unknown", server_default="unknown")
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    branch = relationship("Branch")
+
+
+class BiometricLog(TenantOwned, Base):
+    """سجل البصمات الخام المستلم من الجهاز قبل تحويله لحضور وانصراف مجمع."""
+
+    __tablename__ = "biometric_logs"
+    __table_args__ = (
+        Index("ix_biometric_logs_emp_time", "company_id", "employee_code", "timestamp"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    device_id = Column(Integer, ForeignKey("biometric_devices.id", ondelete="SET NULL"), nullable=True)
+    employee_code = Column(String(50), nullable=False, index=True)
+    timestamp = Column(DateTime(timezone=True), nullable=False, index=True)
+    punch_type = Column(String(10), nullable=False, default="auto", server_default="auto")  # check_in | check_out | auto
+    processed = Column(Boolean, nullable=False, default=False, server_default="false", index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    device = relationship("BiometricDevice")
+
+
 class HrHoliday(TenantOwned, Base):
     """عطلة رسمية (لكل الشركة/دولتها) — تُستخدم لاحقًا في رصيد الإجازات والتقارير."""
 

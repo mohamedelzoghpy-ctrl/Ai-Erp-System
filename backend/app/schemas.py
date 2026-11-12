@@ -2100,6 +2100,65 @@ class HrAttendanceOut(ORMModel):
     created_at: datetime
 
 
+class BiometricDeviceCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    device_model: Optional[str] = "ZKTeco"
+    ip_address: str = Field(min_length=7, max_length=45)
+    port: int = Field(default=4370, ge=1, le=65535)
+    serial_number: Optional[str] = None
+    comm_key: Optional[str] = "0"
+    branch_id: Optional[int] = None
+    is_active: bool = True
+
+
+class BiometricDeviceUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    device_model: Optional[str] = None
+    ip_address: Optional[str] = Field(default=None, min_length=7, max_length=45)
+    port: Optional[int] = Field(default=None, ge=1, le=65535)
+    serial_number: Optional[str] = None
+    comm_key: Optional[str] = None
+    branch_id: Optional[int] = None
+    is_active: Optional[bool] = None
+
+
+class BiometricDeviceOut(ORMModel):
+    id: int
+    company_id: int
+    name: str
+    device_model: Optional[str] = None
+    ip_address: str
+    port: int
+    serial_number: Optional[str] = None
+    comm_key: Optional[str] = None
+    branch_id: Optional[int] = None
+    is_active: bool
+    last_sync_at: Optional[datetime] = None
+    last_status: str
+    created_at: datetime
+
+
+class BiometricPunchIn(BaseModel):
+    employee_code: str
+    timestamp: datetime
+    punch_type: Optional[Literal["check_in", "check_out", "auto"]] = "auto"
+
+
+class BiometricBatchPush(BaseModel):
+    device_id: Optional[int] = None
+    serial_number: Optional[str] = None
+    punches: List[BiometricPunchIn]
+
+
+class BiometricSyncSummary(BaseModel):
+    device_id: Optional[int]
+    total_received: int
+    matched_punches: int
+    attendance_records_created: int
+    attendance_records_updated: int
+    unmatched_employee_codes: List[str]
+
+
 class HrHolidayCreate(BaseModel):
     name: str = Field(min_length=1, max_length=150)
     holiday_date: date

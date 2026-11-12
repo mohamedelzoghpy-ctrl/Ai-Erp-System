@@ -1445,9 +1445,135 @@ function AttendanceImportCard() {
     });
   };
 
+  const [devices, setDevices] = useState<any[]>([]);
+  const [loadingDevices, setLoadingDevices] = useState(false);
+  const [showDeviceModal, setShowDeviceModal] = useState(false);
+  const [devForm, setDevForm] = useState({ name: "جهاز البصمة الرئيسي", ip_address: "192.168.1.201", port: 4370, device_model: "ZKTeco K40" });
+  const [syncStatus, setSyncStatus] = useState<string | null>(null);
+
+  const loadDevices = async () => {
+    setLoadingDevices(true);
+    try {
+      const data = await api.get<any[]>("/hr/biometric-devices");
+      setDevices(data);
+    } catch { /* ignore */ }
+    finally { setLoadingDevices(false); }
+  };
+
+  const handleCreateDevice = async (e: FormEvent) => {
+    e.preventDefault();
+    try {
+      await api.post("/hr/biometric-devices", devForm);
+      setShowDeviceModal(false);
+      await loadDevices();
+      alert("تم تسجيل جهاز البصمة بنجاح");
+    } catch (err) { alert((err as Error).message); }
+  };
+
+  const handlePing = async (id: number) => {
+    try {
+      const res: any = await api.post(`/hr/biometric-devices/${id}/ping`);
+      alert(`حالة الاتصال بالجهاز: ${res.status === "online" ? "متصل (Online) ✓" : "غير متصل (Offline) ✕"}`);
+      await loadDevices();
+    } catch (err) { alert((err as Error).message); }
+  };
+
+  const handleSimulateSync = async (devId: number) => {
+    const code = window.prompt("أدخل كود الموظف لمحاكاة حركة البصمة (مثال: EMP-1):", "EMP-1");
+    if (!code) return;
+    try {
+      const nowStr = new Date().toISOString();
+      const res: any = await api.post("/hr/biometric-devices/push-punches", {
+        device_id: devId,
+        punches: [{ employee_code: code.trim(), timestamp: nowStr, punch_type: "auto" }],
+      });
+      setSyncStatus(`تمت المزامنة: استلام ${res.total_received} حركة · تم مطابقة ${res.matched_punches} · تم تحديث الحضور!`);
+      // إشعار اكتمال المزامنة الحية
+    } catch (err) { alert((err as Error).message); }
+  };
+
   return (
     <div className="card card-pad" style={{ marginBottom: 16 }}>
-      <h3 style={{ margin: "0 0 8px", fontSize: 15 }}>📡 {t("استيراد حضور من جهاز البصمة")}</h3>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
+        <h3 style={{ margin: 0, fontSize: 15 }}>📡 {t("أجهزة البصمة وتكامل ZKTeco")}</h3>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button type="button" className="btn btn-sm" onClick={() => void loadDevices()}>
+            {loadingDevices ? "..." : "🔄 فحص الأجهزة المسجلة"}
+          </button>
+          <button type="button" className="btn btn-sm btn-primary" onClick={() => { setShowDeviceModal(true); void loadDevices(); }}>
+            + إضافة جهاز بصمة
+          </button>
+        </div>
+      </div>
+
+      {devices.length > 0 && (
+        <div style={{ marginBottom: 14, background: "rgba(0,0,0,0.02)", padding: 10, borderRadius: 8 }}>
+          <table style={{ width: "100%", fontSize: 13 }}>
+            <thead>
+              <tr>
+                <th>اسم الجهاز</th>
+                <th>الموديل</th>
+                <th>عنوان IP : المنفذ</th>
+                <th>الحالة</th>
+                <th>إجراءات</th>
+              </tr>
+            </thead>
+            <tbody>
+              {devices.map((d) => (
+                <tr key={d.id}>
+                  <td><strong>{d.name}</strong></td>
+                  <td>{d.device_model || "ZKTeco"}</td>
+                  <td dir="ltr">{d.ip_address}:{d.port}</td>
+                  <td>
+                    <span style={{
+                      padding: "2px 6px",
+                      borderRadius: 4,
+                      fontSize: 11,
+                      fontWeight: 600,
+                      background: d.last_status === "online" ? "#dcfce7" : d.last_status === "offline" ? "#fee2e2" : "#f1f5f9",
+                      color: d.last_status === "online" ? "#166534" : d.last_status === "offline" ? "#991b1b" : "#475569",
+                    }}>
+                      {d.last_status === "online" ? "متصل Online" : d.last_status === "offline" ? "غير متصل Offline" : "جاهز للربط"}
+                    </span>
+                  </td>
+                  <td>
+                    <button type="button" className="btn btn-sm" onClick={() => handlePing(d.id)}>فحص الاتصال Ping</button>{" "}
+                    <button type="button" className="btn btn-sm btn-primary" onClick={() => handleSimulateSync(d.id)}>محاكاة مزامنة بصمة</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {syncStatus && <Alert kind="info">{syncStatus}</Alert>}
+
+      {showDeviceModal && (
+        <Modal title="تسجيل جهاز بصمة جديد" onClose={() => setShowDeviceModal(false)}>
+          <form onSubmit={handleCreateDevice} className="form-grid">
+            <Field label="اسم الجهاز">
+              <input value={devForm.name} onChange={(e) => setDevForm({ ...devForm, name: e.target.value })} required />
+            </Field>
+            <Field label="موديل الجهاز">
+              <input value={devForm.device_model} onChange={(e) => setDevForm({ ...devForm, device_model: e.target.value })} placeholder="مثال: ZKTeco K40 / F18 / uFace" />
+            </Field>
+            <Field label="عنوان IP الخاص بالجهاز على الشبكة (LAN IP)">
+              <input dir="ltr" value={devForm.ip_address} onChange={(e) => setDevForm({ ...devForm, ip_address: e.target.value })} placeholder="192.168.1.201" required />
+            </Field>
+            <Field label="منفذ الاتصال (Port)">
+              <input dir="ltr" type="number" value={devForm.port} onChange={(e) => setDevForm({ ...devForm, port: Number(e.target.value) })} required />
+            </Field>
+            <div className="form-actions" style={{ marginTop: 12 }}>
+              <button type="submit" className="btn btn-primary">حفظ الجهاز</button>
+              <button type="button" className="btn" onClick={() => setShowDeviceModal(false)}>إلغاء</button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      <hr style={{ margin: "14px 0", border: 0, borderTop: "1px dashed #e2e8f0" }} />
+
       <p className="muted" style={{ margin: "0 0 8px", fontSize: 12.5 }} dir="rtl">
         {t("الصق صفوفًا بصيغة CSV: كود الموظف، التاريخ (YYYY-MM-DD)، الدخول، الخروج، الحالة (اختياري)")}. {t("الصف الموجود يُحدَّث والمفقود يُنشأ بمصدر بصمة.")}
       </p>

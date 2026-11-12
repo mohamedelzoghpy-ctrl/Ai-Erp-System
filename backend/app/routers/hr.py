@@ -2144,6 +2144,170 @@ def import_attendance(payload: schemas.HrAttendanceImportIn, db: Session = Depen
     return out
 
 
+# =====================================================================
+# إدارة أجهزة البصمة وتكامل ZKTeco / Biometrics
+# =====================================================================
+
+@router.get("/biometric-devices", response_model=List[schemas.BiometricDeviceOut])
+def list_biometric_devices(db: Session = Depends(get_db), _: models.User = Depends(get_current_user)):
+    """قائمة أجهزة البصمة المسجلة في الشركة."""
+    return db.query(models.BiometricDevice).filter(models.BiometricDevice.company_id == db.info["company_id"]).order_by(models.BiometricDevice.id).all()
+
+
+@router.post("/biometric-devices", response_model=schemas.BiometricDeviceOut, status_code=status.HTTP_201_CREATED)
+def create_biometric_device(payload: schemas.BiometricDeviceCreate, db: Session = Depends(get_db), user: models.User = Depends(require_manager)):
+    """تسجيل جهاز بصمة جديد (IP والمنفذ والفرع)."""
+    company_id = db.info["company_id"]
+    exists = db.query(models.BiometricDevice).filter(
+        models.BiometricDevice.company_id == company_id,
+        models.BiometricDevice.ip_address == payload.ip_address,
+        models.BiometricDevice.port == payload.port,
+    ).first()
+    if exists:
+        raise HTTPException(status.HTTP_409_CONFLICT, f"يوجد جهاز مسجل بالفعل بنفس العنوان {payload.ip_address}:{payload.port}")
+    dev = models.BiometricDevice(
+        company_id=company_id,
+        name=payload.name,
+        device_model=payload.device_model or "ZKTeco",
+        ip_address=payload.ip_address,
+        port=payload.port,
+        serial_number=payload.serial_number,
+        comm_key=payload.comm_key or "0",
+        branch_id=payload.branch_id,
+        is_active=payload.is_active,
+    )
+    db.add(dev)
+    audit(db, user, "create", "biometric_device", dev, f"جهاز بصمة: {dev.name} ({dev.ip_address})")
+    db.commit()
+    db.refresh(dev)
+    return dev
+
+
+@router.patch("/biometric-devices/{device_id}", response_model=schemas.BiometricDeviceOut)
+def update_biometric_device(device_id: int, payload: schemas.BiometricDeviceUpdate, db: Session = Depends(get_db), user: models.User = Depends(require_manager)):
+    """تعديل بيانات جهاز بصمة."""
+    dev = db.query(models.BiometricDevice).filter(models.BiometricDevice.company_id == db.info["company_id"], models.BiometricDevice.id == device_id).first()
+    if dev is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "جهاز البصمة غير موجود")
+    for k, v in payload.model_dump(exclude_unset=True).items():
+        setattr(dev, k, v)
+    audit(db, user, "update", "biometric_device", dev, f"تعديل جهاز {dev.name}")
+    db.commit()
+    db.refresh(dev)
+    return dev
+
+
+@router.delete("/biometric-devices/{device_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_biometric_device(device_id: int, db: Session = Depends(get_db), user: models.User = Depends(require_manager)):
+    """حذف جهاز بصمة."""
+    dev = db.query(models.BiometricDevice).filter(models.BiometricDevice.company_id == db.info["company_id"], models.BiometricDevice.id == device_id).first()
+    if dev is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "جهاز البصمة غير موجود")
+    db.delete(dev)
+    audit(db, user, "delete", "biometric_device", dev, f"حذف جهاز {dev.name}")
+    db.commit()
+
+
+@router.post("/biometric-devices/{device_id}/ping")
+def ping_biometric_device(device_id: int, db: Session = Depends(get_db), _: models.User = Depends(get_current_user)):
+    """فحص جاهزية الاتصال بجهاز البصمة (Ping test / Network check)."""
+    dev = db.query(models.BiometricDevice).filter(models.BiometricDevice.company_id == db.info["company_id"], models.BiometricDevice.id == device_id).first()
+    if dev is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "جهاز البصمة غير موجود")
+    import socket
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.settimeout(2.0)
+    try:
+        res = s.connect_ex((dev.ip_address, dev.port))
+        is_online = (res == 0)
+    except Exception:
+        is_online = False
+    finally:
+        s.close()
+    dev.last_status = "online" if is_online else "offline"
+    db.commit()
+    return {"device_id": dev.id, "name": dev.name, "ip": dev.ip_address, "port": dev.port, "status": dev.last_status}
+
+
+@router.post("/biometric-devices/push-punches", response_model=schemas.BiometricSyncSummary)
+def push_biometric_punches(payload: schemas.BiometricBatchPush, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    """استقبال دفعة حركات بصمة من الجهاز (أو وكيل المزامنة) وتحويلها لسجلات حضور وانصراف مجمعة."""
+    company_id = db.info["company_id"]
+    from collections import defaultdict
+
+    emp_map = {e.code: e for e in db.query(models.HrEmployee).filter(models.HrEmployee.company_id == company_id).all()}
+    unmatched = set()
+    created = 0
+    updated = 0
+    matched = 0
+
+    # تجميع الحركات بحسب (الموظف، تاريخ اليوم)
+    punches_by_day = defaultdict(list)
+    for p in payload.punches:
+        code = p.employee_code.strip()
+        if code not in emp_map:
+            unmatched.add(code)
+            continue
+        matched += 1
+        w_date = p.timestamp.date()
+        hhmm = p.timestamp.strftime("%H:%M")
+        punches_by_day[(emp_map[code].id, w_date)].append(hhmm)
+
+    for (emp_id, w_date), times in punches_by_day.items():
+        sorted_times = sorted(times)
+        cin = sorted_times[0]
+        cout = sorted_times[-1] if len(sorted_times) > 1 else None
+
+        existing = db.query(models.HrAttendance).filter(
+            models.HrAttendance.company_id == company_id,
+            models.HrAttendance.employee_id == emp_id,
+            models.HrAttendance.work_date == w_date,
+        ).first()
+
+        late, overtime = _attendance_metrics_for(db, company_id, emp_id, "present", cin, cout)
+
+        if existing is None:
+            db.add(models.HrAttendance(
+                company_id=company_id,
+                employee_id=emp_id,
+                work_date=w_date,
+                status="present",
+                check_in=cin,
+                check_out=cout,
+                late_minutes=late,
+                overtime_minutes=overtime,
+                source="device",
+                created_by=user.id,
+            ))
+            created += 1
+        else:
+            if existing.check_in is None or cin < existing.check_in:
+                existing.check_in = cin
+            if cout and (existing.check_out is None or cout > existing.check_out):
+                existing.check_out = cout
+            existing.status = "present"
+            existing.late_minutes = late
+            existing.overtime_minutes = overtime
+            existing.source = "device"
+            updated += 1
+
+    if payload.device_id:
+        dev = db.get(models.BiometricDevice, payload.device_id)
+        if dev and dev.company_id == company_id:
+            dev.last_sync_at = func.now()
+            dev.last_status = "online"
+
+    db.commit()
+    return schemas.BiometricSyncSummary(
+        device_id=payload.device_id,
+        total_received=len(payload.punches),
+        matched_punches=matched,
+        attendance_records_created=created,
+        attendance_records_updated=updated,
+        unmatched_employee_codes=list(unmatched),
+    )
+
+
 @router.get("/approval-chains", response_model=schemas.HrApprovalChainPage)
 def get_approval_chains(db: Session = Depends(get_db), _: models.User = Depends(get_current_user)):
     """مسار الموافقات للإجازات + قائمة المدراء لاختيار الموافقين."""
