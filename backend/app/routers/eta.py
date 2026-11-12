@@ -78,27 +78,59 @@ def _require_ready(company: models.Company, *, need_secret: bool = True) -> None
 
 
 # ---------------------------------------------------------------- طابور فواتير البيع
-@router.get("/queue")
-def submit_queue(
-    db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_user),
-):
-    """الفواتير المؤكدة غير المرسلة (جاهزة للرفع) + الفواتير المرسلة (لمتابعتها)."""
-    company = _company(db)
+def _receipt_filter_submitted(db: Session, company_id: int) -> tuple[set, dict]:
+    """معرّفات الأوامر المُرسلة كإيصالات (valid/submitted) + آخر حالة لكل أمر."""
     submitted_ids = {
         row.order_id for row in db.query(models.EtaSubmission.order_id).filter(
-            models.EtaSubmission.company_id == company.id,
-            models.EtaSubmission.document_type == "I",
+            models.EtaSubmission.company_id == company_id,
+            models.EtaSubmission.document_type == "R",
             models.EtaSubmission.order_id.isnot(None),
             models.EtaSubmission.status.in_(("submitted", "valid")),
         ).all()
     }
     status_by_order: dict = {}
     for row in db.query(models.EtaSubmission).filter(
-        models.EtaSubmission.company_id == company.id, models.EtaSubmission.document_type == "I"
+        models.EtaSubmission.company_id == company_id, models.EtaSubmission.document_type == "R"
     ).order_by(models.EtaSubmission.id.desc()).all():
         if row.order_id not in status_by_order:
-            status_by_order[row.order_id] = {"status": row.status, "eta_long_id": row.eta_long_id, "errors": row.errors}
+            status_by_order[row.order_id] = {
+                "status": row.status, "eta_long_id": row.eta_long_id,
+                "errors": row.errors, "submission_id": row.id,
+            }
+    return submitted_ids, status_by_order
+
+
+@router.get("/queue")
+def submit_queue(
+    document_type: str = Query("I", alias="type", pattern="^(I|R)$"),
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+):
+    """الفواتير المؤكدة غير المرسلة (جاهزة للرفع) + المرسلة (لمتابعتها).
+
+    document_type=I فواتير B2B · document_type=R إيصالات نقاط البيع B2C."""
+    company = _company(db)
+    doc_type = "R" if document_type == "R" else "I"
+    if doc_type == "R":
+        submitted_ids, status_by_order = _receipt_filter_submitted(db, company.id)
+    else:
+        submitted_ids = {
+            row.order_id for row in db.query(models.EtaSubmission.order_id).filter(
+                models.EtaSubmission.company_id == company.id,
+                models.EtaSubmission.document_type == "I",
+                models.EtaSubmission.order_id.isnot(None),
+                models.EtaSubmission.status.in_(("submitted", "valid")),
+            ).all()
+        }
+        status_by_order: dict = {}
+        for row in db.query(models.EtaSubmission).filter(
+            models.EtaSubmission.company_id == company.id, models.EtaSubmission.document_type == "I"
+        ).order_by(models.EtaSubmission.id.desc()).all():
+            if row.order_id not in status_by_order:
+                status_by_order[row.order_id] = {
+                    "status": row.status, "eta_long_id": row.eta_long_id,
+                    "errors": row.errors, "submission_id": row.id,
+                }
     pending, sent = [], []
     orders = (
         db.query(models.SalesOrder)
@@ -108,6 +140,9 @@ def submit_queue(
         .all()
     )
     for o in orders:
+        is_b2b = o.customer is not None and bool(o.customer.tax_registration_number)
+        if doc_type == "R" and is_b2b:
+            continue  # عميل مسجل ضريبيًا → فاتورة I لا إيصال R
         row = {
             "order_id": o.id, "internal_id": f"SO-{o.id}", "party_name": o.party_name,
             "total_amount": o.total_amount, "foreign_total": o.foreign_total,
@@ -115,10 +150,11 @@ def submit_queue(
         }
         if o.id in submitted_ids:
             info = status_by_order.get(o.id, {})
-            sent.append({**row, "status": info.get("status"), "eta_long_id": info.get("eta_long_id"), "errors": info.get("errors")})
+            sent.append({**row, "status": info.get("status"), "eta_long_id": info.get("eta_long_id"),
+                         "errors": info.get("errors"), "submission_id": info.get("submission_id")})
         else:
             pending.append(row)
-    return {"pending": pending, "sent": sent}
+    return {"pending": pending, "sent": sent, "document_type": doc_type}
 
 
 @router.post("/submit-receipt/{order_id}")
@@ -161,13 +197,92 @@ def submit_receipt(
     document = eta.build_receipt_document(
         internal_id=f"SO-{order.id}", issuer_tin=company.eta_tin or "", issuer_name=company.name,
         receiver_name=order.party_name or (customer.name if customer else "عميل نقدي"),
-        lines=lines, issued_at=order.updated_at, issuer_address=_issuer_address(company),
+        lines=lines, vat_rate=float(order.tax_rate or 0),
+        issued_at=order.updated_at, issuer_address=_issuer_address(company),
     )
     outs = _submit_documents(db, company, user, [document], order_ids=[order.id], return_ids=[None])
     sub = outs[0]
     sub.document_type = "R"  # type: ignore
     db.commit()
     return _out(sub)
+
+
+@router.post("/submit-receipts-pending")
+def submit_receipts_pending(
+    limit: int = Query(100, ge=1, le=100),
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """إرسال دفعي لكل إيصالات البيع المؤكدة غير المرسلة (نقاط البيع B2C) — حتى 100 لكل دفعة.
+
+    استبعاد: أوامر العملاء المسجلين ضريبيًا (تُرسل فواتير I) والمُرسلة سابقًا."""
+    company = _company(db)
+    _require_ready(company)
+    submitted_ids, _ = _receipt_filter_submitted(db, company.id)
+    orders = (
+        db.query(models.SalesOrder)
+        .filter(models.SalesOrder.company_id == company.id, models.SalesOrder.status == "confirmed")
+        .order_by(models.SalesOrder.id)
+        .limit(200)
+        .all()
+    )
+    documents, order_ids = [], []
+    for order in orders:
+        if len(documents) >= limit:
+            break
+        if order.id in submitted_ids:
+            continue
+        if order.customer is not None and order.customer.tax_registration_number:
+            continue
+        products = {p.id: p for p in db.query(models.Product).filter(
+            models.Product.id.in_([it.product_id for it in order.items])
+        ).all()} if order.items else {}
+        lines = [{
+            "description": it.product_name or (products[it.product_id].name if it.product_id in products else ""),
+            "product_id": it.product_id,
+            "internal_code": (products[it.product_id].sku if it.product_id in products else None) or str(it.product_id),
+            "unit_price": it.unit_price, "quantity": it.quantity,
+        } for it in order.items]
+        documents.append(eta.build_receipt_document(
+            internal_id=f"SO-{order.id}", issuer_tin=company.eta_tin or "", issuer_name=company.name,
+            receiver_name=order.party_name or (order.customer.name if order.customer else "عميل نقدي"),
+            lines=lines, vat_rate=float(order.tax_rate or 0),
+            issued_at=order.updated_at, issuer_address=_issuer_address(company),
+        ))
+        order_ids.append(order.id)
+    if not documents:
+        return {"submitted": 0, "detail": "لا إيصالات مؤكدة غير مرسلة"}
+    outs = _submit_documents(db, company, user, documents, order_ids=order_ids, return_ids=[None] * len(documents))
+    for sub in outs:
+        sub.document_type = "R"  # type: ignore
+    db.commit()
+    counts: dict = {}
+    for o in outs:
+        counts[o.status] = counts.get(o.status, 0) + 1
+    return {"submitted": len(outs), "statuses": counts, "submission_uuid": outs[0].submission_uuid}
+
+
+@router.get("/submissions/{submission_id}/qr.png")
+def submission_qr_png(
+    submission_id: int,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+):
+    """QR الخاص بالإيصال للطباعة على فاتورة الكاشير — يشفّر توقيع المستند (مواصفة المنظومة)."""
+    import io
+
+    import segno
+
+    sub = db.query(models.EtaSubmission).filter(
+        models.EtaSubmission.id == submission_id,
+        models.EtaSubmission.company_id == db.info["company_id"],
+    ).first()
+    if sub is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "الإرسال غير موجود")
+    content = sub.signature or sub.eta_uuid or sub.internal_id
+    buf = io.BytesIO()
+    segno.make(str(content)).save(buf, kind="png", scale=6, border=2)
+    return Response(content=buf.getvalue(), media_type="image/png")
 
 
 @router.post("/refresh-all")

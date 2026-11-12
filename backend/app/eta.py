@@ -276,32 +276,43 @@ def build_receipt_document(
     issuer_name: str,
     receiver_name: str,
     lines: List[Dict[str, Any]],
+    vat_rate: float = 0.0,
     issued_at: Optional[datetime] = None,
     issuer_address: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """إيصال بيع (documentType R) — لمبيعات نقاط البيع B2C.
 
+    مع نسبة VAT: كل سطر يحمل taxTotals (T1) وإجمالي السطر شامل الضريبة،
+    والمستند يحمل taxTotals مجمّعة — حسب إصدار 1.0 من إيصالات المنظومة.
+
     ملاحظة تشغيلية: في الإنتاج تتطلب الإيصالات توقيع SDK الجهاز المسجل —
     في mock تعمل كاملة الآن، وعند التفعيل يُستكمل توقيع الجهاز."""
     issued = issued_at or datetime.now(timezone.utc)
-    total = Decimal("0")
+    rate = Decimal(str(vat_rate or 0))
+    total_sales = Decimal("0")
+    total_vat = Decimal("0")
     lines_out = []
     for ln in lines:
         unit_price = Decimal(str(ln.get("unit_price") or 0))
         qty = Decimal(str(ln.get("quantity") or 0))
-        line_total = (unit_price * qty).quantize(Decimal("0.01"))
-        total += line_total
-        lines_out.append({
+        line_sales = (unit_price * qty).quantize(Decimal("0.01"))
+        line_vat = (line_sales * rate / Decimal("100")).quantize(Decimal("0.01")) if rate > 0 else Decimal("0")
+        total_sales += line_sales
+        total_vat += line_vat
+        row = {
             "internalCode": ln.get("internal_code") or str(ln.get("product_id", "")),
             "description": ln.get("description") or f"صنف #{ln.get('product_id', '')}",
             "itemType": "GS1",
             "unitType": "EA",
             "quantity": float(qty),
             "unitValue": {"currencySold": "EGP", "amountEGP": _money(unit_price)},
-            "salesTotal": _money(line_total),
-            "total": _money(line_total),
-        })
-    return {
+            "salesTotal": _money(line_sales),
+            "total": _money(line_sales + line_vat),
+        }
+        if line_vat > 0:
+            row["taxTotals"] = [{"taxType": "T1", "amount": _money(line_vat), "rate": float(rate)}]
+        lines_out.append(row)
+    document = {
         "documentType": "R",
         "documentTypeVersion": "1.0",
         "dateTimeIssued": issued.strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -316,10 +327,14 @@ def build_receipt_document(
             "address": {**DEFAULT_ADDR},
         },
         "receiptLines": lines_out,
-        "totalSalesAmount": _money(total),
-        "netAmount": _money(total),
-        "totalAmount": _money(total),
+        "totalSalesAmount": _money(total_sales),
+        "extraReceiptsAmount": _money(Decimal("0")),
+        "netAmount": _money(total_sales),
+        "totalAmount": _money(total_sales + total_vat),
     }
+    if total_vat > 0:
+        document["taxTotals"] = [{"taxType": "T1", "amount": _money(total_vat), "rate": float(rate)}]
+    return document
 
 
 # ---------------------------------------------------------------- المستندات الواردة (مشتريات)

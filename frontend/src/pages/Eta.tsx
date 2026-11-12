@@ -25,6 +25,7 @@ export default function Eta() {
   const cfg = useFetch(() => api.get<any>("/eta/config"), "eta-cfg");
   const subs = useFetch(() => api.get<EtaSubmission[]>("/eta/submissions?limit=100"), "eta-subs");
   const queue = useFetch(() => api.get<{ pending: any[]; sent: any[] }>("/eta/queue"), "eta-queue");
+  const receipts = useFetch(() => api.get<{ pending: any[]; sent: any[] }>("/eta/queue?type=R"), "eta-receipts");
   const incoming = useFetch(() => api.get<any[]>("/eta/incoming"), "eta-incoming");
   const warehouses = useFetch(() => api.get<{ id: number; name: string }[]>("/warehouses?limit=200"), "eta-whs");
   const { busy, error, run } = useAction();
@@ -33,7 +34,7 @@ export default function Eta() {
   const [selected, setSelected] = useState<Record<number, boolean>>({});
   const [incomingWh, setIncomingWh] = useState("");
 
-  const reloadOps = () => { queue.reload(); subs.reload(); incoming.reload(); };
+  const reloadOps = () => { queue.reload(); receipts.reload(); subs.reload(); incoming.reload(); };
   const submitSelected = async () => {
     const ids = Object.entries(selected).filter(([, v]) => v).map(([k]) => Number(k));
     if (!ids.length) { alert("حدّد فاتورة واحدة على الأقل"); return; }
@@ -70,6 +71,21 @@ export default function Eta() {
       reloadOps();
     });
   };
+  const submitReceiptsBulk = async () => {
+    if (!confirm("إرسال كل الإيصالات المؤكدة غير المرسلة (دفعة واحدة حتى 100)؟")) return;
+    void run(async () => {
+      const r: any = await api.post("/eta/submit-receipts-pending", {});
+      alert(r?.submitted ? `أُرسل ${r.submitted} إيصال — ${JSON.stringify(r.statuses)}` : (r?.detail || "لا إيصالات جديدة"));
+      reloadOps();
+    });
+  };
+  const downloadQr = async (submissionId: number) => {
+    const blob = await fetchBlob(`/eta/submissions/${submissionId}/qr.png`);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `receipt-qr-${submissionId}.png`; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  };
   const refreshOne = (id: number) => {
     void run(async () => { await api.post(`/eta/refresh/${id}`, {}); reloadOps(); });
   };
@@ -90,7 +106,6 @@ export default function Eta() {
   };
 
   const pending = queue.data?.pending ?? [];
-  const sent = queue.data?.sent ?? [];
   const incomingRows = incoming.data ?? [];
 
   return (
@@ -166,31 +181,53 @@ export default function Eta() {
           </div>
 
           <div className="card card-pad">
-            <h3 style={{ margin: "0 0 4px" }}>🧾 إيصالات البيع (R) — نقاط البيع B2C</h3>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+              <h3 style={{ margin: 0 }}>🧾 إيصالات البيع (R) — نقاط البيع B2C</h3>
+              <button className="btn btn-sm btn-primary" disabled={busy || !(receipts.data?.pending ?? []).length}
+                onClick={submitReceiptsBulk}>⚡ إرسال كل الإيصالات (دفعة)</button>
+            </div>
             <p style={{ fontSize: 13, color: "var(--muted,#64748b)", margin: "0 0 10px" }}>
               مبيعات النقاط لعملاء بلا رقم ضريبي تُرسل كإيصالات (R) — في الإنتاج تتطلب توقيع جهاز مسجل، وتعمل الآن في بيئة التجربة.
             </p>
-            {sent.length ? (
+            <Alert>{receipts.error}</Alert>
+            {receipts.loading ? <Loading /> : (receipts.data?.pending ?? []).length ? (
               <div className="table-wrap">
                 <table>
-                  <thead><tr><th>#</th><th>العميل</th><th className="num">الإجمالي</th><th>المنظومة</th></tr></thead>
+                  <thead><tr><th>#</th><th>العميل</th><th className="num">الإجمالي</th><th></th></tr></thead>
                   <tbody>
-                    {sent.slice(0, 30).map((r) => (
+                    {(receipts.data?.pending ?? []).slice(0, 30).map((r) => (
                       <tr key={r.order_id}>
                         <td dir="ltr">{r.internal_id}</td>
                         <td>{r.party_name}</td>
                         <td className="num">{money(r.total_amount)}</td>
-                        <td>
-                          {r.status ? <StatusBadge status={r.status} /> : (
-                            <button className="btn btn-sm" disabled={busy} onClick={() => submitReceiptOne(r.order_id)}>إرسال إيصال</button>
-                          )}
-                        </td>
+                        <td><button className="btn btn-sm" disabled={busy} onClick={() => submitReceiptOne(r.order_id)}>إرسال إيصال</button></td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
-            ) : <Empty>لا مبيعات مؤكدة بعد</Empty>}
+            ) : <Empty>لا إيصالات بانتظار الرفع 🎉</Empty>}
+            {(receipts.data?.sent ?? []).length ? (
+              <div className="table-wrap" style={{ marginTop: 12 }}>
+                <table>
+                  <thead><tr><th>#</th><th>العميل</th><th className="num">الإجمالي</th><th>المنظومة</th><th>QR للطباعة</th></tr></thead>
+                  <tbody>
+                    {(receipts.data?.sent ?? []).slice(0, 30).map((r) => (
+                      <tr key={r.order_id}>
+                        <td dir="ltr">{r.internal_id}</td>
+                        <td>{r.party_name}</td>
+                        <td className="num">{money(r.total_amount)}</td>
+                        <td><StatusBadge status={r.status} /></td>
+                        <td>{r.submission_id ? (
+                          <button className="btn btn-sm" title="حمّل QR وطبعته على فاتورة الكاشير"
+                            onClick={() => void run(() => downloadQr(r.submission_id))}>▣ QR</button>
+                        ) : "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
           </div>
         </>
       )}

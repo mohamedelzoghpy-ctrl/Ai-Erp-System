@@ -126,6 +126,8 @@ ROUTE_RULES: List[RouteRule] = [
     _rule("POST", "/eta/submit-return/{return_id}", "eta.document.submit"),
     _rule("GET", "/eta/queue", "eta.document.view"),
     _rule("POST", "/eta/submit-receipt/{order_id}", "eta.document.submit"),
+    _rule("POST", "/eta/submit-receipts-pending", "eta.document.submit"),
+    _rule("GET", "/eta/submissions/{submission_id}/qr.png", "eta.document.view"),
     _rule("POST", "/eta/refresh-all", "eta.document.submit"),
     _rule("POST", "/eta/incoming/sync", "eta.document.submit"),
     _rule("GET", "/eta/incoming", "eta.document.view"),

@@ -369,3 +369,54 @@ def test_excel_fallback_roundtrip(api):
 
 def o_in(rows, order_id):
     return any(r["order_id"] == order_id for r in rows)
+
+
+# ================================================== 16) الإيصالات الجماعية + طابور R + QR
+def test_receipt_bulk_queue_and_qr(api):
+    """إرسال دفعي لإيصالات B2C: يستبعد عملاء B2B والمكرر، الطابور type=R، وQR للطباعة."""
+    c = api
+    _configure_mock(c)
+    c.post("/company/branches", json={"name": "فرع إيصالات"})
+    c.post("/warehouses", json={"name": "W-RCP", "code": "WR"})
+    wh = ok(c.get("/warehouses"))[0]
+    p = ok(c.post("/products", json={"sku": "RCP-1", "name": "صنف إيصال", "sale_price": "100",
+                                     "cost_price": "50", "quantity": 50}), 201)
+    b2c = ok(c.post("/customers", json={"name": "عميل نقدي"}), 201)
+    b2b = ok(c.post("/customers", json={"name": "شركة مسجلة",
+                                        "tax_registration_number": "310000000000003"}), 201)
+    orders = []
+    for cust in (b2c, b2c, b2b):
+        so = ok(c.post("/sales-orders", json={
+            "customer_id": cust["id"], "warehouse_id": wh["id"], "tax_rate": "14",
+            "items": [{"product_id": p["id"], "quantity": 1}],
+        }), 201)
+        orders.append(ok(c.post(f"/sales-orders/{so['id']}/confirm"), 200))
+    # الطابور type=R: بانتظار الرفع إيصالان فقط (B2B مستبعد)
+    q = ok(c.get("/eta/queue?type=R"))
+    assert q["document_type"] == "R"
+    assert {row["order_id"] for row in q["pending"]} == {orders[0]["id"], orders[1]["id"]}
+    # الطابور type=I: كل الأوامر المؤكدة غير المرسلة كفواتير (السلوك الأصلي — يدوي للنقديين أيضًا)
+    qi = ok(c.get("/eta/queue"))
+    assert {row["order_id"] for row in qi["pending"]} == {o["id"] for o in orders}
+    # إرسال دفعي: إيصالان بضريبة 14% → 100 وعاء + 14 ضريبة
+    r = ok(c.post("/eta/submit-receipts-pending"))
+    assert r["submitted"] == 2, r
+    assert r["statuses"].get("valid") == 2
+    # مكرر → لا جديد
+    r2 = ok(c.post("/eta/submit-receipts-pending"))
+    assert r2["submitted"] == 0
+    # الطابور بعد الإرسال: المرسلان بإشارة R + معرف submission_id للـ QR
+    q2 = ok(c.get("/eta/queue?type=R"))
+    assert len(q2["pending"]) == 0 and len(q2["sent"]) == 2
+    assert all(row["submission_id"] for row in q2["sent"])
+    # قيد الإرسال: documentType R مع taxTotals T1 على المستند والأسطر
+    subs = ok(c.get(f"/eta/submissions?order_id={orders[0]['id']}"))
+    assert subs[0]["document_type"] == "R" and subs[0]["status"] == "valid"
+    payload = subs[0]
+    assert payload["eta_long_id"], "الإيصال المقبول يحمل longId"
+    # QR PNG للتوقيع — بيانات ثنائية تُنزَّل سليمة
+    qr = c.get(f"/eta/submissions/{q2['sent'][0]['submission_id']}/qr.png")
+    assert qr.status_code == 200 and qr.headers["content-type"] == "image/png"
+    assert qr.content[:8] == b"\x89PNG\r\n\x1a\n" and len(qr.content) > 300
+    # QR لإرسال غير موجود → 404
+    assert c.get("/eta/submissions/999999/qr.png").status_code == 404
