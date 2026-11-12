@@ -20,9 +20,15 @@ export default function Login() {
 
   return (
     <div className="login-wrap">
+      <div className="login-brand">
+        <div className="brand-mark" aria-hidden="true">MZ</div>
+        <div className="brand-text">
+          <div className="brand-name">MO<span className="brand-z">Z</span>AD</div>
+          <span className="brand-erp">ERP</span>
+        </div>
+      </div>
       <form className="card login-card" onSubmit={submit}>
-        <h1>{t("app.name")}</h1>
-        <div className="sub">{setupMode ? t("auth.setup") : t("auth.login")}</div>
+        <h1>{setupMode ? t("auth.setup") : t("auth.login")}</h1>
         <Alert>{error}</Alert>
         {setupMode && (
           <Field label={t("auth.fullName")}>
@@ -52,20 +58,20 @@ export default function Login() {
         <button className="btn btn-primary" style={{ width: "100%" }} disabled={busy}>
           {busy ? "…" : setupMode ? t("auth.setup") : t("auth.login")}
         </button>
-        <p className="muted" style={{ marginTop: 14, marginBottom: 0, fontSize: 13 }}>
-          {setupMode ? (lang === "ar" ? "لديك حساب؟ " : "Have an account? ") : (lang === "ar" ? "أول تشغيل للنظام؟ " : "First run? ")}
-          <button
-            type="button"
-            className="linklike"
-            onClick={() => {
-              setSetupMode(!setupMode);
-              setError(null);
-            }}
-          >
-            {setupMode ? t("auth.login") : t("auth.setup")}
-          </button>
-        </p>
-        <div style={{ marginTop: 12, textAlign: "center" }}>
+        <div className="login-links">
+          <p className="muted">
+            {setupMode ? (lang === "ar" ? "لديك حساب؟ " : "Have an account? ") : (lang === "ar" ? "أول تشغيل للنظام؟ " : "First run? ")}
+            <button
+              type="button"
+              className="linklike"
+              onClick={() => {
+                setSetupMode(!setupMode);
+                setError(null);
+              }}
+            >
+              {setupMode ? t("auth.login") : t("auth.setup")}
+            </button>
+          </p>
           <button type="button" className="linklike" onClick={() => setLang(lang === "ar" ? "en" : "ar")}>
             {lang === "ar" ? "English" : "العربية"}
           </button>

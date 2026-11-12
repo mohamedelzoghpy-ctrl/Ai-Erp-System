@@ -12,17 +12,25 @@ interface AuthState {
   isManager: boolean;
   isAdmin: boolean;
   isPlatformAdmin: boolean;
+  /** الصلاحيات الفعلية (من /auth/me) — "*" للمدير/الأدمن */
+  permissions: string[];
+  /** فحص صلاحية (any-of): can("sales.pos.use") */
+  can: (...codes: string[]) => boolean;
+  /** تحديث الصلاحيات بعد تعديلها من شاشة الإدارة */
+  refreshPermissions: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthState | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
+  const [permissions, setPermissions] = useState<string[]>([]);
   const [loading, setLoading] = useState<boolean>(!!getToken());
 
   const logout = useCallback(() => {
     setToken(null);
     setUser(null);
+    setPermissions([]);
   }, []);
 
   useEffect(() => {
@@ -35,7 +43,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!getToken()) return;
     api
       .get<User>("/auth/me")
-      .then(setUser)
+      .then((me) => {
+        setUser(me);
+        setPermissions(me.permissions ?? []);
+      })
       .catch(() => setToken(null))
       .finally(() => setLoading(false));
   }, []);
@@ -44,11 +55,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const { access_token } = await api.login(username, password);
     setToken(access_token);
     try {
-      setUser(await api.get<User>("/auth/me"));
+      const me = await api.get<User>("/auth/me");
+      setUser(me);
+      setPermissions(me.permissions ?? []);
+      sessionStorage.setItem("erp_welcome", "1"); // رسالة ترحيب للموظف بعد الدخول — Layout يعرضها مرة واحدة
     } catch (e) {
       setToken(null);
       throw e;
     }
+  }, []);
+
+  const refreshPermissions = useCallback(async () => {
+    const me = await api.get<User>("/auth/me");
+    setUser(me);
+    setPermissions(me.permissions ?? []);
   }, []);
 
   const setupAdmin = useCallback(
@@ -61,6 +81,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<AuthState>(() => {
     const role: Role | undefined = user?.role;
+    const can = (...codes: string[]) => {
+      if (permissions.includes("*")) return true;
+      return codes.some((c) => permissions.includes(c));
+    };
     return {
       user,
       loading,
@@ -70,8 +94,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isManager: role === "admin" || role === "manager",
       isAdmin: role === "admin",
       isPlatformAdmin: user?.is_platform_admin ?? false,
+      permissions,
+      can,
+      refreshPermissions,
     };
-  }, [user, loading, login, setupAdmin, logout]);
+  }, [user, loading, login, setupAdmin, logout, permissions, refreshPermissions]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

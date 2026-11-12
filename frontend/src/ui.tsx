@@ -1,13 +1,19 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { api } from "./api";
-import { STATUS_LABEL } from "./format";
+import { statusLabel } from "./format";
+import { useI18n } from "./i18n";
 import type { OrderStatus, Product } from "./types";
+
+function NoImage() {
+  const { t } = useI18n();
+  return <div className="product-thumb-empty" aria-label={t("common.noImage")}>📦</div>;
+}
 
 /** صورة مصغّرة للمنتج: مرفوعة (bytea عبر /products/{id}/image) أو رابط إنترنت — أو 📦 */
 export function ProductThumb({ product }: { product: Product }) {
   const [failed, setFailed] = useState(false);
   const src = product.image_uploaded ? `/api/products/${product.id}/image` : product.image_url || null;
-  if (!src || failed) return <div className="product-thumb-empty" aria-label="بدون صورة">📦</div>;
+  if (!src || failed) return <NoImage />;
   return (
     <img
       className="product-thumb"
@@ -38,7 +44,8 @@ export function Alert({ children, kind = "error" }: { children: ReactNode; kind?
 }
 
 export function Loading() {
-  return <div className="muted pad">جارٍ التحميل…</div>;
+  const { t } = useI18n();
+  return <div className="muted pad">{t("common.loading")}</div>;
 }
 
 export function Empty({ children }: { children: ReactNode }) {
@@ -46,26 +53,33 @@ export function Empty({ children }: { children: ReactNode }) {
 }
 
 export function StatusBadge({ status }: { status: OrderStatus }) {
-  return <span className={`badge badge-${status}`}>{STATUS_LABEL[status]}</span>;
+  const { lang } = useI18n();
+  return <span className={`badge badge-${status}`}>{statusLabel(status, lang)}</span>;
 }
 
 /** حالة التفعيل الموحدة في كل الشاشات: «نشط» / «موقوف». */
 export function ActiveBadge({ active }: { active: boolean }) {
+  const { t } = useI18n();
   return (
-    <span className={`badge ${active ? "badge-confirmed" : "badge-off"}`}>
-      <span className={`status-dot ${active ? "status-dot-active" : ""}`} style={active ? undefined : { background: "var(--muted)" }} />
-      {active ? "نشط" : "موقوف"}
+    <span className={`badge ${active ? "badge-active" : "badge-inactive"}`}>
+      <span className="status-dot" />
+      {active ? t("common.active") : t("common.suspended")}
     </span>
   );
 }
 
-const PAY_LABEL = { paid: "مسددة", partial: "سداد جزئي", unpaid: "غير مسددة" } as const;
+const PAY_LABEL = {
+  paid: { ar: "مسددة", en: "Paid" },
+  partial: { ar: "سداد جزئي", en: "Partially paid" },
+  unpaid: { ar: "غير مسددة", en: "Unpaid" },
+} as const;
 
 /** Settlement state of a committed invoice / purchase order (nothing for drafts and cancelled orders). */
 export function PaymentBadge({ status }: { status?: "paid" | "partial" | "unpaid" | null }) {
+  const { lang } = useI18n();
   if (!status) return <span className="muted">—</span>;
   const cls = status === "paid" ? "badge-confirmed" : status === "partial" ? "badge-draft" : "badge-off";
-  return <span className={`badge ${cls}`}>{PAY_LABEL[status]}</span>;
+  return <span className={`badge ${cls}`}>{PAY_LABEL[status][lang]}</span>;
 }
 
 export function Modal({
@@ -81,6 +95,7 @@ export function Modal({
   wide?: boolean;
   fullscreen?: boolean;
 }) {
+  const { t } = useI18n();
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", onKey);
@@ -92,7 +107,7 @@ export function Modal({
       <div className={`modal${wide ? " modal-wide" : ""}${fullscreen ? " modal-fullscreen" : ""}`} role="dialog" aria-modal="true" aria-label={title}>
         <div className="modal-head">
           <h2>{title}</h2>
-          <button className="icon-btn" onClick={onClose} aria-label="إغلاق">
+          <button className="icon-btn" onClick={onClose} aria-label={t("common.close")}>
             ✕
           </button>
         </div>
@@ -128,17 +143,18 @@ export function nameOf<T extends { id: number; name: string }>(list: T[] | null 
 
 /** Previous/next controls under a paginated table; hidden when everything fits on one page. */
 export function Pager({ list }: { list: { page: number; pages: number; total: number; setPage: (p: number) => void } }) {
+  const { lang } = useI18n();
   if (list.pages <= 1) return null;
   return (
     <div className="pager" style={{ display: "flex", gap: 10, alignItems: "center", justifyContent: "center", padding: 12 }}>
       <button className="btn btn-sm" disabled={list.page <= 1} onClick={() => list.setPage(list.page - 1)}>
-        السابق
+        {lang === "ar" ? "السابق" : "Previous"}
       </button>
       <span className="muted">
-        صفحة {list.page} من {list.pages} · {list.total} سجل
+        {lang === "ar" ? `صفحة ${list.page} من ${list.pages} · ${list.total} سجل` : `Page ${list.page} of ${list.pages} · ${list.total} records`}
       </span>
       <button className="btn btn-sm" disabled={list.page >= list.pages} onClick={() => list.setPage(list.page + 1)}>
-        التالي
+        {lang === "ar" ? "التالي" : "Next"}
       </button>
     </div>
   );
@@ -155,7 +171,7 @@ export function Lookup<T extends { id: number }>({
   onChange,
   label,
   text,
-  placeholder = "اكتب للبحث…",
+  placeholder,
   autoFocus,
 }: {
   path: string;
@@ -167,6 +183,8 @@ export function Lookup<T extends { id: number }>({
   placeholder?: string;
   autoFocus?: boolean;
 }) {
+  const { t } = useI18n();
+  const ph = placeholder ?? t("common.typeToSearch");
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<T[]>([]);
@@ -199,9 +217,9 @@ export function Lookup<T extends { id: number }>({
     <div className="lookup" style={{ position: "relative" }}>
       <input
         value={shown}
-        placeholder={placeholder}
+        placeholder={ph}
         autoFocus={autoFocus}
-        aria-label={placeholder}
+        aria-label={ph}
         role="combobox"
         aria-expanded={open}
         onFocus={() => setOpen(true)}
@@ -217,8 +235,8 @@ export function Lookup<T extends { id: number }>({
           role="listbox"
           style={{ position: "absolute", insetInline: 0, top: "100%", zIndex: 20, margin: 0, padding: 4, listStyle: "none", background: "var(--surface, #fff)", border: "1px solid var(--border, #d8dde6)", borderRadius: 8, maxHeight: 240, overflow: "auto", boxShadow: "0 8px 24px rgba(0,0,0,.15)" }}
         >
-          {busy && items.length === 0 && <li className="muted" style={{ padding: 8 }}>جارٍ البحث…</li>}
-          {!busy && items.length === 0 && <li className="muted" style={{ padding: 8 }}>لا نتائج</li>}
+          {busy && items.length === 0 && <li className="muted" style={{ padding: 8 }}>{t("common.searching")}</li>}
+          {!busy && items.length === 0 && <li className="muted" style={{ padding: 8 }}>{t("common.noResults")}</li>}
           {items.map((it) => (
             <li
               key={it.id}

@@ -16,6 +16,8 @@ export interface User {
   department_id?: number | null;
   department_name?: string | null;
   all_branches?: boolean;
+  permissions?: string[];
+  active_company_id?: number | null;
 }
 
 export interface Company {
@@ -27,6 +29,7 @@ export interface Company {
   max_branches: number | null;
   is_active: boolean;
   created_at: string;
+  license_until?: string | null;
 }
 
 export interface Department {
@@ -69,6 +72,10 @@ export interface Party {
   is_active: boolean;
   opening_balance: string;
   balance: string; // >0: owed (customer owes us / we owe supplier); <0: credit
+  credit_limit?: string | null;
+  tax_registration_number?: string | null;
+  price_list_id?: number | null;
+  price_list_name?: string | null;
 }
 
 export interface Product {
@@ -80,13 +87,14 @@ export interface Product {
   cost_price: string;
   sale_price: string;
   quantity: number; // total over all warehouses
-  warehouse_quantity?: number | null; // in one warehouse, when asked with stock_warehouse_id
   reorder_level: number;
   is_active: boolean;
   warehouse_id: number | null;
   supplier_id: number | null;
   image_url?: string | null; // صورة من رابط إنترنت
   image_uploaded?: boolean; // صورة مرفوعة من الجهاز تُستخدم عبر /products/{id}/image
+  warehouse_quantity?: number; // in one warehouse, when asked with stock_warehouse_id
+  warehouse_min_level?: number | null;
 }
 
 export interface StockMovement {
@@ -132,6 +140,10 @@ export interface Order {
   total_amount: string;
   created_at: string;
   items: OrderItem[];
+  currency_id?: number | null;
+  currency_code?: string | null;
+  exchange_rate?: string | null;
+  foreign_total?: string | null;
 }
 
 export interface LowStockItem {
@@ -203,6 +215,10 @@ export interface PurchasesSummary {
 
 export interface Dashboard {
   period_days: number;
+  lots_expiring_soon?: number;
+  cheques_due_soon?: number;
+  recurring_journals_due?: number;
+  pending_journal_approvals?: number;
   products: number;
   low_stock_products: number;
   warehouses: number;
@@ -280,6 +296,9 @@ export interface StockTransfer {
 }
 
 export interface JournalEntry {
+  status?: string;
+  approved_by?: number | null;
+  approved_at?: string | null;
   id: number;
   date: string | null;
   description: string;
@@ -437,6 +456,9 @@ export interface ProductionOrder {
   batches: ProductionBatch[];
   children: ProductionChildOrder[];
   created_at: string;
+  std_unit_cost?: number | null;
+  estimated_minutes?: number | null;
+  materials_available?: boolean | null;
 }
 
 export interface ProductionLine {
@@ -474,6 +496,8 @@ export interface ManufacturingReportLine {
   total: string;
   unit_cost: string;
   variance: string;
+  std_unit_cost?: number | null;
+  variance_std?: number | null;
 }
 
 export interface ManufacturingByProduct {
@@ -495,6 +519,7 @@ export interface ManufacturingReportOut {
   total: string;
   total_variance: string;
   by_product: ManufacturingByProduct[];
+  total_variance_std?: number | null;
 }
 
 export interface ReconcileLine {
@@ -512,11 +537,17 @@ export interface ReconcileOut {
   total_stored: string;
   total_ledger: string;
   total_drift: string;
+  changed: number;
+  journal_entry_id?: number | null;
 }
 
 export interface Payment {
   id: number;
   kind: "receipt" | "payment";
+  currency_id?: number | null;
+  currency_code?: string | null;
+  exchange_rate?: string | null;
+  foreign_amount?: string | null;
   customer_id: number | null;
   supplier_id: number | null;
   category_id?: number | null; // بند القبض / الصرف
@@ -698,4 +729,589 @@ export interface SalesRep {
   commission_percent: string;
   is_active: boolean;
   created_at: string;
+}
+
+
+// ---------- Accounting upgrades 2026-11 (recurring / bank rec / fiscal periods) ----------
+export interface RecurringJournal {
+  id: number;
+  name: string;
+  description: string;
+  reference: string | null;
+  frequency: string;
+  day_of_month: number;
+  next_run_date: string;
+  is_active: boolean;
+  items: { account_id: number; debit: string; credit: string; cost_center_id: number | null; notes: string | null }[];
+  last_run_entry_id: number | null;
+}
+
+export interface BankStatementLine {
+  id: number;
+  bank_id: number;
+  value_date: string;
+  description: string;
+  amount: string;
+  reference: string | null;
+  matched_payment_id: number | null;
+  matched_payment_reference?: string | null;
+}
+
+export interface BankRecSummary {
+  bank_id: number;
+  statement_balance: string;
+  ledger_balance: string;
+  matched_total: string;
+  unmatched_count: number;
+  difference: string;
+}
+
+export interface FiscalPeriod {
+  id: number;
+  fiscal_year_id: number;
+  name: string;
+  start_date: string;
+  end_date: string;
+  is_closed: boolean;
+}
+
+// ===== مولّد آليًا من schemas.py + qc.py (v4: Decimal=string) =====
+export interface HrJobTitle extends ORMModel {
+  company_id: number;
+  name: string;
+  description?: string | null;
+  min_salary?: string | null;
+  max_salary?: string | null;
+  is_active: boolean;
+  created_at: string;
+}
+export interface HrGrade extends ORMModel {
+  company_id: number;
+  name: string;
+  min_salary?: string | null;
+  max_salary?: string | null;
+  is_active: boolean;
+  created_at: string;
+}
+export interface HrEmployee extends ORMModel {
+  company_id: number;
+  code: string;
+  full_name: string;
+  national_id?: string | null;
+  insurance_number?: string | null;
+  gender?: string | null;
+  birth_date?: string | null;
+  nationality?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  address?: string | null;
+  department_id?: number | null;
+  department_name?: string | null;
+  job_title_id?: number | null;
+  job_title_name?: string | null;
+  grade_id?: number | null;
+  branch_id?: number | null;
+  branch_name?: string | null;
+  manager_id?: number | null;
+  manager_name?: string | null;
+  user_id?: number | null;
+  hire_date: string;
+  basic_salary?: string | null;
+  bank_account?: string | null;
+  status: string;
+  terminated_at?: string | null;
+  termination_reason?: string | null;
+  notes?: string | null;
+  is_active: boolean;
+  contracts_count: number;
+  created_at: string;
+}
+export interface HrEmployeeDetail extends HrEmployee {
+  contracts: HrContract[];
+  documents: HrDocument[];
+  moves: HrEmployeeMove[];
+}
+export interface HrContract extends ORMModel {
+  company_id: number;
+  employee_id: number;
+  code: string;
+  kind: string;
+  start_date: string;
+  end_date?: string | null;
+  basic_salary?: string | null;
+  status: string;
+  notes?: string | null;
+  created_at: string;
+}
+export interface HrDocument extends ORMModel {
+  company_id: number;
+  employee_id: number;
+  doc_type: string;
+  title: string;
+  issue_date?: string | null;
+  expiry_date: string | null;
+  has_file: boolean;
+  file_name?: string | null;
+  notes?: string | null;
+  created_at: string;
+}
+export interface HrEmployeeMove extends ORMModel {
+  company_id: number;
+  employee_id: number;
+  move_type: string;
+  effective_date: string;
+  to_department_id?: number | null;
+  to_department_name?: string | null;
+  to_job_title_id?: number | null;
+  to_job_title_name?: string | null;
+  from_salary?: string | null;
+  to_salary?: string | null;
+  reason?: string | null;
+  created_at: string;
+}
+export interface HrShift extends ORMModel {
+  company_id: number;
+  name: string;
+  start_time: string;
+  end_time: string;
+  grace_minutes: number;
+  cross_midnight: boolean;
+  is_active: boolean;
+  created_at: string;
+}
+export interface HrShiftAssignment extends ORMModel {
+  company_id: number;
+  employee_id: number;
+  employee_name?: string | null;
+  shift_id: number;
+  shift_name?: string | null;
+  created_at: string;
+}
+export interface HrAttendance extends ORMModel {
+  company_id: number;
+  employee_id: number;
+  employee_name?: string | null;
+  employee_code?: string | null;
+  work_date: string;
+  status: string;
+  check_in?: string | null;
+  check_out?: string | null;
+  late_minutes: number;
+  overtime_minutes: number;
+  source: string;
+  notes?: string | null;
+  created_at: string;
+}
+export interface HrHoliday extends ORMModel {
+  company_id: number;
+  name: string;
+  holiday_date: string;
+  notes?: string | null;
+  created_at: string;
+}
+export interface HrLeaveType extends ORMModel {
+  company_id: number;
+  name: string;
+  days_per_year: string;
+  is_paid: boolean;
+  carry_over_days: string;
+  is_active: boolean;
+  created_at: string;
+}
+export interface HrLeaveRequest extends ORMModel {
+  approval_level: number;
+  company_id: number;
+  employee_id: number;
+  employee_name?: string | null;
+  employee_code?: string | null;
+  leave_type_id: number;
+  leave_type_name?: string | null;
+  from_date: string;
+  to_date: string;
+  days: string;
+  status: string;
+  reason?: string | null;
+  decision_note?: string | null;
+  decided_at?: string | null;
+  created_at: string;
+}
+export interface HrLeaveBalance extends ORMModel {
+  company_id: number;
+  employee_id: number;
+  employee_name?: string | null;
+  employee_code?: string | null;
+  leave_type_id: number;
+  leave_type_name?: string | null;
+  year: number;
+  entitled_days: string;
+  carried_days: string;
+  used_days: string;
+  remaining_days: string;
+}
+export interface HrSalaryComponent extends ORMModel {
+  company_id: number;
+  employee_id: number;
+  employee_name?: string | null;
+  category: string;
+  name: string;
+  amount_mode: string;
+  fixed_amount?: string | null;
+  percent_value?: string | null;
+  is_active: boolean;
+  notes?: string | null;
+  created_at: string;
+}
+export interface HrPayrollRun extends ORMModel {
+  company_id: number;
+  year: number;
+  month: number;
+  status: string;
+  note?: string | null;
+  employees_count: number;
+  total_gross: string;
+  total_deductions: string;
+  total_net: string;
+  journal_entry_id?: number | null;
+  posted_at?: string | null;
+  created_at: string;
+}
+export interface HrPayslipLine extends ORMModel {
+  company_id: number;
+  payslip_id: number;
+  category: string;
+  name: string;
+  amount: string;
+  notes?: string | null;
+}
+export interface HrPayslip extends ORMModel {
+  company_id: number;
+  run_id: number;
+  employee_id: number;
+  employee_name?: string | null;
+  employee_code?: string | null;
+  base_salary: string;
+  absent_days: number;
+  unpaid_leave_days: string;
+  absence_deduction: string;
+  total_earnings: string;
+  total_deductions: string;
+  net_pay: string;
+  notes?: string | null;
+}
+export interface HrAdvance extends ORMModel {
+  company_id: number;
+  employee_id: number;
+  employee_name?: string | null;
+  employee_code?: string | null;
+  amount: string;
+  installments_count: number;
+  start_year: number;
+  start_month: number;
+  status: string;
+  notes?: string | null;
+  created_at: string;
+}
+export interface HrSettlement extends ORMModel {
+  company_id: number;
+  employee_id: number;
+  employee_name?: string | null;
+  employee_code?: string | null;
+  termination_date: string;
+  service_days: number;
+  service_years: string;
+  eosb_days: string;
+  eosb_amount: string;
+  unused_leave_days: string;
+  unused_leave_amount: string;
+  advances_remaining: string;
+  total_due: string;
+  note?: string | null;
+  created_at: string;
+}
+export interface HrAttendanceCorrection extends ORMModel {
+  company_id: number;
+  employee_id: number;
+  employee_name?: string | null;
+  employee_code?: string | null;
+  work_date: string;
+  requested_check_in?: string | null;
+  requested_check_out?: string | null;
+  reason: string;
+  status: string;
+  decision_note?: string | null;
+  applied_attendance_id?: number | null;
+  decided_at?: string | null;
+  created_at: string;
+}
+export interface HrMePayslip extends ORMModel {
+  run_id: number;
+  year: number;
+  month: number;
+  run_status: string;
+  base_salary: string;
+  total_earnings: string;
+  total_deductions: string;
+  net_pay: string;
+}
+export interface HrJobPosting extends ORMModel {
+  company_id: number;
+  code: string;
+  title: string;
+  department_name?: string | null;
+  branch_name?: string | null;
+  openings: number;
+  employment_type: string;
+  description?: string | null;
+  status: string;
+  hired_count: number;
+  closed_at?: string | null;
+  created_at: string;
+}
+export interface HrApplicant extends ORMModel {
+  company_id: number;
+  posting_id: number;
+  posting_title?: string | null;
+  posting_code?: string | null;
+  full_name: string;
+  email: string;
+  phone?: string | null;
+  source?: string | null;
+  resume_text?: string | null;
+  stage: string;
+  rating?: number | null;
+  note?: string | null;
+  hired_employee_id?: number | null;
+  decided_at?: string | null;
+  created_at: string;
+}
+export interface HrReviewCycle extends ORMModel {
+  company_id: number;
+  name: string;
+  period_start: string;
+  period_end: string;
+  status: string;
+  closed_at?: string | null;
+  created_at: string;
+}
+export interface HrReview extends ORMModel {
+  company_id: number;
+  cycle_id: number;
+  employee_id: number;
+  employee_name?: string | null;
+  employee_code?: string | null;
+  quality: number;
+  commitment: number;
+  teamwork: number;
+  initiative: number;
+  score: string;
+  comment?: string | null;
+  reviewed_by?: number | null;
+  reviewed_at: string;
+}
+export interface HrTraining extends ORMModel {
+  company_id: number;
+  code: string;
+  title: string;
+  provider?: string | null;
+  location?: string | null;
+  from_date: string;
+  to_date: string;
+  cost: string;
+  notes?: string | null;
+  enrollments_count: number;
+  created_at: string;
+}
+export interface HrEnrollment extends ORMModel {
+  company_id: number;
+  training_id: number;
+  training_title?: string | null;
+  employee_id: number;
+  employee_name?: string | null;
+  employee_code?: string | null;
+  status: string;
+  completed_at?: string | null;
+  certificate_note?: string | null;
+  created_at: string;
+}
+export interface HrAnalytics {
+  attendance: any;
+  leaves: any;
+  turnover: any;
+  payroll: any;
+  recruiting: any;
+  talent: any;
+}
+export interface WorkCenterPerf {
+  date_from?: string | null;
+  date_to?: string | null;
+  rows: WorkCenterPerfRow[];
+}
+export interface MaterialsAvailability {
+  order_id: number;
+  code: string;
+  warehouse_name?: string | null;
+  lines: MaterialsAvailabilityItem[];
+  all_available: boolean;
+  missing_count: number;
+}
+export interface QcTemplate {
+  id: number;
+  name: string;
+  description?: string | null;
+  is_active: boolean;
+  parameters: QcParameter[];
+}
+export interface QcParameter {
+  id: number;
+  name: string;
+  unit?: string | null;
+  param_type: string;
+  min_value?: number | null;
+  max_value?: number | null;
+}
+
+// ===== إضافات يدوية (استرجاع) =====
+export type ORMModel = { id: number };
+export type EmployeeStatus = string;
+export type ApplicantStage = string;
+
+export interface StockLot extends ORMModel {
+  company_id: number;
+  product_id: number;
+  warehouse_id: number;
+  lot_code: string;
+  source: string;
+  reference: string | null;
+  qty_received: number;
+  qty_remaining: number;
+  expiry_date?: string | null;
+  product_name?: string | null;
+  warehouse_name?: string | null;
+  created_at: string;
+}
+
+export interface AccessSection extends ORMModel {
+  code: string;
+  name: string;
+  description?: string | null;
+  is_active?: boolean;
+  is_system?: boolean;
+  permission_codes: string[];
+  permissions?: string[];
+}
+
+export interface CatalogPermission { code: string; action: string; label: string; is_dangerous?: boolean; is_field?: boolean }
+export interface CatalogResource { resource: string; label: string; permissions: CatalogPermission[] }
+export interface CatalogModule { module: string; label: string; resources: CatalogResource[] }
+
+
+export interface QcMeasurementsOut {
+  batch_id: number;
+  overall_pass?: boolean | null;
+  results: { parameter_id: number; parameter_name: string; unit?: string | null; value_num?: number | null; value_text?: string | null; pass_fail?: boolean | null }[];
+}
+
+export interface MaterialsAvailabilityItem {
+  component_id: number;
+  component_name?: string | null;
+  component_unit?: string | null;
+  required: string;
+  available: string;
+  unit_cost: string;
+  enough: boolean;
+  staged?: boolean;
+}
+export interface MaterialsAvailability {
+  ok: boolean;
+  shortages: MaterialsAvailabilityItem[];
+}
+
+export interface WorkCenterPerfOut {
+  rows: WorkCenterPerfRow[];
+  total_planned_minutes: number;
+  total_actual_minutes: number;
+}
+
+export interface WorkCenterPerfRow {
+  work_center_id: number;
+  name: string;
+  orders_count: number;
+  qty_done: number;
+  qty_scrapped: number;
+  actual_minutes: number;
+  planned_minutes: number;
+  utilization: number;
+}
+
+export type HrSummary = Record<string, number>;
+
+export interface HrMeProfile extends HrEmployee {
+  username?: string;
+  role?: string;
+}
+
+export interface PermissionOverride { code: string; effect: string; reason?: string | null; label?: string | null }
+export interface UserPermissionDetail {
+  user_id: number;
+  company_id: number;
+  section_id?: number | null;
+  section_name?: string | null;
+  section_ids: number[];
+  section_names: string[];
+  role: string;
+  inherited: { code: string; label: string; source: string }[];
+  overrides: PermissionOverride[];
+  effective: string[];
+}
+
+
+export interface EtaSubmission {
+  id: number;
+  order_id: number;
+  document_type: string;
+  internal_id: string;
+  submission_uuid: string | null;
+  eta_uuid: string | null;
+  eta_long_id: string | null;
+  status: string;
+  errors?: unknown;
+  submitted_at: string | null;
+  status_checked_at: string | null;
+}
+
+
+export interface Currency {
+  id: number;
+  code: string;
+  name: string;
+  rate: string;
+  is_active: boolean;
+  updated_at: string | null;
+}
+
+
+export interface EtaQueueRow {
+  order_id: number;
+  internal_id: string;
+  party_name: string;
+  total_amount: string;
+  foreign_total?: string | null;
+  currency_code?: string | null;
+  created_at: string | null;
+  status?: string;
+  eta_long_id?: string | null;
+  errors?: unknown;
+}
+
+export interface EtaIncoming {
+  id: number;
+  eta_uuid: string;
+  issuer_tin: string | null;
+  issuer_name: string;
+  internal_id: string | null;
+  total_amount: string;
+  status: string;
+  purchase_order_id: number | null;
+  lines: { description: string; internalCode?: string; quantity: number; unitPrice?: number; salesTotal?: number }[];
+  received_at: string | null;
 }

@@ -58,7 +58,7 @@ function NewTransfer({ onClose, onDone }: { onClose: () => void; onDone: (t: Sto
   };
 
   return (
-    <Modal title="تحويل بين المخازن" onClose={onClose} wide>
+    <Modal title={t("تحويل بين المخازن")} onClose={onClose} wide>
       <form onSubmit={submit}>
         <Alert>{act.error || warehouses.error}</Alert>
         <div className="grid-2">
@@ -72,9 +72,9 @@ function NewTransfer({ onClose, onDone }: { onClose: () => void; onDone: (t: Sto
               ))}
             </select>
           </Field>
-          <Field label="إلى مخزن">
-            <select value={to} onChange={(e) => setTo(e.target.value)} aria-label="إلى مخزن" required>
-              <option value="">— اختر —</option>
+          <Field label={t("إلى مخزن")}>
+            <select value={to} onChange={(e) => setTo(e.target.value)} aria-label={t("إلى مخزن")} required>
+              <option value="">{t("— اختر —")}</option>
               {warehouses.data
                 ?.filter((w) => String(w.id) !== from)
                 .map((w) => (
@@ -86,16 +86,16 @@ function NewTransfer({ onClose, onDone }: { onClose: () => void; onDone: (t: Sto
           </Field>
         </div>
         {from && (
-          <Field label="إضافة صنف" hint="تظهر الكمية المتاحة في المخزن المصدر.">
+          <Field label={t("إضافة صنف")} hint={t("تظهر الكمية المتاحة في المخزن المصدر.")}>
             <Lookup<Product>
               key={`${from}-${lines.length}`}
               path="/products"
               params={{ is_active: true, stock_warehouse_id: Number(from) }}
               value={picked}
               onChange={addPicked}
-              label={(p) => `${p.name} (${p.sku}) — متاح ${num(p.warehouse_quantity ?? 0)}`}
+              label={(p) => `${p.name} (${p.sku}) — ${t("متاح ")}${num(p.warehouse_quantity ?? 0)}`}
               text={(p) => p.name}
-              placeholder="ابحث عن صنف…"
+              placeholder={t("ابحث عن صنف…")}
             />
           </Field>
         )}
@@ -104,9 +104,9 @@ function NewTransfer({ onClose, onDone }: { onClose: () => void; onDone: (t: Sto
             <table>
               <thead>
                 <tr>
-                  <th>الصنف</th>
-                  <th className="num">المتاح</th>
-                  <th className="num">الكمية</th>
+                  <th>{t("الصنف")}</th>
+                  <th className="num">{t("المتاح")}</th>
+                  <th className="num">{t("الكمية")}</th>
                   <th />
                 </tr>
               </thead>
@@ -127,10 +127,10 @@ function NewTransfer({ onClose, onDone }: { onClose: () => void; onDone: (t: Sto
                         step="1"
                         style={{ width: 90 }}
                         value={l.quantity}
-                        aria-label={`كمية ${l.product.name}`}
+                        aria-label={`${t("كمية ")}${l.product.name}`}
                         onChange={(e) => setLines((ls) => ls.map((x) => (x.product.id === l.product.id ? { ...x, quantity: e.target.value } : x)))}
                       />
-                      {Number(l.quantity) > have(l.product) && <div className="muted">المتاح {num(have(l.product))} فقط</div>}
+                      {Number(l.quantity) > have(l.product) && <div className="muted">{t("المتاح ")}{num(have(l.product))}{t(" فقط")}</div>}
                     </td>
                     <td>
                       <button type="button" className="btn btn-sm" onClick={() => setLines((ls) => ls.filter((x) => x.product.id !== l.product.id))}>
@@ -143,18 +143,18 @@ function NewTransfer({ onClose, onDone }: { onClose: () => void; onDone: (t: Sto
             </table>
           </div>
         )}
-        <Field label="ملاحظات">
+        <Field label={t("ملاحظات")}>
           <input value={notes} onChange={(e) => setNotes(e.target.value)} />
         </Field>
-        <Field label="تقييم التحويل">
-          <select value={valuation} onChange={(e) => setValuation(e.target.value as "cost" | "sale")} aria-label="تقييم التحويل">
-            <option value="cost">سعر التكلفة</option>
-            <option value="sale">سعر البيع</option>
+        <Field label={t("تقييم التحويل")}>
+          <select value={valuation} onChange={(e) => setValuation(e.target.value as "cost" | "sale")} aria-label={t("تقييم التحويل")}>
+            <option value="cost">{t("سعر التكلفة")}</option>
+            <option value="sale">{t("سعر البيع")}</option>
           </select>
         </Field>
         <div className="actions">
           <button className="btn btn-primary" disabled={!valid || act.busy}>
-            تنفيذ التحويل
+            {t("تنفيذ التحويل")}
           </button>
           <button type="button" className="btn" onClick={onClose}>
             إلغاء
@@ -165,13 +165,14 @@ function NewTransfer({ onClose, onDone }: { onClose: () => void; onDone: (t: Sto
   );
 }
 
-function EditTransfer({ t, onClose, onDone }: { t: StockTransfer; onClose: () => void; onDone: () => void }) {
+function EditTransfer({ t: trf, onClose, onDone }: { t: StockTransfer; onClose: () => void; onDone: () => void }) {
+  const { t } = useI18n();
   const warehouses = useFetch(() => api.get<Warehouse[]>("warehouses?is_active=true&limit=500"), "edit-tr-wh");
   const products = useFetch(() => api.get<Product[]>("products?limit=1000&is_active=true"), "edit-tr-prod");
-  const [from, setFrom] = useState(String(t.from_warehouse_id));
-  const [to, setTo] = useState(String(t.to_warehouse_id));
-  const [notes, setNotes] = useState(t.notes ?? "");
-  const [valuation, setValuation] = useState(t.valuation ?? "cost");
+  const [from, setFrom] = useState(String(trf.from_warehouse_id));
+  const [to, setTo] = useState(String(trf.to_warehouse_id));
+  const [notes, setNotes] = useState(trf.notes ?? "");
+  const [valuation, setValuation] = useState(trf.valuation ?? "cost");
   const [lines, setLines] = useState<Line[]>([]);
   const [picked, setPicked] = useState<Product | null>(null);
   const act = useAction();
@@ -181,7 +182,7 @@ function EditTransfer({ t, onClose, onDone }: { t: StockTransfer; onClose: () =>
   if (products.data && !initialized.current) {
     const byId = new Map(products.data.map((p) => [p.id, p]));
     const init: Line[] = [];
-    for (const it of t.items) {
+    for (const it of trf.items) {
       const p = byId.get(it.product_id);
       if (p) init.push({ product: p, quantity: String(it.quantity) });
     }
@@ -203,7 +204,7 @@ function EditTransfer({ t, onClose, onDone }: { t: StockTransfer; onClose: () =>
   const submit = (e: FormEvent) => {
     e.preventDefault();
     void act.run(async () => {
-      await api.put(`/stock-transfers/${t.id}/edit`, {
+      await api.put(`/stock-transfers/${trf.id}/edit`, {
         from_warehouse_id: Number(from),
         to_warehouse_id: Number(to),
         notes: notes || null,
@@ -215,41 +216,41 @@ function EditTransfer({ t, onClose, onDone }: { t: StockTransfer; onClose: () =>
   };
 
   return (
-    <Modal title={`edit تحويل TR-${t.id}`} onClose={onClose} wide>
+    <Modal title={`edit ${t("تحويل ")}TR-${trf.id}`} onClose={onClose} wide>
       <form onSubmit={submit}>
         <Alert>{act.error || warehouses.error || products.error}</Alert>
         {products.loading && !products.data ? <Loading /> : (
           <>
             <div className="grid-2">
-              <Field label="من مخزن">
+              <Field label={t("من مخزن")}>
                 <select value={from} onChange={(e) => changeFrom(e.target.value)} required>
-                  <option value="">— اختر —</option>
+                  <option value="">{t("— اختر —")}</option>
                   {warehouses.data?.map((w) => (<option key={w.id} value={w.id}>{w.name}</option>))}
                 </select>
               </Field>
-              <Field label="إلى مخزن">
+              <Field label={t("إلى مخزن")}>
                 <select value={to} onChange={(e) => setTo(e.target.value)} required>
-                  <option value="">— اختر —</option>
+                  <option value="">{t("— اختر —")}</option>
                   {warehouses.data?.filter((w) => String(w.id) !== from).map((w) => (<option key={w.id} value={w.id}>{w.name}</option>))}
                 </select>
               </Field>
             </div>
-            <Field label="إضافة صنف">
+            <Field label={t("إضافة صنف")}>
               <Lookup<Product>
                 key={`${from}-${lines.length}`}
                 path="/products"
                 params={{ is_active: true, ...(from ? { stock_warehouse_id: Number(from) } : {}) }}
                 value={picked}
                 onChange={addPicked}
-                label={(p) => `${p.name} (${p.sku}) — متاح ${num(p.warehouse_quantity ?? 0)}`}
+                label={(p) => `${p.name} (${p.sku}) — ${t("متاح ")}${num(p.warehouse_quantity ?? 0)}`}
                 text={(p) => p.name}
-                placeholder="ابحث عن صنف…"
+                placeholder={t("ابحث عن صنف…")}
               />
             </Field>
             {lines.length > 0 && (
               <div className="table-wrap">
                 <table>
-                  <thead><tr><th>الصنف</th><th className="num">الكمية</th><th /></tr></thead>
+                  <thead><tr><th>{t("الصنف")}</th><th className="num">{t("الكمية")}</th><th /></tr></thead>
                   <tbody>
                     {lines.map((l) => (
                       <tr key={l.product.id}>
@@ -267,15 +268,15 @@ function EditTransfer({ t, onClose, onDone }: { t: StockTransfer; onClose: () =>
                 </table>
               </div>
             )}
-            <Field label="ملاحظات"><input value={notes} onChange={(e) => setNotes(e.target.value)} /></Field>
-            <Field label="تقييم التحويل">
+            <Field label={t("ملاحظات")}><input value={notes} onChange={(e) => setNotes(e.target.value)} /></Field>
+            <Field label={t("تقييم التحويل")}>
               <select value={valuation} onChange={(e) => setValuation(e.target.value as "cost" | "sale")}>
-                <option value="cost">سعر التكلفة</option>
-                <option value="sale">سعر البيع</option>
+                <option value="cost">{t("سعر التكلفة")}</option>
+                <option value="sale">{t("سعر البيع")}</option>
               </select>
             </Field>
             <div className="actions">
-              <button className="btn btn-primary" disabled={!valid || act.busy}>حفظ الeditات</button>
+              <button className="btn btn-primary" disabled={!valid || act.busy}>{t("حفظ الeditات")}</button>
               <button type="button" className="btn" onClick={onClose}>إلغاء</button>
             </div>
           </>
@@ -284,27 +285,28 @@ function EditTransfer({ t, onClose, onDone }: { t: StockTransfer; onClose: () =>
     </Modal>
   );
 }
-function ViewTransfer({ t, onClose, onApprove, onReject, onEdit }: { t: StockTransfer; onClose: () => void; onApprove?: (t: StockTransfer) => void; onReject?: (t: StockTransfer) => void; onEdit?: (t: StockTransfer) => void }) {
+function ViewTransfer({ t: trf, onClose, onApprove, onReject, onEdit }: { t: StockTransfer; onClose: () => void; onApprove?: (t: StockTransfer) => void; onReject?: (t: StockTransfer) => void; onEdit?: (t: StockTransfer) => void }) {
+  const { t } = useI18n();
   const dl = useAction();
 
   return (
-    <Modal title={`تحويل TR-${t.id}`} onClose={onClose} wide>
+    <Modal title={`${t("تحويل ")}TR-${trf.id}`} onClose={onClose} wide>
       <Alert>{dl.error}</Alert>
       <p>
-        من <b>{t.from_warehouse_name}</b> إلى <b>{t.to_warehouse_name}</b> · {dateTime(t.created_at)} · {t.username ?? "—"}
+        {t("من ")}<b>{trf.from_warehouse_name}</b>{t(" إلى ")}<b>{trf.to_warehouse_name}</b> · {dateTime(trf.created_at)} · {trf.username ?? "—"}
       </p>
-      <p className="muted">تقييم التحويل: {t.valuation === "sale" ? "سعر البيع" : "سعر التكلفة"}</p>
+      <p className="muted">{t("تقييم التحويل: ")}{trf.valuation === "sale" ? t("سعر البيع") : t("سعر التكلفة")}</p>
       <div className="table-wrap">
         <table>
           <thead>
             <tr>
-              <th>الكود</th>
-              <th>الصنف</th>
-              <th className="num">الكمية</th>
+              <th>{t("الكود")}</th>
+              <th>{t("الصنف")}</th>
+              <th className="num">{t("الكمية")}</th>
             </tr>
           </thead>
           <tbody>
-            {t.items.map((i) => (
+            {trf.items.map((i) => (
               <tr key={i.product_id}>
                 <td dir="ltr">{i.sku}</td>
                 <td>{i.product_name}</td>
@@ -314,29 +316,29 @@ function ViewTransfer({ t, onClose, onApprove, onReject, onEdit }: { t: StockTra
           </tbody>
         </table>
       </div>
-      {t.notes && <p className="muted">ملاحظات: {t.notes}</p>}
-      {t.rejection_reason && <p className="muted" style={{ color: "var(--danger)" }}>سبب الرفض: {t.rejection_reason}</p>}
+      {trf.notes && <p className="muted">{t("ملاحظات: ")}{trf.notes}</p>}
+      {trf.rejection_reason && <p className="muted" style={{ color: "var(--danger)" }}>{t("سبب الرفض: ")}{trf.rejection_reason}</p>}
       <div className="actions">
-        {t.status === "pending" && onApprove && (
-          <button className="btn btn-primary" onClick={() => onApprove(t)}>
-            اعتماد
+        {trf.status === "pending" && onApprove && (
+          <button className="btn btn-primary" onClick={() => onApprove(trf)}>
+            {t("اعتماد")}
           </button>
         )}
-        {t.status === "pending" && onReject && (
-          <button className="btn btn-danger" onClick={() => onReject(t)}>
-            رفض
+        {trf.status === "pending" && onReject && (
+          <button className="btn btn-danger" onClick={() => onReject(trf)}>
+            {t("رفض")}
           </button>
         )}
-        {t.status === "approved" && onEdit && (
-          <button className="btn btn-primary" onClick={() => onEdit(t)}>
+        {trf.status === "approved" && onEdit && (
+          <button className="btn btn-primary" onClick={() => onEdit(trf)}>
             edit
           </button>
         )}
-        <button className="btn" disabled={dl.busy} onClick={() => void dl.run(() => api.download(`/stock-transfers/${t.id}/pdf`, `transfer-TR-${t.id}.pdf`))}>
-          ⬇ سند التحويل PDF
+        <button className="btn" disabled={dl.busy} onClick={() => void dl.run(() => api.download(`/stock-transfers/${trf.id}/pdf`, `transfer-TR-${trf.id}.pdf`))}>
+          {t("⬇ سند التحويل PDF")}
         </button>
-        <button className="btn" disabled={dl.busy} onClick={() => void dl.run(() => api.printPdf(`/stock-transfers/${t.id}/pdf`))}>
-          🖨 طباعة
+        <button className="btn" disabled={dl.busy} onClick={() => void dl.run(() => api.printPdf(`/stock-transfers/${trf.id}/pdf`))}>
+          {t("🖨 طباعة")}
         </button>
       </div>
     </Modal>
@@ -366,7 +368,7 @@ export default function Transfers() {
     });
   };
   const reject = (trf: StockTransfer) => {
-    const reason = prompt(t("transfers.rejectionReason") + " (اختياري):") ?? undefined;
+    const reason = prompt(t("transfers.rejectionReason") + t(" (اختياري):")) ?? undefined;
     void act.run(async () => {
       await api.post(`/stock-transfers/${trf.id}/reject${reason ? `?reason=${encodeURIComponent(reason)}` : ""}`);
       list.reload();
@@ -452,36 +454,36 @@ export default function Transfers() {
               </tr>
             </thead>
             <tbody>
-              {list.data.map((t) => (
-                <tr key={t.id}>
-                  <td>TR-{t.id}</td>
-                  <td>{dateTime(t.created_at)}</td>
-                  <td>{t.from_warehouse_name}</td>
-                  <td>{t.to_warehouse_name}</td>
-                  <td className="num">{num(t.items.length)}</td>
-                  <td>{statusBadge(t.status)}</td>
-                  <td dir="ltr">{t.username ?? "—"}</td>
+              {list.data.map((trf) => (
+                <tr key={trf.id}>
+                  <td>TR-{trf.id}</td>
+                  <td>{dateTime(trf.created_at)}</td>
+                  <td>{trf.from_warehouse_name}</td>
+                  <td>{trf.to_warehouse_name}</td>
+                  <td className="num">{num(trf.items.length)}</td>
+                  <td>{statusBadge(trf.status)}</td>
+                  <td dir="ltr">{trf.username ?? "—"}</td>
                   <td className="actions">
-                    <button className="btn btn-sm" onClick={() => setView(t)}>
+                    <button className="btn btn-sm" onClick={() => setView(trf)}>
                       review
                     </button>
-                    {((t.status === "pending" && (isManager || t.username === user?.username)) || (t.status !== "pending" && isManager)) && (
-                      <button className="btn btn-sm btn-danger" disabled={act.busy} onClick={() => remove(t)}>
+                    {((trf.status === "pending" && (isManager || trf.username === user?.username)) || (trf.status !== "pending" && isManager)) && (
+                      <button className="btn btn-sm btn-danger" disabled={act.busy} onClick={() => remove(trf)}>
                         delete
                       </button>
                     )}
-                    {isManager && t.status === "pending" && (
+                    {isManager && trf.status === "pending" && (
                       <>
-                        <button className="btn btn-sm btn-primary" disabled={act.busy} onClick={() => approve(t)}>
-                          اعتماد
+                        <button className="btn btn-sm btn-primary" disabled={act.busy} onClick={() => approve(trf)}>
+                          {t("اعتماد")}
                         </button>
-                        <button className="btn btn-sm btn-danger" disabled={act.busy} onClick={() => reject(t)}>
-                          رفض
+                        <button className="btn btn-sm btn-danger" disabled={act.busy} onClick={() => reject(trf)}>
+                          {t("رفض")}
                         </button>
                       </>
                     )}
-                    {t.status === "pending" && (t.username === null || true) && (
-                      <button className="btn btn-sm" disabled={act.busy} onClick={() => remove(t)}>
+                    {trf.status === "pending" && (trf.username === null || true) && (
+                      <button className="btn btn-sm" disabled={act.busy} onClick={() => remove(trf)}>
                         delete
                       </button>
                     )}

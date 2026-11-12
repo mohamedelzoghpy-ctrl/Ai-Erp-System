@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { api } from "../api";
 import { useAuth } from "../auth";
 import { useI18n } from "../i18n";
-import { dateTime, METHOD_LABEL, money, num } from "../format";
+import { dateTime, METHOD_LABEL, methodLabel, money, num } from "../format";
 import { useAction, useFetch, usePagedList } from "../hooks";
 import type { Order, Party, PaymentMethod, Product, SalesRep, Warehouse } from "../types";
 import { Alert, Empty, Field, Loading, Lookup, Modal, PageHeader, Pager, PaymentBadge } from "../ui";
@@ -37,7 +37,7 @@ function remembered(): string {
 }
 
 export default function Pos() {
-  const { isManager } = useAuth();
+  const { isManager, can } = useAuth();
   const { t } = useI18n();
   const warehouses = useFetch(() => api.get<Warehouse[]>("/warehouses?is_active=true&limit=500"), "pos-wh");
   const safes = useFetch(() => api.get<{ id: number; name: string; is_active: boolean }[]>("/safes"), "pos-safes");
@@ -45,6 +45,7 @@ export default function Pos() {
   const [screen, setScreen] = useState<"history" | "new">("history");
   const [documentType, setDocumentType] = useState<DocumentType>("invoice");
   const [safeId, setSafeId] = useState("");
+  const [bankId, setBankId] = useState("");
   const invoices = usePagedList<Order>("/pos/invoices", {});
   const [cart, setCart] = useState<CartLine[]>([]);
   const [q, setQ] = useState("");
@@ -57,6 +58,29 @@ export default function Pos() {
   const [tendered, setTendered] = useState("");
   const [quotationReceived, setQuotationReceived] = useState("");
   const [discountMode, setDiscountMode] = useState<DiscountMode>("amount");
+  const [taxEnabled, setTaxEnabled] = useState(true);
+  const banks = useFetch(() => api.get<{ id: number; name: string; is_active: boolean }[]>("/banks?limit=200"), "pos-banks");
+  const [splitMode, setSplitMode] = useState(false);
+  const [splitCash, setSplitCash] = useState("");
+  const HELD_KEY = "pos-held-carts";
+  const heldCarts: { id: string; savedAt: string; cart: CartLine[]; customer: Party | null; notes: string }[] =
+    JSON.parse(localStorage.getItem(HELD_KEY) || "[]");
+  const holdCart = () => {
+    if (!cart.length) return;
+    const entry = { id: Math.random().toString(36).slice(2, 8), savedAt: new Date().toISOString(), cart, customer, notes: "" };
+    localStorage.setItem(HELD_KEY, JSON.stringify([entry, ...heldCarts].slice(0, 10)));
+    setCart([]);
+    setCustomer(null);
+    alert(`عُلّقت الفاتورة (${entry.id}) — استرجعها من قائمة «معلّقة»`);
+  };
+  const restoreHeld = (id: string) => {
+    const entry = heldCarts.find((h) => h.id === id);
+    if (!entry) return;
+    if (cart.length && !confirm("السلة الحالية ستُستبدل بالمعلّقة. متابعة؟")) return;
+    setCart(entry.cart);
+    setCustomer(entry.customer);
+    localStorage.setItem(HELD_KEY, JSON.stringify(heldCarts.filter((h) => h.id !== id)));
+  };
   const [discountValue, setDiscountValue] = useState("");
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -82,14 +106,25 @@ export default function Pos() {
     : Math.round(discountInput * 100);
   const discountAmount = discountCents / 100;
   const netDue = Math.max(0, totalCents - discountCents) / 100;
+  const netCents = Math.round(netDue * 100);
+  const vatCents = taxEnabled ? Math.round(netCents * 0.14) : 0;
+  const vatAmount = vatCents / 100;
+  const grandDue = (netCents + vatCents) / 100;
   const validDiscount = Number.isFinite(discountInput) && discountInput >= 0 && (discountMode === "percent" ? discountInput <= 100 : discountCents <= totalCents);
-  const paid = customer && paidInput !== "" ? Number(paidInput) : netDue;
-  const change = !customer && tendered !== "" ? Number(tendered) - netDue : null;
+  const splitCashAmount = splitMode && splitCash !== "" ? Number(splitCash) : 0;
+  const splitBankAmount = splitMode ? Math.max(0, grandDue - splitCashAmount) : 0;
+  const paid = splitMode
+    ? splitCashAmount + splitBankAmount
+    : customer && paidInput !== "" ? Number(paidInput) : grandDue;
+  const change = !customer && tendered !== "" ? Number(tendered) - grandDue : null;
   const overStock = cart.filter((l) => l.quantity > avail(l.product));
+  // صلاحية تعديل سعر البيع: الحقل متاح للمدير أو حامل الصلاحية، والتعديل بالزيادة فقط — ليس أقل من سعر البيع المعتمد.
+  const canEditPrice = isManager || can("sales.order.price_increase");
+  const underPriced = cart.filter((l) => Number(l.price) < Number(l.product.sale_price));
   const validLines = cart.length > 0 && cart.every((l) => l.quantity > 0 && Number(l.price) >= 0);
   const receivedForQuotation = quotationReceived === "" ? 0 : Number(quotationReceived);
-  const validQuotationReceived = Number.isFinite(receivedForQuotation) && receivedForQuotation >= 0 && receivedForQuotation <= netDue + 1e-9;
-  const canPay = !!warehouse && validLines && validDiscount && overStock.length === 0 && (documentType === "quotation" ? validQuotationReceived : paid >= 0 && paid <= netDue + 1e-9);
+  const validQuotationReceived = Number.isFinite(receivedForQuotation) && receivedForQuotation >= 0 && receivedForQuotation <= grandDue + 1e-9;
+  const canPay = !!warehouse && validLines && validDiscount && overStock.length === 0 && underPriced.length === 0 && (documentType === "quotation" ? validQuotationReceived : paid >= 0 && paid <= grandDue + 1e-9);
   let undistributedDiscountCents = discountCents;
   const discountedItems = cart.flatMap((line) => {
     const unitCents = Math.round((Number(line.price) || 0) * 100);
@@ -145,14 +180,20 @@ export default function Pos() {
         ...(isQuotation ? [`المبلغ المستلم: ${receivedForQuotation}`] : []),
         ...(discountCents ? [`الخصم: ${money(discountAmount)}${discountMode === "percent" ? ` (${discountInput}%)` : ""}`] : []),
       ].join(" · ");
-      const received = isQuotation ? receivedForQuotation : customer ? paid : undefined;
+      const received = isQuotation ? receivedForQuotation : splitMode ? grandDue : customer ? paid : undefined;
+      const splitPayments = splitMode && !isQuotation ? [
+        { method: "cash" as const, amount: String(Math.min(splitCashAmount, grandDue)), safe_id: safeId === "" ? null : Number(safeId) },
+        { method: "bank" as const, amount: String(splitBankAmount), bank_id: bankId === "" ? null : Number(bankId) },
+      ].filter((l) => Number(l.amount) > 0) : undefined;
       const r = await api.post<Receipt>("/pos/checkout", {
         warehouse_id: Number(warehouse),
         customer_id: customer?.id ?? null,
         rep_id: repId === "" ? null : Number(repId),
         items: discountedItems,
         amount_paid: received === undefined ? undefined : String(received),
+        tax_rate: taxEnabled ? "14" : "0",
         method,
+        ...(splitPayments ? { payments: splitPayments } : {}),
         notes: metadata,
       });
       setReceipt({ ...r, document_type: documentType, created_at: new Date().toISOString(), discount_amount: String(discountAmount) });
@@ -194,7 +235,7 @@ export default function Pos() {
         <td><PaymentBadge status={order.payment_status} /></td>
         <td className="actions">
           <button className="btn btn-sm" onClick={() => void dl.run(() => api.download(`/sales-orders/${order.id}/pdf`, `invoice-SO-${order.id}.pdf`))}>PDF</button>
-          <button className="btn btn-sm" onClick={() => void dl.run(() => api.download(`/sales-orders/${order.id}/receipt`, `receipt-SO-${order.id}.pdf`))}>إيصال</button>
+          <button className="btn btn-sm" onClick={() => void dl.run(() => api.download(`/sales-orders/${order.id}/receipt`, `receipt-SO-${order.id}.pdf`))}>{t("إيصال")}</button>
         </td>
       </tr>
     );
@@ -203,12 +244,12 @@ export default function Pos() {
   return (
     <>
       {screen === "history" ? (
-        <PageHeader title="فواتير البيع">
-          <button className="btn btn-primary" onClick={startNewInvoice}>+ إضافة فاتورة بيع جديدة</button>
+        <PageHeader title={t("فواتير البيع")}>
+          <button className="btn btn-primary" onClick={startNewInvoice}>{t("+ إضافة فاتورة بيع جديدة")}</button>
         </PageHeader>
       ) : (
         <div className="pos-new-actions">
-          <button className="btn" onClick={() => { reset(); setScreen("history"); }}>العودة إلى الفواتير</button>
+          <button className="btn" onClick={() => { reset(); setScreen("history"); }}>{t("العودة إلى الفواتير")}</button>
         </div>
       )}
 
@@ -218,10 +259,10 @@ export default function Pos() {
           <div className="card table-wrap">
             {invoices.loading ? <Loading /> : invoices.data?.length ? (
               <table>
-                <thead><tr><th>رقم الفاتورة</th><th>التاريخ</th><th>العميل</th><th>المخزن</th><th>الكاشير</th><th className="num">الإجمالي</th><th>السداد</th><th>المستندات</th></tr></thead>
+                <thead><tr><th>{t("رقم الفاتورة")}</th><th>{t("التاريخ")}</th><th>{t("العميل")}</th><th>{t("المخزن")}</th><th>{t("الكاشير")}</th><th className="num">{t("الإجمالي")}</th><th>{t("السداد")}</th><th>{t("المستندات")}</th></tr></thead>
                 <tbody>{invoices.data.map(invoiceFile)}</tbody>
               </table>
-            ) : <Empty>لا توجد فواتير بيع سابقة.</Empty>}
+            ) : <Empty>{t("لا توجد فواتير بيع سابقة.")}</Empty>}
             <Pager list={invoices} />
           </div>
           {dl.error && <Alert>{dl.error}</Alert>}
@@ -230,54 +271,54 @@ export default function Pos() {
       <>
       {notice && <Alert kind="info">{notice}</Alert>}
 
-      <section className="quotation-editor" aria-label={documentType === "quotation" ? "بيانات بيان الأسعار" : "بيانات الفاتورة"}>
+      <section className="quotation-editor" aria-label={documentType === "quotation" ? t("بيانات بيان الأسعار") : t("بيانات الفاتورة")}>
         <header className="quotation-editor-head">
-          <h2>{documentType === "quotation" ? "بيان أسعار جديد" : "فاتورة بيع جديدة"}</h2>
-          <div>رقم البيان: <strong>{receipt ? `SO-${receipt.order_id}` : "يُولَّد عند الحفظ"}</strong></div>
-          <div>التاريخ: <strong>{receipt?.created_at ? dateTime(receipt.created_at) : dateTime(new Date().toISOString())}</strong></div>
+          <h2>{documentType === "quotation" ? t("بيان أسعار جديد") : t("فاتورة بيع جديدة")}</h2>
+          <div>{t("رقم البيان: ")}<strong>{receipt ? `SO-${receipt.order_id}` : t("يُولَّد عند الحفظ")}</strong></div>
+          <div>{t("التاريخ: ")}<strong>{receipt?.created_at ? dateTime(receipt.created_at) : dateTime(new Date().toISOString())}</strong></div>
         </header>
-        <div className="page-actions" role="group" aria-label="نوع البيان" style={{ justifyContent: "center", marginBottom: 14 }}>
-          <button type="button" className={`btn ${documentType === "quotation" ? "btn-primary" : ""}`} aria-pressed={documentType === "quotation"} onClick={() => setDocumentType("quotation")}>بيان أسعار</button>
-          <button type="button" className={`btn ${documentType === "invoice" ? "btn-primary" : ""}`} aria-pressed={documentType === "invoice"} onClick={() => setDocumentType("invoice")}>فاتورة</button>
+        <div className="page-actions" role="group" aria-label={t("نوع البيان")} style={{ justifyContent: "center", marginBottom: 14 }}>
+          <button type="button" className={`btn ${documentType === "quotation" ? "btn-primary" : ""}`} aria-pressed={documentType === "quotation"} onClick={() => setDocumentType("quotation")}>{t("بيان أسعار")}</button>
+          <button type="button" className={`btn ${documentType === "invoice" ? "btn-primary" : ""}`} aria-pressed={documentType === "invoice"} onClick={() => setDocumentType("invoice")}>{t("فاتورة")}</button>
         </div>
         <div className={`quotation-editor-meta pos-document-meta pos-document-meta-${documentType}`}>
           <div className="quotation-meta-column pos-document-customer-column">
-            <Field label="اسم العميل">
-              <Lookup<Party> path="/customers" params={{ is_active: true }} value={customer} onChange={(c) => { setCustomer(c); setPaidInput(""); }} label={(p) => p.name} placeholder="ابحث عن العميل…" />
+            <Field label={t("اسم العميل")}>
+              <Lookup<Party> path="/customers" params={{ is_active: true }} value={customer} onChange={(c) => { setCustomer(c); setPaidInput(""); }} label={(p) => p.name} placeholder={t("ابحث عن العميل…")} />
             </Field>
-            <Field label="رقم الهاتف">
-              <a className={`btn customer-phone-button customer-phone-${documentType}`} href={customer?.phone ? `tel:${customer.phone}` : undefined} aria-label={`رقم هاتف العميل في ${documentType === "quotation" ? "بيان الأسعار" : "الفاتورة"}`} aria-disabled={!customer?.phone} onClick={(event) => { if (!customer?.phone) event.preventDefault(); }}>
-                {customer?.phone || "اختر العميل لعرض رقم الهاتف"}
+            <Field label={t("رقم الهاتف")}>
+              <a className={`btn customer-phone-button customer-phone-${documentType}`} href={customer?.phone ? `tel:${customer.phone}` : undefined} aria-label={`${t("رقم هاتف العميل في ")}${documentType === "quotation" ? t("بيان الأسعار") : t("الفاتورة")}`} aria-disabled={!customer?.phone} onClick={(event) => { if (!customer?.phone) event.preventDefault(); }}>
+                {customer?.phone || t("اختر العميل لعرض رقم الهاتف")}
               </a>
             </Field>
-            <Field label="اسم المخزن">
-              <select value={warehouse} aria-label="اسم المخزن" onChange={(e) => {
+            <Field label={t("اسم المخزن")}>
+              <select value={warehouse} aria-label={t("اسم المخزن")} onChange={(e) => {
                 setWarehouse(e.target.value);
                 setCart([]);
                 setHits([]);
                 try { localStorage.setItem(WAREHOUSE_KEY, e.target.value); } catch { /* storage unavailable */ }
               }}>
-                <option value="">— اختر المخزن —</option>
+                <option value="">{t("— اختر المخزن —")}</option>
                 {warehouses.data?.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
               </select>
             </Field>
           </div>
           <div className="quotation-meta-column">
-            <Field label="مندوب المبيعات">
-              <select aria-label="مندوب المبيعات" value={repId} onChange={(e) => setRepId(e.target.value)}>
-                <option value="">— بدون مندوب —</option>
+            <Field label={t("مندوب المبيعات")}>
+              <select aria-label={t("مندوب المبيعات")} value={repId} onChange={(e) => setRepId(e.target.value)}>
+                <option value="">{t("— بدون مندوب —")}</option>
                 {(reps.data ?? []).filter((r) => r.is_active).map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
               </select>
             </Field>
-            <Field label="اسم الخزينة">
-              <select aria-label="اسم الخزينة" value={safeId} onChange={(e) => setSafeId(e.target.value)}>
-                <option value="">— اختر الخزينة —</option>
+            <Field label={t("اسم الخزينة")}>
+              <select aria-label={t("اسم الخزينة")} value={safeId} onChange={(e) => setSafeId(e.target.value)}>
+                <option value="">{t("— اختر الخزينة —")}</option>
                 {(safes.data ?? []).filter((s) => s.is_active).map((safe) => <option key={safe.id} value={safe.id}>{safe.name}</option>)}
               </select>
             </Field>
             <Field label={t("pos.paymentMethod")}>
               <select aria-label={t("pos.paymentMethod")} value={method} onChange={(e) => setMethod(e.target.value as PaymentMethod)}>
-                {(Object.keys(METHOD_LABEL) as PaymentMethod[]).map((m) => <option key={m} value={m}>{METHOD_LABEL[m]}</option>)}
+                {(Object.keys(METHOD_LABEL) as PaymentMethod[]).map((m: PaymentMethod) => <option key={m} value={m}>{methodLabel(m)}</option>)}
               </select>
             </Field>
           </div>
@@ -291,13 +332,13 @@ export default function Pos() {
               ref={box}
               autoFocus
               style={{ flex: 1, minWidth: 180 }}
-              placeholder="امسح الباركود أو اكتب الكود/الاسم ثم Enter"
-              aria-label="بحث عن منتج"
+              placeholder={t("امسح الباركود أو اكتب الكود/الاسم ثم Enter")}
+              aria-label={t("بحث عن منتج")}
               value={q}
               onChange={(e) => setQ(e.target.value)}
             />
             <button className="btn btn-primary" disabled={search.busy}>
-              إضافة
+              {t("إضافة")}
             </button>
           </form>
           {hits.length > 0 && (
@@ -305,24 +346,24 @@ export default function Pos() {
               {hits.map((p) => (
                 <li key={p.id}>
                   <button type="button" className="btn" style={{ width: "100%", textAlign: "start", marginBottom: 4 }} onClick={() => add(p)}>
-                    {p.name} ({p.sku}) — {money(p.sale_price)} — المتاح {num(avail(p))}
+                    {p.name} ({p.sku}) — {money(p.sale_price)} — {t("المتاح ")}{num(avail(p))}
                   </button>
                 </li>
               ))}
             </ul>
           )}
-          <h3>السلة</h3>
+          <h3>{t("السلة")}</h3>
           {cart.length === 0 ? (
-            <p className="muted">السلة فارغة. أضف منتجات بالبحث أو الباركود.</p>
+            <p className="muted">{t("السلة فارغة. أضف منتجات بالبحث أو الباركود.")}</p>
           ) : (
             <div className="table-wrap">
               <table>
                 <thead>
                   <tr>
-                    <th>المنتج</th>
-                    <th style={{ width: 90 }}>الكمية</th>
-                    <th style={{ width: 110 }}>السعر</th>
-                    <th className="num">الإجمالي</th>
+                    <th>{t("المنتج")}</th>
+                    <th style={{ width: 90 }}>{t("الكمية")}</th>
+                    <th style={{ width: 110 }}>{t("السعر")}</th>
+                    <th className="num">{t("الإجمالي")}</th>
                     <th />
                   </tr>
                 </thead>
@@ -333,7 +374,7 @@ export default function Pos() {
                         {l.product.name}
                         {l.quantity > avail(l.product) && (
                           <span className="low" style={{ display: "block", fontSize: 12 }}>
-                            المتاح {num(avail(l.product))} فقط
+                            {t("المتاح ")}{num(avail(l.product))}{t(" فقط")}
                           </span>
                         )}
                       </td>
@@ -342,7 +383,7 @@ export default function Pos() {
                           type="number"
                           min="1"
                           step="1"
-                          aria-label={`كمية ${l.product.name}`}
+                          aria-label={`${t("كمية ")}${l.product.name}`}
                           value={l.quantity}
                           onChange={(e) => setCart((c) => c.map((x) => (x === l ? { ...x, quantity: Math.max(0, Math.floor(Number(e.target.value) || 0)) } : x)))}
                         />
@@ -352,12 +393,17 @@ export default function Pos() {
                           type="number"
                           min="0"
                           step="0.01"
-                          aria-label={`سعر ${l.product.name}`}
+                          aria-label={`${t("سعر ")}${l.product.name}`}
                           value={l.price}
-                          readOnly={!isManager}
-                          title={isManager ? undefined : "السعر يحدده المدير فقط"}
+                          readOnly={!canEditPrice}
+                          title={canEditPrice ? t("تعديل سعر البيع بالزيادة فقط") : t("السعر يحدده المدير فقط")}
                           onChange={(e) => setCart((c) => c.map((x) => (x === l ? { ...x, price: e.target.value } : x)))}
                         />
+                        {Number(l.price) < Number(l.product.sale_price) && (
+                          <span className="low" style={{ display: "block", fontSize: 12 }}>
+                            {t("تعديل سعر البيع بالزيادة فقط")}
+                          </span>
+                        )}
                       </td>
                       <td className="num">{money(l.quantity * (Number(l.price) || 0))}</td>
                       <td>
@@ -375,38 +421,80 @@ export default function Pos() {
 
       </div>
 
-      <section className={`card card-pad pos-summary-card pos-summary-${documentType}`} aria-label={documentType === "quotation" ? "إجمالي وخصم بيان الأسعار" : "إجمالي وخصم الفاتورة"}>
+      <section className={`card card-pad pos-summary-card pos-summary-${documentType}`} aria-label={documentType === "quotation" ? t("إجمالي وخصم بيان الأسعار") : t("إجمالي وخصم الفاتورة")}>
         <div className="pos-summary-values">
           <div className="pos-summary-total">
-            <span className="label">الإجمالي المستحق</span>
+            <span className="label">{t("الإجمالي المستحق")}</span>
             <strong>{money(total)}</strong>
           </div>
-          <div className="pos-summary-total pos-summary-net">
-            <span className="label">الإجمالي بعد الخصم</span>
+          <div className="pos-summary-total">
+            <span className="label">{t("الإجمالي بعد الخصم")}</span>
             <strong>{money(netDue)}</strong>
+          </div>
+          <div className="pos-summary-total">
+            <span className="label">{t("ضريبة القيمة المضافة (14%)")}</span>
+            <strong>{money(vatAmount)}</strong>
+          </div>
+          <div className="pos-summary-total pos-summary-net">
+            <span className="label">{t("الإجمالي المستحق شامل الضريبة")}</span>
+            <strong>{money(grandDue)}</strong>
           </div>
         </div>
         <div className="pos-summary-fields">
-          <Field label="الخصم">
-            <div className="pos-discount-inputs">
-              <select aria-label="نوع الخصم" value={discountMode} onChange={(e) => setDiscountMode(e.target.value as DiscountMode)}>
-                <option value="amount">مبلغ</option>
-                <option value="percent">نسبة مئوية</option>
-              </select>
-              <input dir="ltr" type="number" min="0" max={discountMode === "percent" ? 100 : total} step="0.01" value={discountValue} onChange={(e) => setDiscountValue(e.target.value)} aria-label={discountMode === "percent" ? "نسبة الخصم المئوية" : "مبلغ الخصم"} placeholder={discountMode === "percent" ? "0%" : "0.00"} />
-            </div>
-            {discountCents > 0 && <span className="field-hint">قيمة الخصم: {money(discountAmount)}</span>}
-            {!validDiscount && <span className="field-hint low">الخصم لا يمكن أن يتجاوز الإجمالي{discountMode === "percent" ? " أو 100%" : ""}.</span>}
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            <button type="button" className="btn btn-sm" onClick={holdCart} disabled={!cart.length}>⏸️ تعليق</button>
+            {heldCarts.length > 0 && heldCarts.map((h) => (
+              <button key={h.id} type="button" className="btn btn-sm btn-primary" onClick={() => restoreHeld(h.id)}
+                title={`${h.customer?.name || "بدون عميل"} · ${new Date(h.savedAt).toLocaleTimeString()} · ${h.cart.length} صنف`}>
+                ↩️ استرجاع {h.id}
+              </button>
+            ))}
+          </div>
+          <Field label={t("ضريبة القيمة المضافة")}>
+            <select aria-label={t("تطبيق ضريبة القيمة المضافة")} value={taxEnabled ? "with-tax" : "without-tax"} onChange={(e) => setTaxEnabled(e.target.value === "with-tax")}>
+              <option value="with-tax">{t("بالضريبة (14%)")}</option>
+              <option value="without-tax">{t("بدون ضريبة")}</option>
+            </select>
           </Field>
-          {documentType === "quotation" ? <Field label="المبلغ المستلم من العميل" hint="سيُسجّل ضمن عملية البيع عند الحفظ">
-            <input dir="ltr" type="number" min="0" max={netDue} step="0.01" value={quotationReceived} onChange={(e) => setQuotationReceived(e.target.value)} aria-label="المبلغ المستلم من العميل" />
-          </Field> : <Field label={customer ? t("pos.amountPaid") : t("pos.amountReceived")} hint={customer ? `${t("pos.balanceDue")}: ${money(Math.max(netDue - paid, 0))}` : change !== null ? (change >= 0 ? `${t("pos.change")}: ${money(change)}` : `${t("pos.short")} ${money(-change)}`) : "اختياري، لحساب الباقي"}>
-            <input dir="ltr" type="number" min="0" max={customer ? netDue : undefined} step="0.01" value={customer ? paidInput : tendered} placeholder={customer ? String(netDue) : undefined} onChange={(e) => customer ? setPaidInput(e.target.value) : setTendered(e.target.value)} />
+          <Field label={t("الدفع")} hint={t("مقسّم: نقدًا جزء والباقي من البنك في نفس الفاتورة")}>
+            <select value={splitMode ? "split" : "single"} onChange={(e) => setSplitMode(e.target.value === "split")}>
+              <option value="single">{t("وسيلة واحدة")}</option>
+              <option value="split">{t("مقسّم (نقدًا + بنك)")}</option>
+            </select>
+          </Field>
+          {splitMode && (
+            <>
+              <Field label={t("النقدي المستلم")} hint={`${t("البنك يستلم: ")}${money(splitBankAmount)}`}>
+                <input dir="ltr" type="number" min="0" step="0.01" max={grandDue} value={splitCash} placeholder="0.00" onChange={(e) => setSplitCash(e.target.value)} />
+              </Field>
+              <Field label={t("بنك الجزء الثاني")}>
+                <select value={bankId} onChange={(e) => setBankId(e.target.value)}>
+                  <option value="">—</option>
+                  {(banks.data ?? []).map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+                </select>
+              </Field>
+            </>
+          )}
+          <Field label={t("الخصم")}>
+            <div className="pos-discount-inputs">
+              <select aria-label={t("نوع الخصم")} value={discountMode} onChange={(e) => setDiscountMode(e.target.value as DiscountMode)}>
+                <option value="amount">{t("مبلغ")}</option>
+                <option value="percent">{t("نسبة مئوية")}</option>
+              </select>
+              <input dir="ltr" type="number" min="0" max={discountMode === "percent" ? 100 : total} step="0.01" value={discountValue} onChange={(e) => setDiscountValue(e.target.value)} aria-label={discountMode === "percent" ? t("نسبة الخصم المئوية") : t("مبلغ الخصم")} placeholder={discountMode === "percent" ? "0%" : "0.00"} />
+            </div>
+            {discountCents > 0 && <span className="field-hint">{t("قيمة الخصم: ")}{money(discountAmount)}</span>}
+            {!validDiscount && <span className="field-hint low">{t("الخصم لا يمكن أن يتجاوز الإجمالي")}{discountMode === "percent" ? t(" أو 100%") : ""}{t(".")}</span>}
+          </Field>
+          {documentType === "quotation" ? <Field label={t("المبلغ المستلم من العميل")} hint={t("سيُسجّل ضمن عملية البيع عند الحفظ")}>
+            <input dir="ltr" type="number" min="0" max={grandDue} step="0.01" value={quotationReceived} onChange={(e) => setQuotationReceived(e.target.value)} aria-label={t("المبلغ المستلم من العميل")} />
+          </Field> : <Field label={customer ? t("pos.amountPaid") : t("pos.amountReceived")} hint={customer ? `${t("pos.balanceDue")}: ${money(Math.max(grandDue - paid, 0))}` : change !== null ? (change >= 0 ? `${t("pos.change")}: ${money(change)}` : `${t("pos.short")} ${money(-change)}`) : t("اختياري، لحساب الباقي")}>
+            <input dir="ltr" type="number" min="0" max={customer ? netDue : undefined} step="0.01" value={customer ? paidInput : tendered} placeholder={customer ? String(grandDue) : undefined} onChange={(e) => customer ? setPaidInput(e.target.value) : setTendered(e.target.value)} />
           </Field>}
         </div>
         <div className={`pos-summary-actions pos-summary-actions-${documentType}`}>
           <button className="btn btn-primary pos-summary-primary" disabled={!canPay || (documentType === "quotation" && (!customer || !safeId)) || sale.busy || (documentType === "invoice" && change !== null && change < 0)} onClick={submitDocument}>
-            {sale.busy ? "جارٍ الحفظ…" : documentType === "quotation" ? "حفظ وطباعة بيان الأسعار" : "حفظ وطباعة الفاتورة"}
+            {sale.busy ? t("جارٍ الحفظ…") : documentType === "quotation" ? t("حفظ وطباعة بيان الأسعار") : t("حفظ وطباعة الفاتورة")}
           </button>
           {cart.length > 0 && <button className="btn" onClick={reset}>{t("pos.cancel")}</button>}
         </div>
@@ -415,15 +503,15 @@ export default function Pos() {
       )}
 
       {receipt && (
-        <Modal title={`${receipt.document_type === "quotation" ? "بيان أسعار" : t("pos.receiptTitle")} SO-${receipt.order_id}`} onClose={reset}>
+        <Modal title={`${receipt.document_type === "quotation" ? t("بيان أسعار") : t("pos.receiptTitle")} SO-${receipt.order_id}`} onClose={reset}>
           <Alert>{dl.error}</Alert>
-          {receipt.document_type === "quotation" && <p className="muted">تم اعتماد بيان الأسعار كعملية بيع وتحديث المخزون وتسجيل المبلغ المستلم.</p>}
+          {receipt.document_type === "quotation" && <p className="muted">{t("تم اعتماد بيان الأسعار كعملية بيع وتحديث المخزون وتسجيل المبلغ المستلم.")}</p>}
           <p>
             {t("pos.customerLabel")}: <b>{receipt.customer_name}</b>
             <br />
             {t("pos.total")}: <b>{money(receipt.total)}</b>
-            {Number(receipt.discount_amount) > 0 && <> · الخصم: <b>{money(receipt.discount_amount)}</b></>}
-            {receipt.document_type === "invoice" ? <> · {t("pos.paid")}: <b>{money(receipt.paid)}</b></> : <> · المبلغ المستلم: <b>{money(receipt.paid)}</b></>}
+            {Number(receipt.discount_amount) > 0 && <>{t(" · الخصم: ")}<b>{money(receipt.discount_amount)}</b></>}
+            {receipt.document_type === "invoice" ? <> · {t("pos.paid")}: <b>{money(receipt.paid)}</b></> : <>{t(" · المبلغ المستلم: ")}<b>{money(receipt.paid)}</b></>}
             {Number(receipt.balance_due) > 0 && (
               <>
                 {" "}
@@ -439,10 +527,10 @@ export default function Pos() {
           </p>
           <div className="form-actions">
             <button className="btn btn-primary" autoFocus onClick={reset}>
-              {receipt.document_type === "quotation" ? "إغلاق" : t("pos.newSale")}
+              {receipt.document_type === "quotation" ? t("إغلاق") : t("pos.newSale")}
             </button>
             <button className="btn" disabled={dl.busy} onClick={() => void dl.run(() => api.download(receipt.document_type === "quotation" ? `/sales-orders/${receipt.order_id}/quotation.pdf` : `/sales-orders/${receipt.order_id}/pdf`, `${receipt.document_type === "quotation" ? "quotation" : "invoice"}-SO-${receipt.order_id}.pdf`))}>
-              {receipt.document_type === "quotation" ? "تنزيل بيان الأسعار PDF" : t("pos.invoicePdf")}
+              {receipt.document_type === "quotation" ? t("تنزيل بيان الأسعار PDF") : t("pos.invoicePdf")}
             </button>
             <button className="btn" disabled={dl.busy} onClick={() => void dl.run(() => api.download(`/sales-orders/${receipt.order_id}/receipt`, `receipt-SO-${receipt.order_id}.pdf`))}>
               {t("pos.receipt80")}

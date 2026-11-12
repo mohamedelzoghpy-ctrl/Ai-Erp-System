@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { api } from "../api";
-import { useFetch, usePagedList } from "../hooks";
+import { useAction, useFetch, usePagedList } from "../hooks";
+import { useI18n } from "../i18n";
 import type { Branch, Order, SalesRep } from "../types";
 import { ActiveBadge, Alert, Empty, Field, Loading, Modal, PageHeader, Pager, PaymentBadge, StatusBadge } from "../ui";
 import { dateTime, money } from "../format";
@@ -14,7 +15,11 @@ function normCommission(v: string): string {
 
 /** مندوبي المبيعات: قائمة مستقلة مع إضافة وتعديل وحذف. */
 export default function SalesReps() {
+  const { t } = useI18n();
   const reps = useFetch(() => api.get<SalesRep[]>("/reps"), "reps-list");
+  const comm = useFetch(() => api.get<any[]>("/reports/reps-commissions?days=30"), "reps-comm");
+  const credits = useFetch(() => api.get<any[]>("/reports/customer-credits"), "cust-credits");
+  const dl = useAction();
   const branches = useFetch(() => api.get<Branch[]>("/company/branches"), "reps-branches");
 
   const [openAdd, setOpenAdd] = useState(false);
@@ -37,7 +42,7 @@ export default function SalesReps() {
 
   const branchName = (id: number) => {
     const b = (branches.data ?? []).find((x) => x.id === id);
-    return b ? b.name : `فرع ${id}`;
+    return b ? b.name : `${t("فرع ")}${id}`;
   };
 
   const toggleBranch = (list: number[], id: number, setList: (v: number[]) => void) =>
@@ -56,7 +61,7 @@ export default function SalesReps() {
       });
       setOpenAdd(false);
       setF({ name: "", phone: "", branch_ids: [], commission_percent: "" });
-      setNote(`تم إضافة المندوب «${created.name}» برقم ${created.code}.`);
+      setNote(`${t("تم إضافة المندوب «")}${created.name}${t("» برقم ")}${created.code}${t(".")}`);
       reps.reload();
     } catch (err) {
       setError((err as Error).message);
@@ -95,7 +100,7 @@ export default function SalesReps() {
     try {
       if (Object.keys(body).length > 0) await api.patch(`/reps/${editing.id}`, body);
       setEditing(null);
-      setNote(`تم تحديث المندوب «${editing.name}».`);
+      setNote(`${t("تم تحديث المندوب «")}${editing.name}${t("».")}`);
       reps.reload();
     } catch (err) {
       setError((err as Error).message);
@@ -110,7 +115,7 @@ export default function SalesReps() {
     try {
       await api.del(`/reps/${r.id}`);
       setConfirmDel(null);
-      setNote(`تم حذف المندوب «${r.name}».`);
+      setNote(`${t("تم حذف المندوب «")}${r.name}${t("».")}`);
       reps.reload();
     } catch (err) {
       setConfirmDel(null);
@@ -122,20 +127,20 @@ export default function SalesReps() {
 
   return (
     <>
-      <PageHeader title="مندوبي المبيعات">
+      <PageHeader title={t("مندوبي المبيعات")}>
         <button className="btn btn-primary" onClick={() => { setError(null); setOpenAdd(true); }}>
-          + إضافة مندوب
+          {"+ "}{t("إضافة مندوب")}
         </button>
       </PageHeader>
 
       <div className="toolbar page-actions" style={{ marginBottom: 14 }}>
-        <input placeholder="ابحث بالاسم أو الكود أو التليفون…" value={search} onChange={(e) => setSearch(e.target.value)} />
+        <input placeholder={t("ابحث بالاسم أو الكود أو التليفون…")} value={search} onChange={(e) => setSearch(e.target.value)} />
       </div>
 
       <Alert>{reps.error}</Alert>
       {error && <Alert>{error}</Alert>}
       <div dir="rtl" style={{ marginBottom: 10, padding: "8px 12px", borderRadius: 8, fontSize: 13, background: "#fff4d6", color: "#9a6700" }}>
-        ℹ️ مندوب المبيعات ليس مستخدماً في النظام: يظهر على فاتورة المبيعات ومرتجع المبيعات وتقارير المبيعات فقط، ولا له حساب دخول أو كلمة مرور أو صلاحيات. أما المستخدمون فلهم حساب للدخول وخصوصيات.
+        ℹ️ {t("مندوب المبيعات ليس مستخدماً في النظام: يظهر على فاتورة المبيعات ومرتجع المبيعات وتقارير المبيعات فقط، ولا له حساب دخول أو كلمة مرور أو صلاحيات. أما المستخدمون فلهم حساب للدخول وخصوصيات.")}
       </div>
       {note && (
         <div dir="rtl" style={{ marginBottom: 10, padding: "8px 12px", borderRadius: 8, fontSize: 13, background: "var(--ok-bg)", color: "var(--ok)" }}>
@@ -150,13 +155,13 @@ export default function SalesReps() {
           <table>
             <thead>
               <tr>
-                <th>كود المندوب</th>
-                <th>الاسم</th>
-                <th>الهاتف</th>
-                <th>الفرع</th>
-                <th className="num">نسبة العمولة %</th>
-                <th>الحالة</th>
-                <th>أُنشئ في</th>
+                <th>{t("كود المندوب")}</th>
+                <th>{t("الاسم")}</th>
+                <th>{t("الهاتف")}</th>
+                <th>{t("الفرع")}</th>
+                <th className="num">{t("نسبة العمولة %")}</th>
+                <th>{t("الحالة")}</th>
+                <th>{t("أُنشئ في")}</th>
                 <th />
               </tr>
             </thead>
@@ -183,23 +188,21 @@ export default function SalesReps() {
                   <td><ActiveBadge active={r.is_active} /></td>
                   <td>{new Date(r.created_at).toLocaleDateString("ar-EG")}</td>
                   <td className="actions">
-                    <button className="btn btn-sm" onClick={() => openEdit(r)}>
-                      تعديل
-                    </button>{" "}
+                    <button className="btn-edit" onClick={() => openEdit(r)}>{t("تعديل")}</button>{" "}
                     <button
                       className="btn btn-sm"
                       style={{ color: "var(--danger)", borderColor: "var(--danger)" }}
                       disabled={deleting === r.id}
                       onClick={() => setConfirmDel(r)}
                     >
-                      {deleting === r.id ? "…" : "حذف"}
+                      {deleting === r.id ? t("…") : t("حذف")}
                     </button>{" "}
                     <button
                       className="btn btn-sm"
                       style={{ color: "#6b21a8", borderColor: "#6b21a8" }}
                       onClick={() => setFollowing(r)}
                     >
-                      👁️ مراقبة
+                      👁️ {t("مراقبة")}
                     </button>
                   </td>
                 </tr>
@@ -207,41 +210,41 @@ export default function SalesReps() {
             </tbody>
           </table>
         ) : (
-          <Empty>{search ? "لا توجد مندوبين مطابقين." : "لا يوجد مندوبين — اضغط «إضافة مندوب» للبدء."}</Empty>
+          <Empty>{search ? t("لا توجد مندوبين مطابقين.") : t("لا يوجد مندوبين — اضغط «إضافة مندوب» للبدء.")}</Empty>
         )}
       </div>
 
       {openAdd && (
-        <Modal title="إضافة مندوب" onClose={() => setOpenAdd(false)} wide>
+        <Modal title={t("إضافة مندوب")} onClose={() => setOpenAdd(false)} wide>
           <form onSubmit={submitAdd}>
             <Alert>{error}</Alert>
             <div className="form-grid">
-              <Field label="اسم المندوب">
+              <Field label={t("اسم المندوب")}>
                 <input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} required maxLength={150} />
               </Field>
-              <Field label="رقم الهاتف">
-                <input dir="ltr" value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} maxLength={40} placeholder="اختياري" />
+              <Field label={t("رقم الهاتف")}>
+                <input dir="ltr" value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} maxLength={40} placeholder={t("اختياري")} />
               </Field>
             </div>
-            <p style={{ margin: "12px 0 4px", fontWeight: 700, fontSize: 13 }}>فروع المندوب (اختيار أكثر من فرع):</p>
+            <p style={{ margin: "12px 0 4px", fontWeight: 700, fontSize: 13 }}>{t("فروع المندوب (اختيار أكثر من فرع):")}</p>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
               {(branches.data ?? []).map((b) => (
                 <label key={b.id} className="check" style={{ background: f.branch_ids.includes(b.id) ? "#e3f2fd" : undefined, borderRadius: 8, padding: "4px 10px" }}>
                   <input type="checkbox" checked={f.branch_ids.includes(b.id)} onChange={() => toggleBranch(f.branch_ids, b.id, (v) => setF({ ...f, branch_ids: v }))} /> {b.name}
                 </label>
               ))}
-              {(branches.data ?? []).length === 0 && <span className="muted" style={{ fontSize: 13 }}>لا توجد فروع.</span>}
+              {(branches.data ?? []).length === 0 && <span className="muted" style={{ fontSize: 13 }}>{t("لا توجد فروع.")}</span>}
             </div>
-            <Field label="نسبة العمولة %">
+            <Field label={t("نسبة العمولة %")}>
               <input dir="ltr" inputMode="decimal" value={f.commission_percent} onChange={(e) => setF({ ...f, commission_percent: normCommission(e.target.value) })} placeholder="0 - 100" />
-              <span className="field-hint">من 0 إلى 100 فقط</span>
+              <span className="field-hint">{t("من 0 إلى 100 فقط")}</span>
             </Field>
             <div className="form-actions" style={{ marginTop: 14 }}>
               <button className="btn btn-primary" disabled={busy || !f.name.trim()}>
-                {busy ? "جارٍ الحفظ…" : "إنشاء المندوب"}
+                {busy ? t("جارٍ الحفظ…") : t("إنشاء المندوب")}
               </button>
               <button type="button" className="btn" onClick={() => setOpenAdd(false)}>
-                إلغاء
+                {t("إلغاء")}
               </button>
             </div>
           </form>
@@ -249,45 +252,45 @@ export default function SalesReps() {
       )}
 
       {editing && (
-        <Modal title={`تعديل المندوب — ${editing.name}`} onClose={() => setEditing(null)} wide>
+        <Modal title={`${t("تعديل المندوب — ")}${editing.name}`} onClose={() => setEditing(null)} wide>
           <form onSubmit={submitEdit}>
             <Alert>{error}</Alert>
             <div className="form-grid">
-              <Field label="اسم المندوب">
+              <Field label={t("اسم المندوب")}>
                 <input value={ef.name} onChange={(e) => setEf({ ...ef, name: e.target.value })} required maxLength={150} />
               </Field>
-              <Field label="رقم الهاتف">
+              <Field label={t("رقم الهاتف")}>
                 <input dir="ltr" value={ef.phone} onChange={(e) => setEf({ ...ef, phone: e.target.value })} maxLength={40} />
               </Field>
             </div>
-            <p style={{ margin: "12px 0 4px", fontWeight: 700, fontSize: 13 }}>فروع المندوب (اختيار أكثر من فرع):</p>
+            <p style={{ margin: "12px 0 4px", fontWeight: 700, fontSize: 13 }}>{t("فروع المندوب (اختيار أكثر من فرع):")}</p>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
               {(branches.data ?? []).map((b) => (
                 <label key={b.id} className="check" style={{ background: ef.branch_ids.includes(b.id) ? "#e3f2fd" : undefined, borderRadius: 8, padding: "4px 10px" }}>
                   <input type="checkbox" checked={ef.branch_ids.includes(b.id)} onChange={() => toggleBranch(ef.branch_ids, b.id, (v) => setEf({ ...ef, branch_ids: v }))} /> {b.name}
                 </label>
               ))}
-              {(branches.data ?? []).length === 0 && <span className="muted" style={{ fontSize: 13 }}>لا توجد فروع.</span>}
+              {(branches.data ?? []).length === 0 && <span className="muted" style={{ fontSize: 13 }}>{t("لا توجد فروع.")}</span>}
             </div>
-            <Field label="نسبة العمولة %">
+            <Field label={t("نسبة العمولة %")}>
               <input dir="ltr" inputMode="decimal" value={ef.commission_percent} onChange={(e) => setEf({ ...ef, commission_percent: normCommission(e.target.value) })} />
-              <span className="field-hint">من 0 إلى 100 فقط</span>
+              <span className="field-hint">{t("من 0 إلى 100 فقط")}</span>
             </Field>
-            <Field label="الحالة">
+            <Field label={t("الحالة")}>
               <select value={String(ef.is_active)} onChange={(e) => setEf({ ...ef, is_active: e.target.value === "true" })}>
-                <option value="true">نشط</option>
-                <option value="false">موقوف</option>
+                <option value="true">{t("نشط")}</option>
+                <option value="false">{t("موقوف")}</option>
               </select>
             </Field>
             <p className="muted" style={{ fontSize: 13, margin: "6px 0 0" }}>
-              الكود: {editing.code} — لا يمكن تغييره بعد الإنشاء.
+              {t("الكود: ")}{editing.code}{t(" — لا يمكن تغييره بعد الإنشاء.")}
             </p>
             <div className="form-actions" style={{ marginTop: 14 }}>
               <button className="btn btn-primary" disabled={busy}>
-                {busy ? "جارٍ الحفظ…" : "حفظ التعديلات"}
+                {busy ? t("جارٍ الحفظ…") : t("حفظ التعديلات")}
               </button>
               <button type="button" className="btn" onClick={() => setEditing(null)}>
-                إلغاء
+                {t("إلغاء")}
               </button>
             </div>
           </form>
@@ -295,37 +298,90 @@ export default function SalesReps() {
       )}
 
       {confirmDel && (
-        <Modal title={`حذف المندوب — ${confirmDel.name}`} onClose={() => setConfirmDel(null)}>
+        <Modal title={`${t("حذف المندوب — ")}${confirmDel.name}`} onClose={() => setConfirmDel(null)}>
           <p style={{ margin: "0 0 6px" }}>
-            هل أنت متأكد من حذف المندوب <strong>{confirmDel.name}</strong> ({confirmDel.code})؟ لا يمكن الرجوع بعد الحذف.
+            {t("هل أنت متأكد من حذف المندوب ")}<strong>{confirmDel.name}</strong>{t(" (")}{confirmDel.code}{t(")؟ لا يمكن الرجوع بعد الحذف.")}
           </p>
           <div className="form-actions" style={{ marginTop: 14 }}>
             <button
-              className="btn"
-              style={{ color: "#fff", background: "var(--danger)" }}
+              className="btn-delete"
               disabled={deleting !== null}
               onClick={() => void doDelete(confirmDel)}
             >
-              {deleting !== null ? "جارٍ الحذف…" : "🗑️ نعم، حذف"}
+              {deleting !== null ? t("جارٍ الحذف…") : t("نعم، حذف")}
             </button>
             <button type="button" className="btn" onClick={() => setConfirmDel(null)}>
-              إلغاء
+              {t("إلغاء")}
             </button>
           </div>
         </Modal>
       )}
       {following && <RepInvoicesModal rep={following} onClose={() => setFollowing(null)} />}
+
+      {/* ============================ عمولات المندوبين ============================ */}
+      <div className="card card-pad" style={{ marginTop: 20 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+          <h3 style={{ margin: 0 }}>💰 عمولات المندوبين (آخر 30 يومًا)</h3>
+          <button className="btn btn-sm" disabled={comm.loading} onClick={() => void dl.run(() => api.download("/reports/reps-commissions/xlsx", "reps-commissions.xlsx"))}>⬇️ Excel</button>
+        </div>
+        <Alert>{comm.error}</Alert>
+        {comm.loading ? <Loading /> : (comm.data ?? []).length ? (
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>المندوب</th><th className="num">النسبة</th><th className="num">المبيعات</th><th className="num">المرتجعات</th><th className="num">الصافي</th><th className="num">العمولة المستحقة</th></tr></thead>
+              <tbody>
+                {(comm.data ?? []).map((r: any) => (
+                  <tr key={r.rep_id}>
+                    <td>{r.rep_name}</td>
+                    <td className="num">{r.commission_percent}%</td>
+                    <td className="num">{money(r.gross_sales)}</td>
+                    <td className="num">{money(r.returns)}</td>
+                    <td className="num">{money(r.net_sales)}</td>
+                    <td className="num" style={{ fontWeight: 800, color: "#15803d" }}>{money(r.commission_amount)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : <Empty>لا مبيعات على مندوبين في الفترة</Empty>}
+      </div>
+
+      {/* ============================ أرصدة العملاء الدائنة ============================ */}
+      <div className="card card-pad" style={{ marginTop: 20 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+          <h3 style={{ margin: 0 }}>🏦 أرصدة العملاء الدائنة (دفعات مقدمة/زيادة)</h3>
+          <button className="btn btn-sm" disabled={credits.loading} onClick={() => void dl.run(() => api.download("/reports/customer-credits/xlsx", "customer-credits.xlsx"))}>⬇️ Excel</button>
+        </div>
+        <Alert>{credits.error}</Alert>
+        {credits.loading ? <Loading /> : (credits.data ?? []).length ? (
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>العميل</th><th>قائمة الأسعار</th><th className="num">الرصيد الدائن</th></tr></thead>
+              <tbody>
+                {(credits.data ?? []).map((r: any) => (
+                  <tr key={r.customer_id}>
+                    <td>{r.name}</td>
+                    <td>{r.price_list || "—"}</td>
+                    <td className="num" style={{ fontWeight: 800, color: "#1f6feb" }}>{money(r.credit_balance)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : <Empty>لا عملاء بأرصدة دائنة</Empty>}
+      </div>
     </>
   );
 }
 
 /** متابعة مندوب: الفواتير (أوامر البيع) التي تعامل عليها المندوب. */
 function RepInvoicesModal({ rep, onClose }: { rep: SalesRep; onClose: () => void }) {
+  const { t } = useI18n();
   const list = usePagedList<Order>("/sales-orders", { rep_id: rep.id });
   return (
-    <Modal title={`👁️ مراقبة المندوب — ${rep.name}`} onClose={onClose} wide>
+    <Modal title={`👁️ ${t("مراقبة المندوب — ")}${rep.name}`} onClose={onClose} wide>
       <p className="muted" style={{ fontSize: 13, margin: "0 0 10px" }}>
-        الفواتير التي تعامل عليها <strong>{rep.name}</strong> ({rep.code}) — الإجمالي: {list.total} فاتورة.
+        {t("الفواتير التي تعامل عليها ")}<strong>{rep.name}</strong>{t(" (")}{rep.code}{t(") — الإجمالي: ")}{list.total}{t(" فاتورة.")}
       </p>
       <Alert>{list.error}</Alert>
       <div className="table-wrap">
@@ -335,12 +391,12 @@ function RepInvoicesModal({ rep, onClose }: { rep: SalesRep; onClose: () => void
           <table>
             <thead>
               <tr>
-                <th>رقم الفاتورة</th>
-                <th>التاريخ</th>
-                <th>العميل</th>
-                <th>الحالة</th>
-                <th className="num">الإجمالي</th>
-                <th>السداد</th>
+                <th>{t("رقم الفاتورة")}</th>
+                <th>{t("التاريخ")}</th>
+                <th>{t("العميل")}</th>
+                <th>{t("الحالة")}</th>
+                <th className="num">{t("الإجمالي")}</th>
+                <th>{t("السداد")}</th>
               </tr>
             </thead>
             <tbody>
@@ -357,7 +413,7 @@ function RepInvoicesModal({ rep, onClose }: { rep: SalesRep; onClose: () => void
             </tbody>
           </table>
         ) : (
-          <Empty>لا توجد فواتير لهذا المندوب.</Empty>
+          <Empty>{t("لا توجد فواتير لهذا المندوب.")}</Empty>
         )}
       </div>
       <Pager list={list} />

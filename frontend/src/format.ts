@@ -1,74 +1,104 @@
 import type { ChequeStatus, OrderStatus, PaymentMethod, Role } from "./types";
+import type { Lang } from "./i18n";
 
-const LOCALE = "ar-EG-u-nu-latn"; // Arabic text, Latin digits
+/** زوج تسمية ثنائي اللغة — ar للعربية وen للإنجليزية. */
+export type Bi = { ar: string; en: string };
+
+// لغة التنسيق الحالية (عملة/تواريخ) — تضبطها I18nProvider عند تغيير اللغة.
+let fmtLang: Lang = "ar";
+export function setFormatLang(lang: Lang): void {
+  fmtLang = lang;
+}
+const locale = (): string => (fmtLang === "ar" ? "ar-EG-u-nu-latn" : "en-GB");
 
 export function money(value: string | number | null | undefined): string {
   const n = Number(value ?? 0);
-  return n.toLocaleString(LOCALE, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " ج.م";
+  return n.toLocaleString(locale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + (fmtLang === "ar" ? " ج.م" : " EGP");
 }
 
 export function num(value: number | string | null | undefined): string {
-  return Number(value ?? 0).toLocaleString(LOCALE);
+  return Number(value ?? 0).toLocaleString(locale());
 }
 
 export function dateTime(iso: string): string {
-  return new Date(iso).toLocaleString(LOCALE, { dateStyle: "medium", timeStyle: "short" });
+  return new Date(iso).toLocaleString(locale(), { dateStyle: "medium", timeStyle: "short" });
 }
 
 export function dayLabel(day: string): string {
   // "2026-10-23" -> short local date; parsed as UTC noon to avoid timezone day-shift.
-  return new Date(day + "T12:00:00Z").toLocaleDateString(LOCALE, { day: "numeric", month: "short" });
+  return new Date(day + "T12:00:00Z").toLocaleDateString(locale(), { day: "numeric", month: "short" });
 }
 
-export const ROLE_LABEL: Record<Role, string> = {
-  admin: "مدير عام",
-  manager: "مدير",
-  staff: "موظف",
+export const ROLE_LABEL: Record<Role, Bi> = {
+  admin: { ar: "مدير عام", en: "Admin" },
+  manager: { ar: "مدير", en: "Manager" },
+  staff: { ar: "موظف", en: "Staff" },
 };
 
-export const STATUS_LABEL: Record<OrderStatus, string> = {
-  draft: "مسودة",
-  received: "تم الاستلام",
-  confirmed: "مؤكد",
-  cancelled: "ملغي",
+export function roleLabel(role: Role, lang: Lang = fmtLang): string {
+  return ROLE_LABEL[role][lang];
+}
+
+export const STATUS_LABEL: Record<OrderStatus, Bi> = {
+  draft: { ar: "مسودة", en: "Draft" },
+  received: { ar: "تم الاستلام", en: "Received" },
+  confirmed: { ar: "مؤكد", en: "Confirmed" },
+  cancelled: { ar: "ملغي", en: "Cancelled" },
 };
 
-export const REASON_LABEL: Record<string, string> = {
-  purchase_receipt: "استلام مشتريات",
-  sale: "بيع",
-  adjustment: "تسوية",
-  stocktake: "جرد",
-  stock_import: "استيراد مخزون",
-  transfer_out: "تحويل (صادر)",
-  transfer_in: "تحويل (وارد)",
-  sales_return: "مرتجع بيع",
-  purchase_return: "مرتجع شراء",
+export function statusLabel(status: OrderStatus, lang: Lang = fmtLang): string {
+  return STATUS_LABEL[status][lang];
+}
+
+export const REASON_LABEL: Record<string, Bi> = {
+  purchase_receipt: { ar: "استلام مشتريات", en: "Purchase receipt" },
+  sale: { ar: "بيع", en: "Sale" },
+  adjustment: { ar: "تسوية", en: "Adjustment" },
+  stocktake: { ar: "جرد", en: "Stocktake" },
+  stock_import: { ar: "استيراد مخزون", en: "Stock import" },
+  transfer_out: { ar: "تحويل (صادر)", en: "Transfer (out)" },
+  transfer_in: { ar: "تحويل (وارد)", en: "Transfer (in)" },
+  sales_return: { ar: "مرتجع بيع", en: "Sales return" },
+  purchase_return: { ar: "مرتجع شراء", en: "Purchase return" },
 };
 
-export const METHOD_LABEL: Record<PaymentMethod, string> = {
-  cash: "نقداً",
-  bank: "تحويل بنكي",
-  wallet: "محفظة إلكترونية",
-  cheque: "شيك",
+export function reasonLabel(reason: string, lang: Lang = fmtLang): string {
+  return REASON_LABEL[reason]?.[lang] ?? reason;
+}
+
+export const METHOD_LABEL: Record<PaymentMethod, Bi> = {
+  cash: { ar: "نقداً", en: "Cash" },
+  bank: { ar: "تحويل بنكي", en: "Bank transfer" },
+  wallet: { ar: "محفظة إلكترونية", en: "E-Wallet" },
+  cheque: { ar: "شيك", en: "Cheque" },
 };
 
-export const CHEQUE_STATUS_LABEL: Record<ChequeStatus, string> = {
-  under_collection: "تحت التحصيل",
-  issued: "مصروف",
-  collected: "محصّل",
-  cashed: "تم صرفه",
-  returned: "مرتد",
+export function methodLabel(method: PaymentMethod, lang: Lang = fmtLang): string {
+  return METHOD_LABEL[method][lang];
+}
+
+export const CHEQUE_STATUS_LABEL: Record<ChequeStatus, Bi> = {
+  under_collection: { ar: "تحت التحصيل", en: "Under collection" },
+  issued: { ar: "مصروف", en: "Issued" },
+  collected: { ar: "محصّل", en: "Collected" },
+  cashed: { ar: "تم صرفه", en: "Cashed" },
+  returned: { ar: "مرتد", en: "Returned" },
 };
+
+export function chequeStatusLabel(status: ChequeStatus, lang: Lang = fmtLang): string {
+  return CHEQUE_STATUS_LABEL[status][lang];
+}
 
 /** Plain calendar date (YYYY-MM-DD) shown without any timezone shift. */
 export function dateOnly(day: string): string {
-  return new Date(day + "T12:00:00Z").toLocaleDateString(LOCALE, { year: "numeric", month: "short", day: "numeric" });
+  return new Date(day + "T12:00:00Z").toLocaleDateString(locale(), { year: "numeric", month: "short", day: "numeric" });
 }
 
 /** Describes a balance: who owes whom, so a negative number is never ambiguous. */
-export function balanceNote(kind: "customer" | "supplier", value: string | number): string {
+export function balanceNote(kind: "customer" | "supplier", value: string | number, lang: Lang = fmtLang): string {
+  const ar = lang === "ar";
   const n = Number(value);
-  if (n === 0) return "مسدّد";
-  if (kind === "customer") return n > 0 ? "مستحق على العميل" : "رصيد دائن للعميل";
-  return n > 0 ? "مستحق للمورد" : "رصيد مدين لدى المورد";
+  if (n === 0) return ar ? "مسدّد" : "Settled";
+  if (kind === "customer") return n > 0 ? (ar ? "مستحق على العميل" : "Due from customer") : (ar ? "رصيد دائن للعميل" : "Customer credit balance");
+  return n > 0 ? (ar ? "مستحق للمورد" : "Due to supplier") : (ar ? "رصيد مدين لدى المورد" : "Supplier debit balance");
 }

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { api, qs } from "../api";
 import { useI18n } from "../i18n";
-import { num } from "../format";
+import { money, num } from "../format";
 import { useAction, useFetch } from "../hooks";
 import type { Branch, LowStockItem, Product, Warehouse } from "../types";
 import { Alert, Empty, Loading, Modal, PageHeader, ProductThumb } from "../ui";
@@ -26,7 +26,7 @@ export default function LowStock() {
   const toggleReorderEdit = (on: boolean) => {
     setReorderEdit(on);
     if (on) {
-      setReorderNote("وضع تعديل حد الطلب مفتوح — عدّل «حد الطلب» داخل الجدول، ثم دوس «حفظ حد الطلب».");
+      setReorderNote(t("وضع تعديل حد الطلب مفتوح — عدّل «حد الطلب» داخل الجدول، ثم دوس «حفظ حد الطلب»."));
       const init: Record<number, string> = {};
       for (const p of (low.data ?? [])) init[p.id] = String(p.reorder_level);
       setReorderEdits(init);
@@ -60,7 +60,7 @@ export default function LowStock() {
     }
     setSavingReorder(false);
     setReorderEdits({});
-    setReorderNote(`تم حفظ حد الطلب لـ ${n} صنف` + (errs.length ? ` — أخطاء: ${errs.slice(0, 3).join(" | ")}` : ""));
+    setReorderNote(`${t("تم حفظ حد الطلب لـ ")}${n}${t(" صنف")}` + (errs.length ? `${t(" — أخطاء: ")}${errs.slice(0, 3).join(" | ")}` : ""));
     low.reload();
   };
 
@@ -76,6 +76,26 @@ export default function LowStock() {
   });
   const low = useFetch(() => api.get<LowStockItem[]>(`/reports/low-stock${fq}`), `lowstock${fq}`);
   const [search, setSearch] = useState("");
+  const suggestions = useFetch(
+    () => api.get<any[]>(`/reports/purchase-suggestions${fq}`), `purch-sugg${fq}`,
+  );
+  const expiring = useFetch(
+    () => api.get<any[]>(`/reports/lots-expiring?days=30${scopeWarehouse ? `&warehouse_id=${scopeWarehouse}` : ""}`), `lots-exp${scopeWarehouse}`,
+  );
+  const [creatingPO, setCreatingPO] = useState<number | null>(null);
+  const createDraftPO = async (supplierId: number, supplierName: string) => {
+    if (!confirm(`إنشاء مسودة أمر شراء للمورد «${supplierName}» بكل الكميات المقترحة له؟`)) return;
+    setCreatingPO(supplierId);
+    try {
+      const r: any = await api.post("/purchase-orders/from-suggestions", {
+        supplier_id: supplierId,
+        warehouse_id: scopeWarehouse ? Number(scopeWarehouse) : null,
+      });
+      alert(`تم إنشاء مسودة أمر شراء #${r?.id} — استلمها من صفحة أوامر الشراء`);
+      suggestions.reload();
+    } catch (e) { alert((e as Error).message); }
+    finally { setCreatingPO(null); }
+  };
 
   const rows = (low.data ?? []).filter((p) => {
     // smart match: every typed word must be a prefix of some word in the name or of the SKU
@@ -97,10 +117,10 @@ export default function LowStock() {
     scopeWarehouse
       ? (warehouses.data ?? []).find((w) => String(w.id) === scopeWarehouse)?.name
       : scopeBranch
-        ? (branches.data ?? []).find((b) => String(b.id) === scopeBranch)?.name ?? `فرع #${scopeBranch}`
-        : "الشركة ككل";
+        ? (branches.data ?? []).find((b) => String(b.id) === scopeBranch)?.name ?? `${t("فرع #")}${scopeBranch}`
+        : t("الشركة ككل");
   const supplierLabel = scopeSupplier
-    ? (suppliers.data ?? []).find((s) => String(s.id) === scopeSupplier)?.name ?? `مورد #${scopeSupplier}`
+    ? (suppliers.data ?? []).find((s) => String(s.id) === scopeSupplier)?.name ?? `${t("مورد #")}${scopeSupplier}`
     : null;
 
   // معاينة الطباعة: بناء HTML للتقرير (رأس مختصر + نسخة من الجدول كما يظهر على الشاشة)
@@ -116,10 +136,10 @@ export default function LowStock() {
       inp.replaceWith(span);
     });
     const title = esc(t("dashboard.lowStockAlerts"));
-    const scope = esc(`${scopeLabel ?? "الشركة ككل"}${supplierLabel ? " — مورد: " + supplierLabel : ""}`);
+    const scope = esc(`${scopeLabel ?? t("الشركة ككل")}${supplierLabel ? t(" — مورد: ") + supplierLabel : ""}`);
     const date = esc(new Date().toLocaleDateString("ar-EG", { year: "numeric", month: "long", day: "numeric" }));
     return (
-      `<div class="ls-preview-meta"><h1>${title}</h1><p>${scope} — تاريخ الطباعة: ${date} — عدد المنتجات: ${rows.length}</p></div>` +
+      `<div class="ls-preview-meta"><h1>${title}</h1><p>${scope}${t(" — تاريخ الطباعة: ")}${date}${t(" — عدد المنتجات: ")}${rows.length}</p></div>` +
       clone.outerHTML
     );
   };
@@ -127,7 +147,7 @@ export default function LowStock() {
   const printNow = (html: string) => {
     const w = window.open("", "_blank", "width=1020,height=760");
     if (!w) {
-      alert("افتح السماح بالنوافذ المنبثقة لتتمكن من الطباعة");
+      alert(t("افتح السماح بالنوافذ المنبثقة لتتمكن من الطباعة"));
       return;
     }
     const css = Array.from(document.querySelectorAll('link[rel="stylesheet"]'))
@@ -156,18 +176,18 @@ export default function LowStock() {
       <div className="ls-print-header">
         <h1>{t("dashboard.lowStockAlerts")}</h1>
         <p>
-          {scopeLabel ?? "الشركة ككل"}
-          {supplierLabel && <> — مورد: {supplierLabel}</>}
-          {" — تاريخ الطباعة: "}
+          {scopeLabel ?? t("الشركة ككل")}
+          {supplierLabel && <>{t(" — مورد: ")}{supplierLabel}</>}
+          {t(" — تاريخ الطباعة: ")}
           {new Date().toLocaleDateString("ar-EG", { year: "numeric", month: "long", day: "numeric" })}
-          {" — عدد المنتجات: "}
+          {t(" — عدد المنتجات: ")}
           {rows.length}
         </p>
       </div>
 
       <div className="ls-toolbar">
         <label className="ls-filter-label">
-          نطاق التنبيه:
+          {t("نطاق التنبيه:")}
           <select
             className="ls-select"
             value={scopeBranch}
@@ -176,18 +196,18 @@ export default function LowStock() {
               setScopeWarehouse("");
             }}
           >
-            <option value="">الشركة ككل</option>
+            <option value="">{t("الشركة ككل")}</option>
             {(branches.data ?? []).map((b) => (
               <option key={b.id} value={b.id}>
-                فرع: {b.name}
+                {t("فرع: ")}{b.name}
               </option>
             ))}
           </select>
         </label>
         <label className="ls-filter-label">
-          {scopeBranch ? "مخزن الفرع:" : "مخزن معين:"}
+          {scopeBranch ? t("مخزن الفرع:") : t("مخزن معين:")}
           <select className="ls-select" value={scopeWarehouse} onChange={(e) => setScopeWarehouse(e.target.value)}>
-            <option value="">كل المخازن</option>
+            <option value="">{t("كل المخازن")}</option>
             {branchWarehouses.map((w) => (
               <option key={w.id} value={w.id}>
                 {w.name}
@@ -196,9 +216,9 @@ export default function LowStock() {
           </select>
         </label>
         <label className="ls-filter-label">
-          المورد:
+          {t("المورد:")}
           <select className="ls-select" value={scopeSupplier} onChange={(e) => setScopeSupplier(e.target.value)}>
-            <option value="">كل الموردين</option>
+            <option value="">{t("كل الموردين")}</option>
             {(suppliers.data ?? []).map((s) => (
               <option key={s.id} value={s.id}>
                 {s.name}
@@ -207,34 +227,34 @@ export default function LowStock() {
           </select>
         </label>
         <span className="ls-scope-note muted">
-          التصنيف الحالي: <b>{scopeLabel ?? "—"}</b>
-          {supplierLabel && <> — مورد: <b>{supplierLabel}</b></>}
+          {t("التصنيف الحالي: ")} <b>{scopeLabel ?? "—"}</b>
+          {supplierLabel && <>{t(" — مورد: ")} <b>{supplierLabel}</b></>}
         </span>
         <input
           type="search"
           className="ls-search"
-          placeholder="ابحث بالاسم أو الكود…"
+          placeholder={t("ابحث بالاسم أو الكود…")}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
         <button className="btn" disabled={download.busy} onClick={() => exportFile(`/reports/low-stock/xlsx${fq}`, "report-low-stock.xlsx")}>
-          {download.busy ? "جارٍ التجهيز…" : "⬇ تصدير Excel"}
+          {download.busy ? t("جارٍ التجهيز…") : `⬇ ${t("تصدير Excel")}`}
         </button>
         <button
           className="btn"
           onClick={() => setPrintPreview(buildReportHTML())}
         >
-          🖨 طباعة
+          🖨 {t("طباعة")}
         </button>
         <button
           className={reorderEdit ? "btn btn-primary" : "btn"}
           onClick={() => toggleReorderEdit(!reorderEdit)}
         >
-          {reorderEdit ? "✕ إغلاق وضع التعديل" : "📋 وضع تعديل حد الطلب"}
+          {reorderEdit ? `✕ ${t("إغلاق وضع التعديل")}` : `📋 ${t("وضع تعديل حد الطلب")}`}
         </button>
         {reorderEdit && changedReorders.length > 0 && (
           <button className="btn btn-primary" disabled={savingReorder} onClick={() => void saveReorders()}>
-            {savingReorder ? "… جارٍ الحفظ" : `💾 حفظ حد الطلب (${changedReorders.length})`}
+            {savingReorder ? t("… جارٍ الحفظ") : `💾 ${t("حفظ حد الطلب (")}${changedReorders.length}${t(")")}`}
           </button>
         )}
       </div>
@@ -244,7 +264,7 @@ export default function LowStock() {
 
       <div className="kpis" style={{ marginBottom: 14 }}>
         <div className="kpi">
-          <div className="label">منتجات تحت حد الطلب</div>
+          <div className="label">{t("منتجات تحت حد الطلب")}</div>
           <div className={`value${(low.data ?? []).length > 0 ? " low" : ""}`}>{num(low.data?.length ?? 0)}</div>
         </div>
         <div className="kpi">
@@ -335,6 +355,80 @@ export default function LowStock() {
           <div className="ls-preview-sheet" dangerouslySetInnerHTML={{ __html: printPreview }} />
         </Modal>
       )}
+
+      {/* ============================ اقتراحات الشراء ============================ */}
+      <div className="card card-pad" style={{ marginTop: 20 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
+          <h3 style={{ margin: 0 }}>🛒 اقتراحات الشراء{scopeWarehouse ? ` — ${scopeLabel}` : ""}</h3>
+          <button className="btn btn-sm" disabled={suggestions.loading} onClick={() => exportFile(`/reports/purchase-suggestions/xlsx${fq}`, "report-purchase-suggestions.xlsx")}>⬇️ Excel</button>
+        </div>
+        <Alert>{suggestions.error}</Alert>
+        {suggestions.loading ? <Loading /> : (suggestions.data ?? []).length ? (() => {
+          const bySupplier: Record<string, any[]> = {};
+          for (const r of suggestions.data ?? []) {
+            const key = r.supplier_name || "بلا مورد محدد";
+            (bySupplier[key] = bySupplier[key] || []).push(r);
+          }
+          return (
+            <>
+              {Object.entries(bySupplier).map(([supplier, rows]) => (
+                <div key={supplier} style={{ marginBottom: 14 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                    <b>{supplier} <span style={{ color: "var(--muted, #64748b)", fontWeight: 400 }}>({rows.length} صنف · {money(rows.reduce((s, r) => s + Number(r.estimated_cost || 0), 0))})</span></b>
+                    {rows[0].supplier_id && (
+                      <button className="btn btn-sm btn-primary" disabled={creatingPO === rows[0].supplier_id}
+                        onClick={() => createDraftPO(rows[0].supplier_id, supplier)}>
+                        {creatingPO === rows[0].supplier_id ? "..." : "أنشئ مسودة أمر شراء"}
+                      </button>
+                    )}
+                  </div>
+                  <div className="table-wrap">
+                    <table>
+                      <thead><tr><th>الكود</th><th>الصنف</th><th className="num">المتاح</th><th className="num">حد الطلب</th><th className="num">مقترح</th><th className="num">التكلفة التقديرية</th></tr></thead>
+                      <tbody>
+                        {rows.map((r: any) => (
+                          <tr key={r.product_id}>
+                            <td dir="ltr">{r.sku}</td><td>{r.name}</td>
+                            <td className="num">{num(r.available)}</td><td className="num">{num(r.target)}</td>
+                            <td className="num" style={{ fontWeight: 700 }}>{num(r.suggested_qty)}</td>
+                            <td className="num">{money(r.estimated_cost)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ))}
+            </>
+          );
+        })() : <Empty>لا اقتراحات — كل الأصناف فوق حدود الطلب</Empty>}
+      </div>
+
+      {/* ============================ لوطات تنتهي قريبًا ============================ */}
+      <div className="card card-pad" style={{ marginTop: 20 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
+          <h3 style={{ margin: 0 }}>⏳ لوطات تنتهي خلال 30 يومًا</h3>
+          <button className="btn btn-sm" disabled={expiring.loading} onClick={() => exportFile(`/reports/lots-expiring/xlsx?days=30${scopeWarehouse ? `&warehouse_id=${scopeWarehouse}` : ""}`, "report-lots-expiring.xlsx")}>⬇️ Excel</button>
+        </div>
+        <Alert>{expiring.error}</Alert>
+        {expiring.loading ? <Loading /> : (expiring.data ?? []).length ? (
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>الكود</th><th>الصنف</th><th>المخزن</th><th>اللوط</th><th>الانتهاء</th><th className="num">متبقي</th><th className="num">الكمية</th></tr></thead>
+              <tbody>
+                {(expiring.data ?? []).map((r: any) => (
+                  <tr key={r.lot_id} style={r.expired ? { background: "rgba(185,28,28,.08)" } : r.days_left <= 7 ? { background: "rgba(245,158,11,.08)" } : undefined}>
+                    <td dir="ltr">{r.sku}</td><td>{r.product_name}</td><td>{r.warehouse_name || "—"}</td>
+                    <td dir="ltr">{r.lot_code}</td><td dir="ltr">{r.expiry_date}</td>
+                    <td className="num" style={r.expired ? { color: "#b91c1c", fontWeight: 700 } : undefined}>{r.expired ? "منتهي ⚠️" : `${r.days_left} يوم`}</td>
+                    <td className="num">{num(r.qty_remaining)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : <Empty>لا لوطات قاربت على الانتهاء 🎉</Empty>}
+      </div>
     </div>
   );
 }

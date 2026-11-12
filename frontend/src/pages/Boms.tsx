@@ -110,7 +110,7 @@ function BomForm({ initial, products, onClose, onSaved }: {
                   <td><input value={row.notes} onChange={(e) => setItem(idx, { notes: e.target.value })} maxLength={200} /></td>
                   <td className="actions">
                     {items.length > 1 && (
-                      <button type="button" className="btn btn-sm btn-danger" onClick={() => removeItem(idx)}>حذف</button>
+                      <button type="button" className="btn-delete" onClick={() => removeItem(idx)}>حذف</button>
                     )}
                   </td>
                 </tr>
@@ -143,9 +143,17 @@ export default function Boms() {
   const [showForm, setShowForm] = useState(false);
   const [deleting, setDeleting] = useState<Bom | null>(null);
   const [toggling, setToggling] = useState<number | null>(null);
+  const [search, setSearch] = useState("");
   const { busy, error, run } = useAction();
 
   const productsById = useMemo(() => new Map((products.data ?? []).map((p) => [p.id, p])), [products.data]);
+
+  const filtered = (boms.data ?? []).filter((bom) => {
+    const term = search.trim().toLowerCase();
+    if (!term) return true;
+    const productName = productsById.get(bom.product_id)?.name?.toLowerCase() ?? "";
+    return productName.includes(term) || bom.version.toLowerCase().includes(term);
+  });
 
   const stdCost = (bom: Bom) => {
     let total = 0;
@@ -190,6 +198,12 @@ export default function Boms() {
   return (
     <>
       <PageHeader title="قوائم المواد (BOM)">
+        <input
+          style={{ width: 220 }}
+          placeholder="بحث بالمنتج أو الإصدار…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
         <button className="btn btn-primary" onClick={() => { setEditing(null); setShowForm(true); }}>
           + قائمة مواد جديدة
         </button>
@@ -200,7 +214,7 @@ export default function Boms() {
       <div className="card table-wrap">
         {boms.loading && !boms.data ? (
           <Loading />
-        ) : boms.data && boms.data.length > 0 ? (
+        ) : filtered.length > 0 ? (
           <table>
             <thead>
               <tr>
@@ -214,7 +228,7 @@ export default function Boms() {
               </tr>
             </thead>
             <tbody>
-              {boms.data.map((bom) => (
+              {filtered.map((bom) => (
                 <tr key={bom.id} style={bom.is_active ? undefined : { opacity: 0.55 }}>
                   <td>{productsById.get(bom.product_id)?.name ?? `#${bom.product_id}`}</td>
                   <td dir="ltr">{bom.version}</td>
@@ -223,15 +237,14 @@ export default function Boms() {
                   <td className="num">{money(stdCost(bom))}</td>
                   <td><ActiveBadge active={bom.is_active} /></td>
                   <td className="actions">
-                    <button className="btn btn-sm" onClick={() => { setEditing(bom); setShowForm(true); }}>
-                      تعديل
-                    </button>{" "}
-                    <button className="btn btn-sm" disabled={toggling === bom.id} onClick={() => toggleActive(bom)}>
-                      {bom.is_active ? "إيقاف" : "تفعيل"}
+                    <button className="btn-edit" onClick={() => { setEditing(bom); setShowForm(true); }}>تعديل</button>{" "}
+                    <button className={`btn-toggle ${bom.is_active ? "btn-toggle-off" : "btn-toggle-on"}`} disabled={toggling === bom.id} onClick={() => toggleActive(bom)}>{bom.is_active ? "إيقاف" : "تفعيل"}</button>{" "}
+                    <button className="btn btn-sm" disabled={toggling === bom.id} onClick={() => { const v = window.prompt("نسخ إلى إصدار (اتركه فارغًا لاقتراح التالي):", ""); if (v !== null) void run(async () => { await api.post(`/boms/${bom.id}/copy`, { version: v || null, is_active: false }); boms.reload(); }); }}>
+                      📄 نسخ
                     </button>{" "}
                     <button
-                      className="btn btn-sm"
-                      style={{ color: "var(--danger)", borderColor: "var(--danger)" }}
+                      className="btn-delete"
+                     
                       onClick={() => setDeleting(bom)}
                     >
                       حذف
@@ -242,7 +255,7 @@ export default function Boms() {
             </tbody>
           </table>
         ) : (
-          <Empty>لا توجد قوائم مواد — اضغط «+ قائمة مواد جديدة» للبدء.</Empty>
+          <Empty>{search ? "لا توجد نتائج مطابقة للبحث." : "لا توجد قوائم مواد — اضغط «+ قائمة مواد جديدة» للبدء."}</Empty>
         )}
       </div>
 
@@ -257,17 +270,17 @@ export default function Boms() {
 
       {deleting && (
         <Modal title={`حذف قائمة المواد — ${deleting.version}`} onClose={() => setDeleting(null)}>
+          <Alert>{error}</Alert>
           <p style={{ margin: "0 0 6px" }}>
             هل أنت متأكد من حذف قائمة المواد لإنتاج <strong>{productsById.get(deleting.product_id)?.name}</strong> (إصدار {deleting.version})؟ لا يمكن الرجوع بعد الحذف.
           </p>
           <div className="form-actions" style={{ marginTop: 14 }}>
             <button
-              className="btn"
-              style={{ color: "#fff", background: "var(--danger)" }}
+              className="btn-delete"
               disabled={busy}
               onClick={() => doDelete(deleting)}
             >
-              {busy ? "جارٍ الحذف…" : "🗑️ نعم، حذف"}
+              {busy ? "جارٍ الحذف…" : "نعم، حذف"}
             </button>
             <button type="button" className="btn" onClick={() => setDeleting(null)}>
               إلغاء

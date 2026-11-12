@@ -84,12 +84,13 @@ async function request<T>(method: string, path: string, body?: unknown, form?: U
 }
 
 /** Fetches a file from an authenticated endpoint as a Blob (Bearer auth, proper error handling). */
-export async function fetchBlob(path: string): Promise<Blob> {
+export async function fetchBlob(path: string, init?: { method?: string; body?: string }): Promise<Blob> {
   const headers: Record<string, string> = {};
   if (token) headers.Authorization = `Bearer ${token}`;
+  if (init?.body) headers["Content-Type"] = "application/json";
   let res: Response;
   try {
-    res = await fetch(API_URL(path), { headers });
+    res = await fetch(API_URL(path), { headers, method: init?.method ?? "GET", body: init?.body });
   } catch {
     throw new ApiError(0, "تعذّر الاتصال بالخادم، تحقق من الشبكة");
   }
@@ -166,6 +167,20 @@ export const api = {
     const fd = new FormData();
     fd.append("file", file);
     const res = await fetch(API_URL(path), { method: "POST", headers, body: fd });
+    if (!res.ok) {
+      if (res.status === 401 && onUnauthorized) onUnauthorized();
+      const text = await res.text();
+      let detail: unknown = null;
+      try { detail = JSON.parse(text)?.detail; } catch { detail = text; }
+      throw new ApiError(res.status, messageFromDetail(res.status, detail));
+    }
+    return (await res.json()) as T;
+  },
+  /** رفع ملف مع حقول نموذج إضافية (multipart) — يستخدمه مستندات الموظفين. */
+  uploadForm: async <T>(path: string, formData: FormData): Promise<T> => {
+    const headers: Record<string, string> = {};
+    if (token) headers.Authorization = `Bearer ${token}`;
+    const res = await fetch(API_URL(path), { method: "POST", headers, body: formData });
     if (!res.ok) {
       if (res.status === 401 && onUnauthorized) onUnauthorized();
       const text = await res.text();

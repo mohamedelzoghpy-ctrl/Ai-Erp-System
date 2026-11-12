@@ -33,18 +33,21 @@ interface ImportReply {
   sample?: Record<string, unknown>[];
 }
 
-const SKIP_LABEL: Record<string, string> = {
-  totals_rows: "صفوف الإجماليات",
-  empty_rows: "صفوف فارغة",
-  no_new_value: "دون كمية جديدة",
-  no_change: "دون تغيير",
-  sample_rows: "صفوف نموذجية",
-};
-
-const SAMPLE_LABEL: Record<string, string> = {
-  row: "الصف", code: "الرمز", name: "الاسم", opening: "الرصيد الافتتاحي", result: "النتيجة",
-  product: "الصنف", current: "الحالي", new: "الجديد", delta: "التغيير", warehouse: "المخزن",
-};
+/** Skip labels are built per call with t() so they render per-language. */
+function skipsText(skips?: Skips, t: (k: string) => string = String): string {
+  if (!skips) return "";
+  const labels: Record<string, string> = {
+    totals_rows: t("صفوف الإجماليات"),
+    empty_rows: t("صفوف فارغة"),
+    no_new_value: t("دون كمية جديدة"),
+    no_change: t("دون تغيير"),
+    sample_rows: t("صفوف نموذجية"),
+  };
+  const parts = Object.entries(labels)
+    .filter(([k]) => skips[k])
+    .map(([k, label]) => `${label}: ${num(skips[k])}`);
+  return parts.length ? parts.join(" · ") : "";
+}
 
 function entityOf(e: Err): string {
   return e.party ?? e.product ?? e.warehouse ?? "";
@@ -77,7 +80,7 @@ function ErrorsBox({ errors }: { errors: Err[] }) {
       </div>
       <table style={{ marginTop: 6, fontSize: 12.5 }}>
         <thead>
-          <tr><th>الصف</th><th>الكيان</th><th>الخطأ</th></tr>
+          <tr><th>{t("الصف")}</th><th>{t("الكيان")}</th><th>{t("الخطأ")}</th></tr>
         </thead>
         <tbody>
           {errors.slice(0, 30).map((e, i) => (
@@ -87,19 +90,11 @@ function ErrorsBox({ errors }: { errors: Err[] }) {
               <td style={{ color: "var(--danger, #b3261e)" }}>{e.error}</td>
             </tr>
           ))}
-          {errors.length > 30 && <tr><td colSpan={3} className="muted">… {num(errors.length - 30)} أخطاء أخرى — نزّل التقرير الكامل</td></tr>}
+          {errors.length > 30 && <tr><td colSpan={3} className="muted">… {num(errors.length - 30)} {t("أخطاء أخرى — نزّل التقرير الكامل")}</td></tr>}
         </tbody>
       </table>
     </div>
   );
-}
-
-function skipsText(skips?: Skips): string {
-  if (!skips) return "";
-  const parts = Object.entries(SKIP_LABEL)
-    .filter(([k]) => skips[k])
-    .map(([k, label]) => `${label}: ${num(skips[k])}`);
-  return parts.length ? parts.join(" · ") : "";
 }
 
 /** The dry-run modal: what will change + errors, before touching anything. */
@@ -107,16 +102,20 @@ function PreviewModal({
   title, data, busy, onConfirm, onClose,
 }: { title: string; data: ImportReply; busy: boolean; onConfirm: () => void; onClose: () => void }) {
   const { t } = useI18n();
+  const SAMPLE_LABEL: Record<string, string> = {
+    row: t("الصف"), code: t("الرمز"), name: t("الاسم"), opening: t("الرصيد الافتتاحي"), result: t("النتيجة"),
+    product: t("الصنف"), current: t("الحالي"), new: t("الجديد"), delta: t("التغيير"), warehouse: t("المخزن"),
+  };
   const counts: string[] = [];
-  if (data.rows != null) counts.push(`صفوف مقروءة: ${num(data.rows)}`);
-  if (data.created != null) counts.push(`قادم جديد: ${num(data.created)}`);
-  if (data.updated != null) counts.push(`تحديث: ${num(data.updated)}`);
-  if (data.changes != null) counts.push(`تغييرات كمية: ${num(data.changes)}`);
-  if (data.changed_qty != null) counts.push(`صافي الكميات: ${data.changed_qty > 0 ? "+" : ""}${num(data.changed_qty)}`);
-  if (data.products != null) counts.push(`أصناف: ${num(data.products)}`);
+  if (data.rows != null) counts.push(`${t("صفوف مقروءة: ")}${num(data.rows)}`);
+  if (data.created != null) counts.push(`${t("قادم جديد: ")}${num(data.created)}`);
+  if (data.updated != null) counts.push(`${t("تحديث: ")}${num(data.updated)}`);
+  if (data.changes != null) counts.push(`${t("تغييرات كمية: ")}${num(data.changes)}`);
+  if (data.changed_qty != null) counts.push(`${t("صافي الكميات: ")}${data.changed_qty > 0 ? "+" : ""}${num(data.changed_qty)}`);
+  if (data.products != null) counts.push(`${t("أصناف: ")}${num(data.products)}`);
   const sample = data.sample ?? [];
   const keys = sample.length ? Object.keys(sample[0]).filter((k) => SAMPLE_LABEL[k]) : [];
-  const sk = skipsText(data.skipped);
+  const sk = skipsText(data.skipped, t);
   return (
     <Modal title={title} onClose={onClose} wide>
       <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBlock: 6 }}>
@@ -210,13 +209,13 @@ function ImportBlock({
 
   const summarizeDone = (r: ImportReply): string => {
     const parts: string[] = [];
-    if (r.created != null) parts.push(`${num(r.created)} جديد`);
-    if (r.updated != null) parts.push(`${num(r.updated)} تحديث`);
-    if (r.applied != null) parts.push(`تم تعديل ${num(r.applied)} صنف`);
-    if (r.applied_products != null) parts.push(`تم تعديل أرصدة ${num(r.applied_products)} صنف عبر المخازن`);
-    if (r.changed_qty != null) parts.push(`صافي التغيير ${r.changed_qty > 0 ? "+" : ""}${num(r.changed_qty)}`);
-    const sk = skipsText(r.skipped);
-    return `${label} — ${parts.join(" · ") || "تم"}` + (sk ? ` · متخطى (${sk})` : "") + (r.errors?.length ? ` · أخطاء: ${num(r.errors.length)}` : "");
+    if (r.created != null) parts.push(`${num(r.created)}${t(" جديد")}`);
+    if (r.updated != null) parts.push(`${num(r.updated)}${t(" تحديث")}`);
+    if (r.applied != null) parts.push(`${t("تم تعديل ")}${num(r.applied)}${t(" صنف")}`);
+    if (r.applied_products != null) parts.push(`${t("تم تعديل أرصدة ")}${num(r.applied_products)}${t(" صنف عبر المخازن")}`);
+    if (r.changed_qty != null) parts.push(`${t("صافي التغيير ")}${r.changed_qty > 0 ? "+" : ""}${num(r.changed_qty)}`);
+    const sk = skipsText(r.skipped, t);
+    return `${label} — ${parts.join(" · ") || t("تم")}` + (sk ? `${t(" · متخطى (")}${sk}${t(")")}` : "") + (r.errors?.length ? `${t(" · أخطاء: ")}${num(r.errors.length)}` : "");
   };
 
   const pick = (e: FormEvent<HTMLInputElement>) => {
@@ -378,13 +377,13 @@ function WarehouseIOCard() {
 
   const undo = async () => {
     if (!whId) return;
-    if (!confirm(`تراجع عن آخر رفع رصيد على «${selected?.name}»؟ ستُعكس كل التغييرات التي أدخلها الرفع الأخير.`)) return;
+    if (!confirm(`${t("تراجع عن آخر رفع رصيد على «")}${selected?.name}${t("»؟ ستُعكس كل التغييرات التي أدخلها الرفع الأخير.")}`)) return;
     setUndoBusy(true);
     setUndoError(null);
     setUndoResult(null);
     try {
       const res = await api.post<{ products: number; changed_qty: number }>(`/data-io/warehouses/stock/undo?warehouse_id=${whId}`);
-      setUndoResult(`تم التراجع: عكس رصيد ${num(res.products)} صنف (صافي ${res.changed_qty > 0 ? "+" : ""}${num(res.changed_qty)})`);
+      setUndoResult(`${t("تم التراجع: عكس رصيد ")}${num(res.products)}${t(" صنف (صافي ")}${res.changed_qty > 0 ? "+" : ""}${num(res.changed_qty)}${t(")")}`);
       products.reload();
     } catch (e) {
       setUndoError(e instanceof Error ? e.message : String(e));
@@ -421,7 +420,7 @@ function WarehouseIOCard() {
           <b>{t("dataio.noWarehouses")}</b> — {t("dataio.noWarehousesHint")}
         </p>
       )}
-      <select value={whId} aria-label={"المخزن المستهدف"} style={{ marginBottom: 10, width: "100%" }}
+      <select value={whId} aria-label={t("المخزن المستهدف")} style={{ marginBottom: 10, width: "100%" }}
         onChange={(e) => { setWhId(e.target.value); setUndoResult(null); setUndoError(null); }}>
         <option value="">{t("dataio.pickWarehouse")}</option>
         {(list.data ?? []).map((w) => (<option key={w.id} value={w.id}>{w.name} ({w.code})</option>))}
@@ -432,10 +431,10 @@ function WarehouseIOCard() {
       )}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 14 }}>
         <button type="button" className="btn" disabled={!whId || exportBusy} title={!whId ? t("dataio.pickFirst") : undefined} onClick={() => void exportStock()} style={{ opacity: !whId ? 0.55 : 1 }}>
-          {exportBusy ? "جارٍ التصدير…" : t("dataio.stockExport")}
+          {exportBusy ? t("جارٍ التصدير…") : t("dataio.stockExport")}
         </button>
         <button type="button" className="btn" disabled={!whId || undoBusy} title={!whId ? t("dataio.pickFirst") : t("dataio.undoTitle")} onClick={() => void undo()} style={{ opacity: !whId ? 0.55 : 1 }}>
-          {undoBusy ? "جارٍ التراجع…" : t("dataio.undo")}
+          {undoBusy ? t("جارٍ التراجع…") : t("dataio.undo")}
         </button>
       </div>
       {!whId && (list.data ?? []).length > 0 && (
@@ -457,18 +456,38 @@ function WarehouseIOCard() {
   );
 }
 
-// ---------------------------------------------------------------- page
-export default function DataIO() {
+// ---------------------------------------------------------------- pages
+// كل مجموعة بيانات في صفحة مستقلة — تُعرض كعناصر في القائمة المنسدلة «استيراد وتصدير البيانات».
+
+export function DataIOCustomers() {
   const { t } = useI18n();
   return (
     <>
-      <PageHeader title={t("dataio.title")} />
+      <PageHeader title={t("استيراد وتصدير العملاء")} />
       <p className="muted" style={{ marginTop: 0 }} dir="rtl">{t("dataio.hint")}</p>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(380px, 1fr))", gap: 16 }}>
-        <PartyIOCard kind="customer" title={t("dataio.customers")} />
-        <PartyIOCard kind="supplier" title={t("dataio.suppliers")} />
-        <WarehouseIOCard />
-      </div>
+      <PartyIOCard kind="customer" title={t("dataio.customers")} />
+    </>
+  );
+}
+
+export function DataIOSuppliers() {
+  const { t } = useI18n();
+  return (
+    <>
+      <PageHeader title={t("استيراد وتصدير الموردين")} />
+      <p className="muted" style={{ marginTop: 0 }} dir="rtl">{t("dataio.hint")}</p>
+      <PartyIOCard kind="supplier" title={t("dataio.suppliers")} />
+    </>
+  );
+}
+
+export function DataIOWarehouses() {
+  const { t } = useI18n();
+  return (
+    <>
+      <PageHeader title={t("استيراد وتصدير المخازن")} />
+      <p className="muted" style={{ marginTop: 0 }} dir="rtl">{t("dataio.hint")}</p>
+      <WarehouseIOCard />
     </>
   );
 }

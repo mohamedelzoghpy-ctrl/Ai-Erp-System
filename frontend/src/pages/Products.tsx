@@ -2,7 +2,7 @@ import { useState, type FormEvent } from "react";
 import { api } from "../api";
 import { useAuth } from "../auth";
 import { useI18n } from "../i18n";
-import { dateTime, money, num, REASON_LABEL } from "../format";
+import { dateTime, money, num, reasonLabel } from "../format";
 import { useAction, useFetch, usePagedList } from "../hooks";
 import type { Party, Product, StockMovement, ProductStockRow, Warehouse } from "../types";
 import { Alert, Empty, Field, Loading, Modal, PageHeader, Pager, ProductThumb } from "../ui";
@@ -40,7 +40,7 @@ export default function Products() {
   const togglePriceEdit = (on: boolean) => {
     setPriceEdit(on);
     setEdits({});
-    setPriceNote(on ? "وضع تعديل الأسعار مفتوح — عدّل «التكلفة» و«سعر البيع» داخل الجدول، ثم دوس «حفظ الأسعار»." : null);
+    setPriceNote(on ? t("وضع تعديل الأسعار مفتوح — عدّل «التكلفة» و«سعر البيع» داخل الجدول، ثم دوس «حفظ الأسعار».") : null);
     if (on) {
       const init: PriceEdits = {};
       for (const p of rows) init[p.id] = { cost_price: String(p.cost_price), sale_price: String(p.sale_price) };
@@ -86,7 +86,7 @@ export default function Products() {
     }
     setSavingPrices(false);
     setEdits({});
-    setPriceNote(`تم حفظ أسعار ${n} صنف` + (errs.length ? ` — أخطاء: ${errs.slice(0, 3).join(" | ")}` : "") );
+    setPriceNote(`${t("تم حفظ أسعار ")}${n}${t(" صنف")}` + (errs.length ? `${t(" — أخطاء: ")}${errs.slice(0, 3).join(" | ")}` : "") );
     products.reload();
   };
 
@@ -97,7 +97,7 @@ export default function Products() {
     setTmplNote(null);
     try {
       await api.download("/products/import-template/xlsx", "products-upload-template.xlsx");
-      setTmplNote("نزل النموذج في «التنزيلات» — املأ الأعمدة وارفعه من زرار الاستيراد.");
+      setTmplNote(t("نزل النموذج في «التنزيلات» — املأ الأعمدة وارفعه من زرار الاستيراد."));
     } catch (e) {
       setTmplNote((e as Error).message);
     } finally {
@@ -125,8 +125,8 @@ export default function Products() {
     try {
       const res = await api.upload<ImportSummary>("/products/import/xlsx", pending.file);
       setImportNote(
-        `العدّاد: ${res.created} جديد · ${res.updated} تحديث · ${res.errors.length} خطأ` +
-          (res.errors.length ? ` — آخر الأخطاء: ${res.errors.slice(0, 3).join(" | ")}` : ""),
+        `${t("العدّاد: ")}${res.created}${t(" جديد · ")}${res.updated}${t(" تحديث · ")}${res.errors.length}${t(" خطأ")}` +
+          (res.errors.length ? `${t(" — آخر الأخطاء: ")}${res.errors.slice(0, 3).join(" | ")}` : ""),
       );
       setPending(null);
       products.reload();
@@ -148,13 +148,13 @@ export default function Products() {
           disabled={action.busy}
           onClick={() => void action.run(() => api.download("/products/export/xlsx", "products.xlsx"))}
         >
-          ⬇ تصدير Excel
+          {t("⬇ تصدير Excel")}
         </button>
         <button className="btn" disabled={tmplBusy} onClick={() => void downloadTemplate()}>
-          {tmplBusy ? "… جارٍ التنزيل" : "⬇ نموذج رفع المنتجات"}
+          {tmplBusy ? t("… جارٍ التنزيل") : t("⬇ نموذج رفع المنتجات")}
         </button>
         <label className="btn" style={{ cursor: "pointer" }}>
-          {checking ? "… جارٍ الاختبار" : "⬆ استيراد Excel"}
+          {checking ? t("… جارٍ الاختبار") : t("⬆ استيراد Excel")}
           <input type="file" accept=".xlsx,.xls" style={{ display: "none" }} onChange={(e) => {
             const f = e.target.files?.[0];
             if (!f) return;
@@ -178,7 +178,7 @@ export default function Products() {
               <td>${money(p.sale_price)}</td>
             </tr>`;
           }).join("");
-          w.document.write(`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>قائمة المنتجات</title>
+          w.document.write(`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>${t("قائمة المنتجات")}</title>
             <style>
               body { font-family: Tahoma, Arial, sans-serif; padding: 16px; }
               h1 { text-align: center; }
@@ -187,10 +187,10 @@ export default function Products() {
               th { background: #eee; }
               .num { text-align: center; }
             </style></head><body>
-            <h1>قائمة المنتجات</h1>
+            <h1>${t("قائمة المنتجات")}</h1>
             <table>
               <thead><tr>
-                <th>كود الصنف</th><th>الاسم</th><th>كود المورد</th><th>اسم المورد</th><th>الوحدة</th><th>التكلفة</th><th>سعر البيع</th>
+                <th>${t("كود الصنف")}</th><th>${t("الاسم")}</th><th>${t("كود المورد")}</th><th>${t("اسم المورد")}</th><th>${t("الوحدة")}</th><th>${t("التكلفة")}</th><th>${t("سعر البيع")}</th>
               </tr></thead>
               <tbody>${rowsHtml}</tbody>
             </table>
@@ -199,7 +199,7 @@ export default function Products() {
             </body></html>`);
           w.document.close();
         }}>
-          🖨 طباعة
+          {t("🖨 طباعة")}
         </button>
       </PageHeader>
 
@@ -227,22 +227,22 @@ export default function Products() {
       )}
 
       {pending && (
-        <Modal title="اختبار النموذج" onClose={() => setPending(null)}>
+        <Modal title={t("اختبار النموذج")} onClose={() => setPending(null)}>
           <p style={{ marginTop: 0, color: "var(--muted, #6B778A)", fontSize: 13 }}>
-            الملف: <b dir="ltr">{pending.file.name}</b> — تجربة بدون تسجيل، الرفع الفعلي يتم بعد تأكيدك.
+            {t("الملف: ")}<b dir="ltr">{pending.file.name}</b>{t(" — تجربة بدون تسجيل، الرفع الفعلي يتم بعد تأكيدك.")}
           </p>
           <div style={{ display: "flex", gap: 10, margin: "14px 0" }}>
             <div style={{ flex: 1, padding: 12, borderRadius: 10, background: "#e8f5e9", color: "#1b5e20", textAlign: "center" }}>
               <div style={{ fontSize: 26, fontWeight: 700 }}>{pending.created}</div>
-              <div style={{ fontSize: 12 }}>صنف جديد</div>
+              <div style={{ fontSize: 12 }}>{t("صنف جديد")}</div>
             </div>
             <div style={{ flex: 1, padding: 12, borderRadius: 10, background: "#e3f2fd", color: "#0d47a1", textAlign: "center" }}>
               <div style={{ fontSize: 26, fontWeight: 700 }}>{pending.updated}</div>
-              <div style={{ fontSize: 12 }}>تحديث صنف موجود</div>
+              <div style={{ fontSize: 12 }}>{t("تحديث صنف موجود")}</div>
             </div>
             <div style={{ flex: 1, padding: 12, borderRadius: 10, background: pending.errors.length ? "#fdecea" : "#efeef4", color: pending.errors.length ? "#93321b" : "#555", textAlign: "center" }}>
               <div style={{ fontSize: 26, fontWeight: 700 }}>{pending.errors.length}</div>
-              <div style={{ fontSize: 12 }}>خطأ</div>
+              <div style={{ fontSize: 12 }}>{t("خطأ")}</div>
             </div>
           </div>
           {pending.errors.length > 0 && (
@@ -250,15 +250,15 @@ export default function Products() {
               {pending.errors.slice(0, 10).map((err, i) => (
                 <li key={i}>{err}</li>
               ))}
-              {pending.errors.length > 10 && <li>… ({pending.errors.length - 10} أخرى)</li>}
+              {pending.errors.length > 10 && <li>{t("… (")}{pending.errors.length - 10}{t(" أخرى)")}</li>}
             </ul>
           )}
           <div style={{ display: "flex", gap: 8 }}>
             <button className="btn btn-primary" disabled={importing} onClick={() => void confirmImport()} style={{ flex: 1 }}>
-              {importing ? "… جارٍ الرفع" : `تأكيد الرفع (${pending.created} جديد، ${pending.updated} تحديث)`}
+              {importing ? t("… جارٍ الرفع") : `${t("تأكيد الرفع (")}${pending.created}${t(" جديد، ")}${pending.updated}${t(" تحديث)")}`}
             </button>
             <button className="btn" disabled={importing} onClick={() => setPending(null)}>
-              إلغاء
+              {t("إلغاء")}
             </button>
           </div>
         </Modal>
@@ -276,11 +276,11 @@ export default function Products() {
           className={priceEdit ? "btn btn-primary" : "btn"}
           onClick={() => togglePriceEdit(!priceEdit)}
         >
-          {priceEdit ? "✕ إغلاق وضع التعديل" : "✏️ وضع تعديل الأسعار"}
+          {priceEdit ? t("✕ إغلاق وضع التعديل") : t("✏️ وضع تعديل الأسعار")}
         </button>
         {priceEdit && changedRows.length > 0 && (
           <button className="btn btn-primary" disabled={savingPrices} onClick={() => void savePrices()}>
-            {savingPrices ? "… جارٍ الحفظ" : `💾 حفظ الأسعار (${changedRows.length})`}
+            {savingPrices ? t("… جارٍ الحفظ") : `${t("💾 حفظ الأسعار (")}${changedRows.length}${t(")")}`}
           </button>
         )}
       </div>
@@ -311,12 +311,12 @@ export default function Products() {
           <table>
             <thead>
               <tr>
-                <th style={{ width: 56 }}>صورة</th>
+                <th style={{ width: 56 }}>{t("صورة")}</th>
                 <th>{t("products.sku")}</th>
                 <th>{t("products.name")}</th>
-                <th>كود المورد</th>
-                <th>اسم المورد</th>
-                <th>الوحدة</th>
+                <th>{t("كود المورد")}</th>
+                <th>{t("اسم المورد")}</th>
+                <th>{t("الوحدة")}</th>
                 <th className="num">{t("products.cost")}</th>
                 <th className="num">{t("products.salePrice")}</th>
                 <th />
@@ -370,11 +370,9 @@ export default function Products() {
                       <td className="num" style={isChanged ? { background: "#fff8e1" } : undefined}>{money(p.sale_price)}</td>
                     )}
                     <td className="actions">
-                      <button className="btn btn-sm" onClick={() => setEditing(p)}>
-                        تعديل
-                      </button>
+                      <button className="btn-edit" onClick={() => setEditing(p)}>{t("تعديل")}</button>
                       <button className="btn btn-sm" onClick={() => setHistory(p)}>
-                        الحركات
+                        {t("الحركات")}
                       </button>
                     </td>
                   </tr>
@@ -406,9 +404,6 @@ export default function Products() {
   );
 }
 
-/** أنواع الوحدات المتاحة لاختيارها عند إضافة/تعديل منتج. */
-const PRODUCT_UNITS = ["قطعة", "علبة", "كرتونة", "عبوة", "دستة", "زجاجة", "رول", "طقم", "كجم", "جرام", "لتر", "متر", "سم"];
-
 function ProductForm({
   initial,
   isManager,
@@ -424,6 +419,10 @@ function ProductForm({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const { t } = useI18n();
+  // أنواع الوحدات المتاحة لاختيارها عند إضافة/تعديل منتج
+  // (القيم تُخزَّن كما هي في قاعدة البيانات — الترجمة تُطبَّق على العرض فقط)
+  const PRODUCT_UNITS = ["قطعة", "علبة", "كرتونة", "عبوة", "دستة", "زجاجة", "رول", "طقم", "كجم", "جرام", "لتر", "متر", "سم"];
   const [f, setF] = useState({
     sku: initial?.sku ?? "",
     name: initial?.name ?? "",
@@ -444,17 +443,17 @@ function ProductForm({
   const [imageNote, setImageNote] = useState<string | null>(null);
   const imageUrl = f.image_url.trim() || null;
   const previewSrc = imageFile ? URL.createObjectURL(imageFile) : initial?.image_uploaded ? `/api/products/${initial.id}/image` : imageUrl;
-  const currentImageTitle = initial?.image_uploaded ? "صورة مرفوعة من الجهاز" : imageUrl ? "صورة من رابط" : "لا صورة بعد";
+  const currentImageTitle = initial?.image_uploaded ? t("صورة مرفوعة من الجهاز") : imageUrl ? t("صورة من رابط") : t("لا صورة بعد");
 
   const pickImage = (file: File | null) => {
     setImageFile(file);
     if (file && file.size > 3 * 1024 * 1024) {
-      setImageNote("⚠️ حجم الصورة أكبر من 3 ميجابايت — اختر صورة أصغر.");
+      setImageNote(t("⚠️ حجم الصورة أكبر من 3 ميجابايت — اختر صورة أصغر."));
       setImageFile(null);
       return;
     }
     if (file && !file.type.startsWith("image/")) {
-      setImageNote("⚠️ المفروض ملف صورة (PNG/JPEG/WebP/GIF).");
+      setImageNote(t("⚠️ المفروض ملف صورة (PNG/JPEG/WebP/GIF)."));
       setImageFile(null);
       return;
     }
@@ -492,41 +491,41 @@ function ProductForm({
   };
 
   return (
-    <Modal title={initial ? "تعديل منتج" : "منتج جديد"} onClose={onClose} wide>
+    <Modal title={initial ? t("تعديل منتج") : t("منتج جديد")} onClose={onClose} wide>
       <form onSubmit={submit}>
         <Alert>{error}</Alert>
         <div className="form-grid">
-          {!initial && <p className="field-hint">سيُنشأ رمز SKU تلقائيًا من اسم المنتج عند الحفظ.</p>}
-          <Field label="اسم المنتج">
+          {!initial && <p className="field-hint">{t("سيُنشأ رمز SKU تلقائيًا من اسم المنتج عند الحفظ.")}</p>}
+          <Field label={t("اسم المنتج")}>
             <input value={f.name} onChange={(e) => set("name", e.target.value)} required autoFocus={!!initial} />
           </Field>
-          <Field label="سعر التكلفة">
+          <Field label={t("سعر التكلفة")}>
             <input
               type="number"
               min="0"
               step="0.01"
               value={f.cost_price}
               readOnly={!isManager}
-              title={isManager ? undefined : "تعديل سعر التكلفة للمدير فقط"}
+              title={isManager ? undefined : t("تعديل سعر التكلفة للمدير فقط")}
               onChange={(e) => set("cost_price", e.target.value)}
             />
           </Field>
-          <Field label="سعر البيع">
+          <Field label={t("سعر البيع")}>
             <input type="number" min="0" step="0.01" value={f.sale_price} onChange={(e) => set("sale_price", e.target.value)} />
           </Field>
-          <Field label="الوحدة">
+          <Field label={t("الوحدة")}>
             <select value={f.unit} onChange={(e) => set("unit", e.target.value)}>
               {(f.unit && !PRODUCT_UNITS.includes(f.unit) ? [...PRODUCT_UNITS, f.unit] : PRODUCT_UNITS).map((u) => (
-                <option key={u} value={u}>{u}</option>
+                <option key={u} value={u}>{t(u)}</option>
               ))}
             </select>
           </Field>
-          <Field label="حد إعادة الطلب">
+          <Field label={t("حد إعادة الطلب")}>
             <input type="number" min="0" step="1" value={f.reorder_level} onChange={(e) => set("reorder_level", e.target.value)} />
           </Field>
-          <Field label="المخزن">
+          <Field label={t("المخزن")}>
             <select value={f.warehouse_id} onChange={(e) => set("warehouse_id", e.target.value)}>
-              <option value="">— بدون —</option>
+              <option value="">{t("— بدون —")}</option>
               {warehouses.map((w) => (
                 <option key={w.id} value={w.id}>
                   {w.name}
@@ -534,9 +533,9 @@ function ProductForm({
               ))}
             </select>
           </Field>
-          <Field label="المورد">
+          <Field label={t("المورد")}>
             <select value={f.supplier_id} onChange={(e) => set("supplier_id", e.target.value)}>
-              <option value="">— بدون —</option>
+              <option value="">{t("— بدون —")}</option>
               {suppliers.map((s) => (
                 <option key={s.id} value={s.id}>
                   {s.name}
@@ -545,29 +544,29 @@ function ProductForm({
             </select>
           </Field>
         </div>
-        <Field label="الوصف">
+        <Field label={t("الوصف")}>
           <textarea rows={2} value={f.description} onChange={(e) => set("description", e.target.value)} />
         </Field>
         <div className="product-image-field">
           <div className="product-image-preview" title={currentImageTitle}>
             {previewSrc ? (
-              <img src={previewSrc} alt="معاينة صورة المنتج" style={{ width: 96, height: 96, objectFit: "cover", borderRadius: 8, border: "1px solid var(--border, #d8dde6)" }} onError={(e) => { (e.currentTarget as HTMLImageElement).style.opacity = "0.25"; }} />
+              <img src={previewSrc} alt={t("معاينة صورة المنتج")} style={{ width: 96, height: 96, objectFit: "cover", borderRadius: 8, border: "1px solid var(--border, #d8dde6)" }} onError={(e) => { (e.currentTarget as HTMLImageElement).style.opacity = "0.25"; }} />
             ) : (
-              <div style={{ width: 96, height: 96, borderRadius: 8, border: "1px dashed var(--border, #d8dde6)", display: "grid", placeItems: "center", fontSize: 40 }} aria-label="بدون صورة">📦</div>
+              <div style={{ width: 96, height: 96, borderRadius: 8, border: "1px dashed var(--border, #d8dde6)", display: "grid", placeItems: "center", fontSize: 40 }} aria-label={t("بدون صورة")}>📦</div>
             )}
           </div>
           <div style={{ flex: 1 }}>
-            <Field label="رابط الصورة من الإنترنت" hint="http:// أو https:// — تُستخدم لو مفيش ملف مرفوع">
+            <Field label={t("رابط الصورة من الإنترنت")} hint={t("http:// أو https:// — تُستخدم لو مفيش ملف مرفوع")}>
               <input dir="ltr" type="text" placeholder="https://example.com/product.jpg" value={f.image_url} onChange={(e) => set("image_url", e.target.value)} />
             </Field>
-            <Field label="أو ارفع صورة من جهازك" hint={imageNote ?? "PNG / JPEG / WebP / GIF — حتى 3 ميجابايت"}>
+            <Field label={t("أو ارفع صورة من جهازك")} hint={imageNote ?? t("PNG / JPEG / WebP / GIF — حتى 3 ميجابايت")}>
               <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                 <label className="btn btn-primary" style={{ cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
-                  📁 اختر صورة من الجهاز
+                  {t("📁 اختر صورة من الجهاز")}
                   <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" style={{ display: "none" }} onChange={(e) => pickImage(e.target.files?.[0] ?? null)} />
                 </label>
                 <span className="muted" style={{ fontSize: 13 }}>
-                  {imageFile ? `تم الاختيار: ${imageFile.name}` : "لم يتم اختيار صورة"}
+                  {imageFile ? `${t("تم الاختيار: ")}${imageFile.name}` : t("لم يتم اختيار صورة")}
                 </span>
               </div>
             </Field>
@@ -578,10 +577,10 @@ function ProductForm({
         </label>
         <div className="form-actions">
           <button className="btn btn-primary" disabled={busy}>
-            {busy ? "جارٍ الحفظ…" : "حفظ"}
+            {busy ? t("جارٍ الحفظ…") : t("حفظ")}
           </button>
           <button type="button" className="btn" onClick={onClose}>
-            إلغاء
+            {t("إلغاء")}
           </button>
         </div>
       </form>
@@ -590,14 +589,15 @@ function ProductForm({
 }
 
 function MovementsModal({ product, onClose }: { product: Product; onClose: () => void }) {
+  const { t } = useI18n();
   const moves = useFetch(() => api.get<StockMovement[]>(`/products/${product.id}/movements`), `m${product.id}`);
   const where = useFetch(() => api.get<ProductStockRow[]>(`/products/${product.id}/stock`), `w${product.id}`);
   return (
-    <Modal title={`حركة المخزون — ${product.name}`} onClose={onClose} wide>
+    <Modal title={`${t("حركة المخزون — ")}${product.name}`} onClose={onClose} wide>
       <Alert>{moves.error || where.error}</Alert>
       {where.data && where.data.length > 0 && (
         <p data-testid="stock-by-warehouse">
-          الكمية حسب المخزن:{" "}
+          {t("الكمية حسب المخزن:")}{" "}
           {where.data.map((r, i) => (
             <span key={r.warehouse_id}>
               {i > 0 && " · "}
@@ -613,17 +613,17 @@ function MovementsModal({ product, onClose }: { product: Product; onClose: () =>
           <table>
             <thead>
               <tr>
-                <th>التاريخ</th>
-                <th>النوع</th>
-                <th>المرجع</th>
-                <th className="num">التغيير</th>
+                <th>{t("التاريخ")}</th>
+                <th>{t("النوع")}</th>
+                <th>{t("المرجع")}</th>
+                <th className="num">{t("التغيير")}</th>
               </tr>
             </thead>
             <tbody>
               {moves.data.map((m) => (
                 <tr key={m.id}>
                   <td>{dateTime(m.created_at)}</td>
-                  <td>{REASON_LABEL[m.reason] ?? m.reason}</td>
+                  <td>{reasonLabel(m.reason)}</td>
                   <td>{m.reference || "—"}</td>
                   <td className="num" dir="ltr" style={{ color: m.change < 0 ? "var(--danger)" : "var(--ok)", fontWeight: 600 }}>
                     {m.change > 0 ? `+${m.change}` : m.change}
@@ -634,7 +634,7 @@ function MovementsModal({ product, onClose }: { product: Product; onClose: () =>
           </table>
         </div>
       ) : (
-        <Empty>لا توجد حركات لهذا المنتج.</Empty>
+        <Empty>{t("لا توجد حركات لهذا المنتج.")}</Empty>
       )}
     </Modal>
   );

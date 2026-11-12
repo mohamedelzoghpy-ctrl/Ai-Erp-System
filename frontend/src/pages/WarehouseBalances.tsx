@@ -17,6 +17,19 @@ export default function WarehouseBalances() {
   );
 
   const rows = products.data ?? [];
+  const [minEdits, setMinEdits] = useState<Record<number, string>>({});
+  const saveMin = async (productId: number) => {
+    const raw = minEdits[productId];
+    if (raw === undefined) return;
+    try {
+      await api.post(`/products/${productId}/min-level`, {
+        warehouse_id: Number(warehouseId),
+        min_level: raw === "" ? null : raw,
+      });
+      setMinEdits((m) => { const n = { ...m }; delete n[productId]; return n; });
+      products.reload();
+    } catch (e) { alert((e as Error).message); }
+  };
   const totalQty = rows.reduce((s, p) => s + (p.warehouse_quantity ?? 0), 0);
   const totalCost = rows.reduce((s, p) => s + (p.warehouse_quantity ?? 0) * Number(p.cost_price), 0);
   const totalSale = rows.reduce((s, p) => s + (p.warehouse_quantity ?? 0) * Number(p.sale_price), 0);
@@ -105,6 +118,7 @@ export default function WarehouseBalances() {
                   <th>{t("warehouseBalances.code")}</th>
                   <th>{t("warehouseBalances.productName")}</th>
                   <th className="num">{t("warehouseBalances.qty")}</th>
+                  <th className="num" title={t("حد الطلب الأدنى لهذا المخزن — يتجاوز العام للمنتج عند ضبطه")}>{t("حد أدنى (خاص)")}</th>
                   <th className="num">{t("warehouseBalances.costPrice")}</th>
                   <th className="num">{t("warehouseBalances.salePrice")}</th>
                   <th className="num">{t("warehouseBalances.costValue")}</th>
@@ -119,6 +133,15 @@ export default function WarehouseBalances() {
                       <td dir="ltr">{p.sku}</td>
                       <td>{p.name}</td>
                       <td className="num">{num(q)}</td>
+                      <td className="num">
+                        <input
+                          dir="ltr" type="number" min="0" step="1" style={{ width: 76, textAlign: "end" }}
+                          value={minEdits[p.id] ?? (p.warehouse_min_level != null ? String(p.warehouse_min_level) : "")}
+                          placeholder="عام"
+                          onChange={(e) => setMinEdits((m) => ({ ...m, [p.id]: e.target.value }))}
+                          onBlur={() => saveMin(p.id)}
+                        />
+                      </td>
                       <td className="num">{money(p.cost_price)}</td>
                       <td className="num">{money(p.sale_price)}</td>
                       <td className="num">{money(q * Number(p.cost_price))}</td>

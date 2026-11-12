@@ -2,19 +2,9 @@ import { useState } from "react";
 import { api, qs } from "../api";
 import { dayLabel, money, num } from "../format";
 import { useAction, useFetch } from "../hooks";
+import { useI18n } from "../i18n";
 import type { AgingReport, BalancesReport, DayTotal, InventoryValuationRow, LowStockItem, ProfitSummary, PurchasesSummary, SalesRep, SalesSummary } from "../types";
 import { Alert, Empty, Loading, PageHeader } from "../ui";
-
-type Tab = "sales" | "profit" | "purchases" | "inventory" | "receivables" | "payables";
-
-const TABS: { id: Tab; label: string }[] = [
-  { id: "sales", label: "المبيعات" },
-  { id: "profit", label: "الأرباح" },
-  { id: "purchases", label: "المشتريات" },
-  { id: "inventory", label: "المخزون" },
-  { id: "receivables", label: "مستحقات العملاء" },
-  { id: "payables", label: "مستحقات الموردين" },
-];
 
 /** YYYY-MM-DD in the browser's local calendar (what the user sees), not UTC. */
 function isoDay(d: Date): string {
@@ -28,16 +18,13 @@ function daysAgo(n: number): string {
   return isoDay(d);
 }
 
-export default function Reports() {
-  const initialTab = TABS.find((x) => x.id === new URLSearchParams(window.location.search).get("tab"))?.id;
-  const [tab, setTab] = useState<Tab>(initialTab ?? "sales");
+/** حالة الفترة المشتركة لتقارير التاريخ (من/إلى + أنماط سريعة + تصدير). */
+function useReportRange() {
   const [from, setFrom] = useState(daysAgo(29));
   const [to, setTo] = useState(isoDay(new Date()));
   const download = useAction();
-
   const rangeValid = !!from && !!to && from <= to;
   const range = qs({ date_from: from, date_to: to });
-
   const preset = (days: number) => {
     setFrom(daysAgo(days - 1));
     setTo(isoDay(new Date()));
@@ -47,57 +34,105 @@ export default function Reports() {
     setFrom(isoDay(new Date(now.getFullYear(), now.getMonth(), 1)));
     setTo(isoDay(now));
   };
-
   const exportFile = (path: string, name: string) => void download.run(() => api.download(path, name));
-  const usesRange = tab === "sales" || tab === "profit" || tab === "purchases";
+  return { from, setFrom, to, setTo, range, rangeValid, preset, thisMonth, exportFile, download };
+}
 
+/** شريط الفترة المشترك — من/إلى + أنماط سريعة. */
+function RangeBar({ from, setFrom, to, setTo, preset, thisMonth }: ReturnType<typeof useReportRange>) {
+  const { t } = useI18n();
+  return (
+    <div className="card card-pad range-bar">
+      <label className="range-field">
+        <span className="field-label">{t("من تاريخ")}</span>
+        <input type="date" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} />
+      </label>
+      <label className="range-field">
+        <span className="field-label">{t("إلى تاريخ")}</span>
+        <input type="date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} />
+      </label>
+      <div className="range-presets">
+        <button className="btn btn-sm" onClick={() => preset(7)}>{t("آخر 7 أيام")}</button>
+        <button className="btn btn-sm" onClick={() => preset(30)}>{t("آخر 30 يوماً")}</button>
+        <button className="btn btn-sm" onClick={() => preset(90)}>{t("آخر 90 يوماً")}</button>
+        <button className="btn btn-sm" onClick={thisMonth}>{t("هذا الشهر")}</button>
+      </div>
+    </div>
+  );
+}
+
+/** كل تقرير في صفحة مستقلة — تُعرض كعناصر في القائمة المنسدلة «التقارير» بالشريط الجانبي. */
+export function ReportsSales() {
+  const { t } = useI18n();
+  const r = useReportRange();
   return (
     <>
-      <PageHeader title="التقارير المفصلة" />
+      <PageHeader title={t("تقرير المبيعات")} />
+      <RangeBar {...r} />
+      <Alert>{r.download.error}</Alert>
+      {r.rangeValid ? <SalesTab from={r.from} to={r.to} onExport={r.exportFile} busy={r.download.busy} /> : <Alert>{t("اختر فترة صحيحة: تاريخ البداية يجب ألا يتجاوز تاريخ النهاية.")}</Alert>}
+    </>
+  );
+}
 
-      <div className="tabs" role="tablist">
-        {TABS.map((t) => (
-          <button key={t.id} role="tab" aria-selected={tab === t.id} className={`tab${tab === t.id ? " active" : ""}`} onClick={() => setTab(t.id)}>
-            {t.label}
-          </button>
-        ))}
-      </div>
+export function ReportsProfit() {
+  const { t } = useI18n();
+  const r = useReportRange();
+  return (
+    <>
+      <PageHeader title={t("تقرير الأرباح")} />
+      <RangeBar {...r} />
+      <Alert>{r.download.error}</Alert>
+      {r.rangeValid ? <ProfitTab range={r.range} from={r.from} to={r.to} onExport={r.exportFile} busy={r.download.busy} /> : <Alert>{t("اختر فترة صحيحة: تاريخ البداية يجب ألا يتجاوز تاريخ النهاية.")}</Alert>}
+    </>
+  );
+}
 
-      {usesRange && (
-        <div className="card card-pad range-bar">
-          <label className="range-field">
-            <span className="field-label">من تاريخ</span>
-            <input type="date" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} />
-          </label>
-          <label className="range-field">
-            <span className="field-label">إلى تاريخ</span>
-            <input type="date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} />
-          </label>
-          <div className="range-presets">
-            <button className="btn btn-sm" onClick={() => preset(7)}>
-              آخر 7 أيام
-            </button>
-            <button className="btn btn-sm" onClick={() => preset(30)}>
-              آخر 30 يوماً
-            </button>
-            <button className="btn btn-sm" onClick={() => preset(90)}>
-              آخر 90 يوماً
-            </button>
-            <button className="btn btn-sm" onClick={thisMonth}>
-              هذا الشهر
-            </button>
-          </div>
-        </div>
-      )}
+export function ReportsPurchases() {
+  const { t } = useI18n();
+  const r = useReportRange();
+  return (
+    <>
+      <PageHeader title={t("تقرير المشتريات")} />
+      <RangeBar {...r} />
+      <Alert>{r.download.error}</Alert>
+      {r.rangeValid ? <PurchasesTab range={r.range} from={r.from} to={r.to} onExport={r.exportFile} busy={r.download.busy} /> : <Alert>{t("اختر فترة صحيحة: تاريخ البداية يجب ألا يتجاوز تاريخ النهاية.")}</Alert>}
+    </>
+  );
+}
 
-      <Alert>{download.error}</Alert>
-      {usesRange && !rangeValid && <Alert>اختر فترة صحيحة: تاريخ البداية يجب ألا يتجاوز تاريخ النهاية.</Alert>}
+export function ReportsInventory() {
+  const { t } = useI18n();
+  const r = useReportRange();
+  return (
+    <>
+      <PageHeader title={t("تقرير المخزون")} />
+      <Alert>{r.download.error}</Alert>
+      <InventoryTab onExport={r.exportFile} busy={r.download.busy} />
+    </>
+  );
+}
 
-      {tab === "sales" && rangeValid && <SalesTab from={from} to={to} onExport={exportFile} busy={download.busy} />}
-      {tab === "profit" && rangeValid && <ProfitTab range={range} from={from} to={to} onExport={exportFile} busy={download.busy} />}
-      {tab === "purchases" && rangeValid && <PurchasesTab range={range} from={from} to={to} onExport={exportFile} busy={download.busy} />}
-      {tab === "inventory" && <InventoryTab onExport={exportFile} busy={download.busy} />}
-      {(tab === "receivables" || tab === "payables") && <BalancesTab key={tab} kind={tab} onExport={exportFile} busy={download.busy} />}
+export function ReportsReceivables() {
+  const { t } = useI18n();
+  const r = useReportRange();
+  return (
+    <>
+      <PageHeader title={t("تقرير مستحقات العملاء")} />
+      <Alert>{r.download.error}</Alert>
+      <BalancesTab key="receivables" kind="receivables" onExport={r.exportFile} busy={r.download.busy} />
+    </>
+  );
+}
+
+export function ReportsPayables() {
+  const { t } = useI18n();
+  const r = useReportRange();
+  return (
+    <>
+      <PageHeader title={t("تقرير مستحقات الموردين")} />
+      <Alert>{r.download.error}</Alert>
+      <BalancesTab key="payables" kind="payables" onExport={r.exportFile} busy={r.download.busy} />
     </>
   );
 }
@@ -121,24 +156,26 @@ function Kpi({ label, value, sub }: { label: string; value: string; sub?: string
 }
 
 function ExportButton({ onClick, busy, children }: { onClick: () => void; busy: boolean; children: string }) {
+  const { t } = useI18n();
   return (
     <button className="btn btn-primary" disabled={busy} onClick={onClick}>
-      {busy ? "جارٍ التجهيز…" : `⬇ ${children}`}
+      {busy ? t("جارٍ التجهيز…") : `⬇ ${children}`}
     </button>
   );
 }
 
 function DailyBars({ series, label }: { series: DayTotal[]; label: string }) {
+  const { t } = useI18n();
   const max = Math.max(1, ...series.map((x) => Number(x.total)));
   return (
     <div className="card card-pad" style={{ marginBottom: 18 }}>
       <h3>{label}</h3>
       {series.length === 0 ? (
-        <Empty>لا توجد بيانات في هذه الفترة</Empty>
+        <Empty>{t("لا توجد بيانات في هذه الفترة")}</Empty>
       ) : (
         <div className="bars" role="img" aria-label={label}>
           {series.map((x) => (
-            <div className="bar-col" key={x.day} title={`${dayLabel(x.day)}: ${money(x.total)} (${num(x.orders)} أمر)`}>
+            <div className="bar-col" key={x.day} title={`${dayLabel(x.day)}: ${money(x.total)} (${num(x.orders)} ${t("أمر")})`}>
               <div className="bar" style={{ height: `${(Number(x.total) / max) * 100}%` }} />
               <div className="bar-label">{dayLabel(x.day)}</div>
             </div>
@@ -150,11 +187,12 @@ function DailyBars({ series, label }: { series: DayTotal[]; label: string }) {
 }
 
 function RankTable({ title, headers, rows }: { title: string; headers: string[]; rows: (string | number)[][] }) {
+  const { t } = useI18n();
   return (
     <div className="card card-pad">
       <h3>{title}</h3>
       {rows.length === 0 ? (
-        <Empty>لا بيانات</Empty>
+        <Empty>{t("لا بيانات")}</Empty>
       ) : (
         <div className="table-wrap">
           <table>
@@ -186,6 +224,7 @@ function RankTable({ title, headers, rows }: { title: string; headers: string[];
 }
 
 function SalesTab({ from, to, onExport, busy }: Omit<TabProps, "range">) {
+  const { t } = useI18n();
   // classification filter options
   const customers = useFetch(() => api.get<{ id: number; name: string }[]>("/customers?limit=500"), "sales-custs");
   const suppliers = useFetch(() => api.get<{ id: number; name: string }[]>("/suppliers?limit=500"), "sales-sups");
@@ -218,7 +257,7 @@ function SalesTab({ from, to, onExport, busy }: Omit<TabProps, "range">) {
       <span className="rf-icon">{icon}</span>
       <span className="rf-label">{label}</span>
       <select value={value} onChange={(e) => onChange(e.target.value)}>
-        <option value="">الكل</option>
+        <option value="">{t("الكل")}</option>
         {options.map((o) => (
           <option key={o.id} value={o.id}>
             {o.label}
@@ -231,19 +270,19 @@ function SalesTab({ from, to, onExport, busy }: Omit<TabProps, "range">) {
   return (
     <>
       <div className="report-filters">
-        <span className="rf-title">🏷️ تصنيف التقرير</span>
-        <Filter icon="👤" label="العميل" value={customerId} onChange={setCustomerId} options={(customers.data ?? []).map((c) => ({ id: c.id, label: c.name }))} />
-        <Filter icon="📦" label="الصنف" value={productId} onChange={setProductId} options={(products.data ?? []).map((p) => ({ id: p.id, label: `${p.name} (${p.sku})` }))} />
-        <Filter icon="🏭" label="مورد الصنف" value={supplierId} onChange={setSupplierId} options={(suppliers.data ?? []).map((x) => ({ id: x.id, label: x.name }))} />
-        <Filter icon="🧾" label="البائع / المستخدم" value={userId} onChange={setUserId} options={(users.data ?? []).map((u) => ({ id: u.id, label: u.full_name || u.username }))} />
-        <Filter icon="🧑‍💼" label="المندوب" value={repId} onChange={setRepId} options={(reps.data ?? []).map((r) => ({ id: r.id, label: r.name }))} />
+        <span className="rf-title">{t("🏷️ تصنيف التقرير")}</span>
+        <Filter icon="👤" label={t("العميل")} value={customerId} onChange={setCustomerId} options={(customers.data ?? []).map((c) => ({ id: c.id, label: c.name }))} />
+        <Filter icon="📦" label={t("الصنف")} value={productId} onChange={setProductId} options={(products.data ?? []).map((p) => ({ id: p.id, label: `${p.name} (${p.sku})` }))} />
+        <Filter icon="🏭" label={t("مورد الصنف")} value={supplierId} onChange={setSupplierId} options={(suppliers.data ?? []).map((x) => ({ id: x.id, label: x.name }))} />
+        <Filter icon="🧾" label={t("البائع / المستخدم")} value={userId} onChange={setUserId} options={(users.data ?? []).map((u) => ({ id: u.id, label: u.full_name || u.username }))} />
+        <Filter icon="🧑‍💼" label={t("المندوب")} value={repId} onChange={setRepId} options={(reps.data ?? []).map((r) => ({ id: r.id, label: r.name }))} />
         <button type="button" className="rf-clear" onClick={() => { setCustomerId(""); setProductId(""); setSupplierId(""); setUserId(""); setRepId(""); }} disabled={!customerId && !productId && !supplierId && !userId && !repId}>
-          ✕ مسح التصنيف
+          {t("✕ مسح التصنيف")}
         </button>
       </div>
       <div className="page-actions" style={{ marginBottom: 14 }}>
         <ExportButton busy={busy} onClick={() => onExport(`/reports/sales-summary/xlsx${fq}`, `report-sales-${from}_${to}.xlsx`)}>
-          تصدير Excel
+          {t("تصدير Excel")}
         </ExportButton>
       </div>
       <Alert>{data.error}</Alert>
@@ -253,31 +292,31 @@ function SalesTab({ from, to, onExport, busy }: Omit<TabProps, "range">) {
         s && (
           <>
             <div className="kpis">
-              <Kpi label="إجمالي المبيعات" value={money(s.total)} />
-              <Kpi label="عدد الأوامر المؤكدة" value={num(s.orders)} />
-              <Kpi label="متوسط قيمة الأمر" value={money(avg)} />
+              <Kpi label={t("إجمالي المبيعات")} value={money(s.total)} />
+              <Kpi label={t("عدد الأوامر المؤكدة")} value={num(s.orders)} />
+              <Kpi label={t("متوسط قيمة الأمر")} value={money(avg)} />
             </div>
-            <DailyBars series={s.by_day} label="المبيعات اليومية" />
+            <DailyBars series={s.by_day} label={t("المبيعات اليومية")} />
             <div className="grid-2">
               <RankTable
-                title="الأكثر مبيعاً"
-                headers={["المنتج", "الكمية", "الإيراد"]}
+                title={t("الأكثر مبيعاً")}
+                headers={[t("المنتج"), t("الكمية"), t("الإيراد")]}
                 rows={s.top_products.map((p) => [`${p.name} (${p.sku})`, num(p.quantity_sold), money(p.revenue)])}
               />
               <RankTable
-                title="أفضل العملاء"
-                headers={["العميل", "الأوامر", "الإجمالي"]}
+                title={t("أفضل العملاء")}
+                headers={[t("العميل"), t("الأوامر"), t("الإجمالي")]}
                 rows={s.by_customer.map((c) => [c.customer_name, num(c.orders), money(c.total)])}
               />
             </div>
             <RankTable
-              title="المبيعات حسب الكاشير"
-              headers={["الكاشير", "الأوامر", "الإجمالي"]}
-              rows={s.by_cashier.map((c) => [c.username ?? "غير مسجّل", num(c.orders), money(c.total)])}
+              title={t("المبيعات حسب الكاشير")}
+              headers={[t("الكاشير"), t("الأوامر"), t("الإجمالي")]}
+              rows={s.by_cashier.map((c) => [c.username ?? t("غير مسجّل"), num(c.orders), money(c.total)])}
             />
             <RankTable
-              title="المبيعات حسب مورد الصنف"
-              headers={["المورد", "الأوامر", "الإجمالي"]}
+              title={t("المبيعات حسب مورد الصنف")}
+              headers={[t("المورد"), t("الأوامر"), t("الإجمالي")]}
               rows={s.by_product_supplier.map((c) => [c.supplier_name, num(c.orders), money(c.total)])}
             />
           </>
@@ -288,6 +327,7 @@ function SalesTab({ from, to, onExport, busy }: Omit<TabProps, "range">) {
 }
 
 function ProfitTab({ range, from, to, onExport, busy }: TabProps) {
+  const { t } = useI18n();
   const q = qs({ date_from: from, date_to: to });
   const data = useFetch(() => api.get<ProfitSummary>(`/reports/profit${q}`), `profit${q}`);
   const s = data.data;
@@ -297,7 +337,7 @@ function ProfitTab({ range, from, to, onExport, busy }: TabProps) {
     <>
       <div className="page-actions" style={{ marginBottom: 14 }}>
         <ExportButton busy={busy} onClick={() => onExport(`/reports/profit/xlsx${range}`, `report-profit-${from}_${to}.xlsx`)}>
-          تصدير Excel
+          {t("تصدير Excel")}
         </ExportButton>
       </div>
       <Alert>{data.error}</Alert>
@@ -307,17 +347,17 @@ function ProfitTab({ range, from, to, onExport, busy }: TabProps) {
         s && (
           <>
             <div className="kpis">
-              <Kpi label="صافي الإيراد" value={money(s.revenue)} />
-              <Kpi label="تكلفة البضاعة المباعة" value={money(s.cost)} />
-              <Kpi label="مجمل الربح" value={money(s.profit)} />
-              <Kpi label="هامش الربح" value={pct(s.margin_pct)} />
+              <Kpi label={t("صافي الإيراد")} value={money(s.revenue)} />
+              <Kpi label={t("تكلفة البضاعة المباعة")} value={money(s.cost)} />
+              <Kpi label={t("مجمل الربح")} value={money(s.profit)} />
+              <Kpi label={t("هامش الربح")} value={pct(s.margin_pct)} />
             </div>
             <p className="muted">
-              المبيعات {money(s.sales)} − المرتجعات {money(s.returns)}. التكلفة محسوبة بسعر التكلفة وقت البيع.
+              {t("المبيعات ")}{money(s.sales)}{t(" − المرتجعات ")}{money(s.returns)}{t(". التكلفة محسوبة بسعر التكلفة وقت البيع.")}
             </p>
             <RankTable
-              title="الربح حسب المنتج"
-              headers={["المنتج", "الكمية", "الإيراد", "التكلفة", "الربح", "الهامش"]}
+              title={t("الربح حسب المنتج")}
+              headers={[t("المنتج"), t("الكمية"), t("الإيراد"), t("التكلفة"), t("الربح"), t("الهامش")]}
               rows={s.by_product.map((r) => [`${r.name} (${r.sku})`, num(r.quantity), money(r.revenue), money(r.cost), money(r.profit), pct(r.margin_pct)])}
             />
           </>
@@ -328,6 +368,7 @@ function ProfitTab({ range, from, to, onExport, busy }: TabProps) {
 }
 
 function PurchasesTab({ range, from, to, onExport, busy }: TabProps) {
+  const { t } = useI18n();
   const q = qs({ date_from: from, date_to: to, top: 10 });
   const data = useFetch(() => api.get<PurchasesSummary>(`/reports/purchases-summary${q}`), `purch${q}`);
   const s = data.data;
@@ -337,7 +378,7 @@ function PurchasesTab({ range, from, to, onExport, busy }: TabProps) {
     <>
       <div className="page-actions" style={{ marginBottom: 14 }}>
         <ExportButton busy={busy} onClick={() => onExport(`/reports/purchases-summary/xlsx${range}`, `report-purchases-${from}_${to}.xlsx`)}>
-          تصدير Excel
+          {t("تصدير Excel")}
         </ExportButton>
       </div>
       <Alert>{data.error}</Alert>
@@ -347,20 +388,20 @@ function PurchasesTab({ range, from, to, onExport, busy }: TabProps) {
         s && (
           <>
             <div className="kpis">
-              <Kpi label="إجمالي المشتريات" value={money(s.total)} />
-              <Kpi label="عدد الأوامر المستلمة" value={num(s.orders)} />
-              <Kpi label="متوسط قيمة الأمر" value={money(avg)} />
+              <Kpi label={t("إجمالي المشتريات")} value={money(s.total)} />
+              <Kpi label={t("عدد الأوامر المستلمة")} value={num(s.orders)} />
+              <Kpi label={t("متوسط قيمة الأمر")} value={money(avg)} />
             </div>
-            <DailyBars series={s.by_day} label="المشتريات اليومية (حسب تاريخ الاستلام)" />
+            <DailyBars series={s.by_day} label={t("المشتريات اليومية (حسب تاريخ الاستلام)")} />
             <div className="grid-2">
               <RankTable
-                title="الأكثر شراءً"
-                headers={["المنتج", "الكمية", "الإنفاق"]}
+                title={t("الأكثر شراءً")}
+                headers={[t("المنتج"), t("الكمية"), t("الإنفاق")]}
                 rows={s.top_products.map((p) => [`${p.name} (${p.sku})`, num(p.quantity_bought), money(p.spend)])}
               />
               <RankTable
-                title="أكبر الموردين"
-                headers={["المورد", "الأوامر", "الإجمالي"]}
+                title={t("أكبر الموردين")}
+                headers={[t("المورد"), t("الأوامر"), t("الإجمالي")]}
                 rows={s.by_supplier.map((x) => [x.supplier_name, num(x.orders), money(x.total)])}
               />
             </div>
@@ -372,6 +413,7 @@ function PurchasesTab({ range, from, to, onExport, busy }: TabProps) {
 }
 
 function InventoryTab({ onExport, busy }: { onExport: (path: string, name: string) => void; busy: boolean }) {
+  const { t } = useI18n();
   const valuation = useFetch(() => api.get<InventoryValuationRow[]>("/reports/inventory-valuation"), "inv-val");
   const low = useFetch(() => api.get<LowStockItem[]>("/reports/low-stock"), "inv-low");
   const totalCost = (valuation.data ?? []).reduce((s, r) => s + Number(r.cost_value), 0);
@@ -381,10 +423,10 @@ function InventoryTab({ onExport, busy }: { onExport: (path: string, name: strin
     <>
       <div className="page-actions" style={{ marginBottom: 14 }}>
         <ExportButton busy={busy} onClick={() => onExport("/reports/inventory-valuation/xlsx", "report-inventory-valuation.xlsx")}>
-          تصدير قيمة المخزون Excel
+          {t("تصدير قيمة المخزون Excel")}
         </ExportButton>
         <ExportButton busy={busy} onClick={() => onExport("/reports/low-stock/xlsx", "report-low-stock.xlsx")}>
-          تصدير النقص Excel
+          {t("تصدير النقص Excel")}
         </ExportButton>
       </div>
       <Alert>{valuation.error || low.error}</Alert>
@@ -392,20 +434,20 @@ function InventoryTab({ onExport, busy }: { onExport: (path: string, name: strin
         <Loading />
       ) : (
         <div className="kpis">
-          <Kpi label="قيمة المخزون بالتكلفة" value={money(totalCost)} />
-          <Kpi label="قيمة المخزون بسعر البيع" value={money(totalSale)} sub={`هامش محتمل: ${money(totalSale - totalCost)}`} />
-          <Kpi label="منتجات تحت حد الطلب" value={num(low.data?.length ?? 0)} />
+          <Kpi label={t("قيمة المخزون بالتكلفة")} value={money(totalCost)} />
+          <Kpi label={t("قيمة المخزون بسعر البيع")} value={money(totalSale)} sub={`${t("هامش محتمل: ")}${money(totalSale - totalCost)}`} />
+          <Kpi label={t("منتجات تحت حد الطلب")} value={num(low.data?.length ?? 0)} />
         </div>
       )}
       <div className="grid-2">
         <RankTable
-          title="قيمة المخزون لكل مخزن"
-          headers={["المخزن", "الوحدات", "بالتكلفة", "بسعر البيع"]}
-          rows={(valuation.data ?? []).map((r) => [r.warehouse_name ?? "بدون مخزن", num(r.units), money(r.cost_value), money(r.sale_value)])}
+          title={t("قيمة المخزون لكل مخزن")}
+          headers={[t("المخزن"), t("الوحدات"), t("بالتكلفة"), t("بسعر البيع")]}
+          rows={(valuation.data ?? []).map((r) => [r.warehouse_name ?? t("بدون مخزن"), num(r.units), money(r.cost_value), money(r.sale_value)])}
         />
         <RankTable
-          title="نقص المخزون"
-          headers={["المنتج", "المتاح", "حد الطلب", "العجز"]}
+          title={t("نقص المخزون")}
+          headers={[t("المنتج"), t("المتاح"), t("حد الطلب"), t("العجز")]}
           rows={(low.data ?? []).map((p) => [`${p.name} (${p.sku})`, num(p.quantity), num(p.reorder_level), num(p.shortfall)])}
         />
       </div>
@@ -414,6 +456,7 @@ function InventoryTab({ onExport, busy }: { onExport: (path: string, name: strin
 }
 
 function BalancesTab({ kind, onExport, busy }: { kind: "receivables" | "payables"; onExport: (path: string, name: string) => void; busy: boolean }) {
+  const { t } = useI18n();
   const isRec = kind === "receivables";
   const [view, setView] = useState<"balances" | "aging">("balances");
   const data = useFetch(() => api.get<BalancesReport>(`/reports/${kind}`), `bal-${kind}`);
@@ -422,12 +465,12 @@ function BalancesTab({ kind, onExport, busy }: { kind: "receivables" | "payables
   return (
     <>
       <div className="page-actions" style={{ marginBottom: 14 }}>
-        <select value={view} onChange={(e) => setView(e.target.value as typeof view)} aria-label="نوع العرض">
-          <option value="balances">الأرصدة</option>
-          <option value="aging">أعمار الديون</option>
+        <select value={view} onChange={(e) => setView(e.target.value as typeof view)} aria-label={t("نوع العرض")}>
+          <option value="balances">{t("الأرصدة")}</option>
+          <option value="aging">{t("أعمار الديون")}</option>
         </select>
         <ExportButton busy={busy} onClick={() => onExport(`/reports/${kind}${suffix}/xlsx`, `report-${kind}${view === "aging" ? "-aging" : ""}.xlsx`)}>
-          تصدير Excel
+          {t("تصدير Excel")}
         </ExportButton>
       </div>
       {view === "aging" && <AgingTable kind={kind} />}
@@ -438,11 +481,11 @@ function BalancesTab({ kind, onExport, busy }: { kind: "receivables" | "payables
         r && (
           <>
             <div className="kpis">
-              <Kpi label={isRec ? "إجمالي المستحق على العملاء" : "إجمالي المستحق للموردين"} value={money(r.total)} sub={`${num(r.rows.filter((x) => Number(x.balance) > 0).length)} ${isRec ? "عميل" : "مورد"} عليهم رصيد`} />
+              <Kpi label={isRec ? t("إجمالي المستحق على العملاء") : t("إجمالي المستحق للموردين")} value={money(r.total)} sub={`${num(r.rows.filter((x) => Number(x.balance) > 0).length)} ${isRec ? t("عميل") : t("مورد")} ${t("عليهم رصيد")}`} />
             </div>
             <RankTable
-              title={isRec ? "أرصدة العملاء (الأعلى أولاً)" : "أرصدة الموردين (الأعلى أولاً)"}
-              headers={[isRec ? "العميل" : "المورد", "الهاتف", "الرصيد"]}
+              title={isRec ? t("أرصدة العملاء (الأعلى أولاً)") : t("أرصدة الموردين (الأعلى أولاً)")}
+              headers={[isRec ? t("العميل") : t("المورد"), t("الهاتف"), t("الرصيد")]}
               rows={r.rows.map((x) => [x.name, x.phone ?? "—", money(x.balance)])}
             />
           </>
@@ -453,24 +496,25 @@ function BalancesTab({ kind, onExport, busy }: { kind: "receivables" | "payables
 }
 
 function AgingTable({ kind }: { kind: "receivables" | "payables" }) {
+  const { t } = useI18n();
   const data = useFetch(() => api.get<AgingReport>(`/reports/${kind}/aging`), `aging-${kind}`);
   const a = data.data;
   const isRec = kind === "receivables";
   if (data.error) return <Alert>{data.error}</Alert>;
   if (!a) return <Loading />;
-  const cols = ["أول المدة", "0–30 يوماً", "31–60 يوماً", "61–90 يوماً", "أكثر من 90", "الإجمالي"];
+  const cols = [t("أول المدة"), t("0–30 يوماً"), t("31–60 يوماً"), t("61–90 يوماً"), t("أكثر من 90"), t("الإجمالي")];
   const sum = [a.total_opening, a.total_current, a.total_d31_60, a.total_d61_90, a.total_d90_plus, a.total_total];
   return (
     <div className="card card-pad">
-      <h3>{isRec ? "أعمار ديون العملاء" : "أعمار ديون الموردين"} (حتى {a.as_of})</h3>
+      <h3>{isRec ? t("أعمار ديون العملاء") : t("أعمار ديون الموردين")} ({t("حتى ")}{a.as_of})</h3>
       {a.rows.length === 0 ? (
-        <Empty>لا توجد مبالغ مستحقة</Empty>
+        <Empty>{t("لا توجد مبالغ مستحقة")}</Empty>
       ) : (
         <div className="table-wrap">
           <table>
             <thead>
               <tr>
-                <th>{isRec ? "العميل" : "المورد"}</th>
+                <th>{isRec ? t("العميل") : t("المورد")}</th>
                 {cols.map((c) => (
                   <th key={c} className="num">
                     {c}
@@ -491,7 +535,7 @@ function AgingTable({ kind }: { kind: "receivables" | "payables" }) {
               ))}
               <tr>
                 <td>
-                  <b>الإجمالي</b>
+                  <b>{t("الإجمالي")}</b>
                 </td>
                 {sum.map((v, i) => (
                   <td key={i} className="num">
@@ -503,7 +547,7 @@ function AgingTable({ kind }: { kind: "receivables" | "payables" }) {
           </table>
         </div>
       )}
-      <p className="muted" style={{ marginBottom: 0, fontSize: 12 }}>العمر = الأيام منذ تأكيد الفاتورة. تُسدَّد الأقدم أولاً، والأرصدة الدائنة لا تُحتسب.</p>
+      <p className="muted" style={{ marginBottom: 0, fontSize: 12 }}>{t("العمر = الأيام منذ تأكيد الفاتورة. تُسدَّد الأقدم أولاً، والأرصدة الدائنة لا تُحتسب.")}</p>
     </div>
   );
 }

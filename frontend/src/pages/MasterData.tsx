@@ -29,7 +29,7 @@ export function Warehouses() {
   const [editing, setEditing] = useState<Warehouse | "new" | null>(null);
 
   const remove = (w: Warehouse) => {
-    if (!confirm(`حذف المخزن "${w.name}"؟`)) return;
+    if (!confirm(`${t('حذف المخزن "')}${w.name}${t("؟")}`)) return;
     void action.run(async () => {
       await api.del(`/warehouses/${w.id}`);
       list.reload();
@@ -64,7 +64,7 @@ export function Warehouses() {
                 th, td { border: 1px solid #999; padding: 6px 8px; text-align: center; }
                 th { background: #eee; }
               </style></head><body>
-              <h1>قائمة المخازن</h1>
+              <h1>${t("قائمة المخازن")}</h1>
               <table>
                 <thead><tr>
                   <th>${t("warehouses.name")}</th><th>${t("warehouses.code")}</th><th>${t("warehouses.branch")}</th><th>${t("warehouses.location")}</th><th>${t("warehouses.status")}</th>
@@ -75,7 +75,7 @@ export function Warehouses() {
               </body></html>`);
             w.document.close();
           }}>
-            🖨 طباعة
+            🖨 {t("طباعة")}
           </button>
         )}
       </PageHeader>
@@ -106,12 +106,10 @@ export function Warehouses() {
                     <ActiveBadge active={w.is_active} />
                   </td>
                   <td className="actions">
-                    <button className="btn btn-sm" onClick={() => setEditing(w)}>
-                      تعديل
-                    </button>
+                    <button className="btn-edit" onClick={() => setEditing(w)}>{t("تعديل")}</button>
                     {isManager && (
-                      <button className="btn btn-sm btn-danger" onClick={() => remove(w)}>
-                        حذف
+                      <button className="btn-delete" onClick={() => remove(w)}>
+                        {t("حذف")}
                       </button>
                     )}
                   </td>
@@ -144,6 +142,7 @@ function WarehouseForm({ initial, branches, onClose, onSaved }: { initial: Wareh
   const [location, setLocation] = useState(initial?.location ?? "");
   const [branchId, setBranchId] = useState(initial?.branch_id ?? branches[0]?.id ?? 0);
   const [active, setActive] = useState(initial?.is_active ?? true);
+  const { t } = useI18n();
   const { busy, error, run } = useAction();
 
   const submit = (e: FormEvent) => {
@@ -157,25 +156,25 @@ function WarehouseForm({ initial, branches, onClose, onSaved }: { initial: Wareh
   };
 
   return (
-    <Modal title={initial ? "تعديل مخزن" : "مخزن جديد"} onClose={onClose}>
+    <Modal title={initial ? t("تعديل مخزن") : t("مخزن جديد")} onClose={onClose}>
       <form onSubmit={submit}>
         <Alert>{error}</Alert>
         <div className="form-grid">
-          <Field label="اسم المخزن">
+          <Field label={t("اسم المخزن")}>
             <input value={name} onChange={(e) => setName(e.target.value)} required autoFocus />
           </Field>
-          <Field label="الكود" hint={initial ? "فريد، مثل W1" : "اتركه فارغًا للتوليد التلقائي"}>
-            <input value={code} onChange={(e) => setCode(e.target.value)} placeholder={initial ? undefined : "يُولّد تلقائيًا عند الحفظ"} />
+          <Field label={t("الكود")} hint={initial ? t("فريد، مثل W1") : t("اتركه فارغًا للتوليد التلقائي")}>
+            <input value={code} onChange={(e) => setCode(e.target.value)} placeholder={initial ? undefined : t("يُولّد تلقائيًا عند الحفظ")} />
           </Field>
         </div>
         {!initial && (
-          <Field label="الفرع">
+          <Field label={t("الفرع")}>
             <select value={branchId} onChange={(e) => setBranchId(Number(e.target.value))} required>
               {branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}
             </select>
           </Field>
         )}
-        <Field label="الموقع">
+        <Field label={t("الموقع")}>
           <input value={location} onChange={(e) => setLocation(e.target.value)} />
         </Field>
         <label className="check">
@@ -183,10 +182,10 @@ function WarehouseForm({ initial, branches, onClose, onSaved }: { initial: Wareh
         </label>
         <div className="form-actions">
           <button className="btn btn-primary" disabled={busy}>
-            {busy ? "جارٍ الحفظ…" : "حفظ"}
+            {busy ? t("جارٍ الحفظ…") : t("حفظ")}
           </button>
           <button type="button" className="btn" onClick={onClose}>
-            إلغاء
+            {t("إلغاء")}
           </button>
         </div>
       </form>
@@ -225,7 +224,7 @@ function PartyScreen({ title, singular, path, kind }: { title: string; singular:
   ];
 
   const remove = (p: Party) => {
-    if (!confirm(`حذف ${singular} "${p.name}"؟`)) return;
+    if (!confirm(`${t("حذف ")}${singular}${t(' "')}${p.name}${t("؟")}`)) return;
     void action.run(async () => {
       await api.del(`${path}/${p.id}`);
       list.reload();
@@ -235,7 +234,7 @@ function PartyScreen({ title, singular, path, kind }: { title: string; singular:
   return (
     <>
       <PageHeader title={title}>
-        <input placeholder="بحث…" value={search} onChange={(e) => setSearch(e.target.value)} style={{ width: 200 }} />
+        <input placeholder={t("بحث…")} value={search} onChange={(e) => setSearch(e.target.value)} style={{ width: 200 }} />
         {rows.length > 0 && (
           <button className="btn btn-primary" onClick={() => {
             const w = window.open("", "_blank");
@@ -248,7 +247,7 @@ function PartyScreen({ title, singular, path, kind }: { title: string; singular:
                 <td>${p.phone || "—"}</td>
                 <td>${p.email || "—"}</td>
                 <td>${money(p.balance)}</td>
-                <td>${p.is_active ? "نشط" : "موقوف"}</td>
+                <td>${p.is_active ? t("نشط") : t("موقوف")}</td>
               </tr>`).join("");
             w.document.write(`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>${title}</title>
               <style>
@@ -260,18 +259,18 @@ function PartyScreen({ title, singular, path, kind }: { title: string; singular:
               </style></head><body>
               <h1>${title}</h1>
               <table>
-                <thead><tr><th>الكود</th><th>الاسم</th><th>المسؤول</th><th>الهاتف</th><th>البريد</th><th>الرصيد</th><th>الحالة</th></tr></thead>
+                <thead><tr><th>${t("الكود")}</th><th>${t("الاسم")}</th><th>${t("المسؤول")}</th><th>${t("الهاتف")}</th><th>${t("البريد")}</th><th>${t("الرصيد")}</th><th>${t("الحالة")}</th></tr></thead>
                 <tbody>${rowsHtml}</tbody>
               </table>
               <script>window.onload = () => { window.print(); };</script>
               </body></html>`);
             w.document.close();
           }}>
-            🖨 طباعة
+            🖨 {t("طباعة")}
           </button>
         )}
         <button className="btn btn-primary" onClick={() => setEditing("new")}>
-          + {singular} جديد
+          {"+ "}{singular} {t("جديد")}
         </button>
       </PageHeader>
       <Alert>{list.error || action.error}</Alert>
@@ -296,17 +295,15 @@ function PartyScreen({ title, singular, path, kind }: { title: string; singular:
                   ))}
                   <td className="actions">
                     <button className="btn btn-sm" onClick={() => setPaying(p)}>
-                      {kind === "customer" ? "قبض" : "دفع"}
+                      {kind === "customer" ? t("قبض") : t("دفع")}
                     </button>
                     <button className="btn btn-sm" onClick={() => setStatement(p)}>
-                      كشف حساب
+                      {t("كشف حساب")}
                     </button>
-                    <button className="btn btn-sm" onClick={() => setEditing(p)}>
-                      تعديل
-                    </button>
+                    <button className="btn-edit" onClick={() => setEditing(p)}>{t("تعديل")}</button>
                     {isManager && (
-                      <button className="btn btn-sm btn-danger" onClick={() => remove(p)}>
-                        حذف
+                      <button className="btn-delete" onClick={() => remove(p)}>
+                        {t("حذف")}
                       </button>
                     )}
                   </td>
@@ -315,7 +312,7 @@ function PartyScreen({ title, singular, path, kind }: { title: string; singular:
             </tbody>
           </table>
         ) : (
-          <Empty>{search ? "لا نتائج مطابقة" : `لا يوجد ${singular} بعد.`}</Empty>
+          <Empty>{search ? t("لا نتائج مطابقة") : `${t("لا يوجد ")}${singular}${t(" بعد.")}`}</Empty>
         )}
         <Pager list={list} />
       </div>
@@ -372,9 +369,17 @@ function PartyForm({
     email: initial?.email ?? "",
     address: initial?.address ?? "",
     opening_balance: initial?.opening_balance ?? "0",
+    credit_limit: initial?.credit_limit ?? "",
+    tax_registration_number: initial?.tax_registration_number ?? "",
+    price_list_id: initial?.price_list_id ? String(initial.price_list_id) : "",
     is_active: initial?.is_active ?? true,
   });
   const { busy, error, run } = useAction();
+  const priceLists = useFetch(
+    () => (path.endsWith("/customers") ? api.get<any[]>("/price-lists") : Promise.resolve([])),
+    `pl-for-${path}`,
+  );
+  const { t } = useI18n();
   const set = (k: keyof typeof f, v: string | boolean) => setF((p) => ({ ...p, [k]: v }));
 
   const submit = (e: FormEvent) => {
@@ -388,6 +393,8 @@ function PartyForm({
       is_active: f.is_active,
       // Only managers/admins may set it; omitting it keeps the server value (staff would get a 403 otherwise).
       ...(canSetOpening ? { opening_balance: f.opening_balance || "0" } : {}),
+      // الحد الائتماني للعملاء فقط: فارغ = بلا حد (null)
+      ...(path.endsWith("/customers") ? { credit_limit: f.credit_limit === "" ? null : f.credit_limit, tax_registration_number: f.tax_registration_number?.trim() || null, price_list_id: f.price_list_id ? Number(f.price_list_id) : null } : {}),
     };
     void run(async () => {
       if (initial) await api.patch(`${path}/${initial.id}`, body);
@@ -397,34 +404,54 @@ function PartyForm({
   };
 
   return (
-    <Modal title={initial ? `تعديل ${singular}` : `${singular} جديد`} onClose={onClose}>
+    <Modal title={initial ? `${t("تعديل ")}${singular}` : `${singular}${t(" جديد")}`} onClose={onClose}>
       <form onSubmit={submit}>
         <Alert>{error}</Alert>
-        <Field label="الاسم">
+        <Field label={t("الاسم")}>
           <input value={f.name} onChange={(e) => set("name", e.target.value)} required autoFocus />
         </Field>
         {initial && (
-          <Field label="الكود" hint="يُولَّد تلقائيًا إذا تُرك فاضيًا عند الاستيراد أو الإضافة — يُعدَّل من الاستيراد فقط">
+          <Field label={t("الكود")} hint={t("يُولَّد تلقائيًا إذا تُرك فاضيًا عند الاستيراد أو الإضافة — يُعدَّل من الاستيراد فقط")}>
             <input dir="ltr" value={initial.code || "—"} readOnly style={{ background: "#f6f7f9" }} />
           </Field>
         )}
         <div className="form-grid">
-          <Field label="المسؤول">
+          <Field label={t("المسؤول")}>
             <input value={f.contact_person} onChange={(e) => set("contact_person", e.target.value)} />
           </Field>
-          <Field label="الهاتف">
+          <Field label={t("الهاتف")}>
             <input dir="ltr" value={f.phone} onChange={(e) => set("phone", e.target.value)} />
           </Field>
         </div>
-        <Field label="البريد الإلكتروني">
+        <Field label={t("البريد الإلكتروني")}>
           <input dir="ltr" type="email" value={f.email} onChange={(e) => set("email", e.target.value)} />
         </Field>
-        <Field label="العنوان">
+        <Field label={t("العنوان")}>
           <textarea rows={2} value={f.address} onChange={(e) => set("address", e.target.value)} />
         </Field>
         {canSetOpening && (
-          <Field label="رصيد أول المدة" hint={`موجب = مستحق ${singular === "عميل" ? "على العميل" : "للمورد"} · سالب = رصيد دائن`}>
+          <Field label={t("رصيد أول المدة")} hint={`${t("موجب = مستحق ")}${singular === "عميل" ? t("على العميل") : t("للمورد")}${t(" · سالب = رصيد دائن")}`}>
             <input dir="ltr" type="number" step="0.01" value={f.opening_balance} onChange={(e) => set("opening_balance", e.target.value)} />
+          </Field>
+        )}
+        {path.endsWith("/customers") && (
+          <Field label={t("قائمة الأسعار")} hint={t("تُطبَّق أسعارها تلقائيًا على فواتير هذا العميل")}>
+            <select value={f.price_list_id ?? ""} onChange={(e) => set("price_list_id", e.target.value)}>
+              <option value="">— سعر البيع العام —</option>
+              {(priceLists.data ?? []).filter((l: any) => l.is_active).map((l: any) => (
+                <option key={l.id} value={l.id}>{l.name} ({l.items.length} سعر)</option>
+              ))}
+            </select>
+          </Field>
+        )}
+        {path.endsWith("/customers") && (
+          <Field label={t("الرقم الضريبي للعميل")} hint={t("للفواتير B2B على منظومة الضرائب — اختياري")}>
+            <input dir="ltr" value={f.tax_registration_number ?? ""} onChange={(e) => set("tax_registration_number", e.target.value)} placeholder="مثال: 300012345600003" />
+          </Field>
+        )}
+        {path.endsWith("/customers") && (
+          <Field label={t("الحد الائتماني")} hint={t("أقصى مديونية مسموحة — فارغ = بلا حد · يتجاوزه من يملك صلاحية «تجاوز الحد الائتماني»")}>
+            <input dir="ltr" type="number" step="0.01" min="0" value={f.credit_limit} onChange={(e) => set("credit_limit", e.target.value)} placeholder={t("بلا حد")} />
           </Field>
         )}
         <label className="check">
@@ -432,10 +459,10 @@ function PartyForm({
         </label>
         <div className="form-actions">
           <button className="btn btn-primary" disabled={busy}>
-            {busy ? "جارٍ الحفظ…" : "حفظ"}
+            {busy ? t("جارٍ الحفظ…") : t("حفظ")}
           </button>
           <button type="button" className="btn" onClick={onClose}>
-            إلغاء
+            {t("إلغاء")}
           </button>
         </div>
       </form>

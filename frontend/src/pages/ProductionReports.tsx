@@ -2,27 +2,33 @@ import { useState } from "react";
 import { api } from "../api";
 import { money, num } from "../format";
 import { useFetch } from "../hooks";
-import type { ManufacturingReportOut, WipOrder } from "../types";
+import type { ManufacturingReportOut, WipOrder, WorkCenterPerfOut } from "../types";
 import { Alert, Empty, Loading, PageHeader } from "../ui";
+
+function escapeHtml(v: unknown): string {
+  return String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
 
 function printReport(report: ManufacturingReportOut) {
   const w = window.open("", "_blank");
   if (!w) return;
   const rowsHtml = report.lines.map((l) => `
     <tr>
-      <td>${l.code}</td>
-      <td>${l.product_name ?? "—"}</td>
+      <td>${escapeHtml(l.code)}</td>
+      <td>${escapeHtml(l.product_name ?? "—")}</td>
       <td class="num">${l.qty_planned}</td>
       <td class="num">${l.qty_produced}</td>
       <td class="num">${money(l.materials)}</td>
       <td class="num">${money(l.costs)}</td>
       <td class="num">${money(l.total)}</td>
       <td class="num">${money(l.unit_cost)}</td>
+      <td class="num">${money(l.std_unit_cost)}</td>
+      <td class="num">${l.variance_std !== null && l.variance_std !== undefined ? money(l.variance_std) : "—"}</td>
       <td class="num">${money(l.variance)}</td>
     </tr>`).join("");
   const byProductHtml = report.by_product.map((b) => `
     <tr>
-      <td>${b.product_name ?? `#${b.product_id}`}</td>
+      <td>${escapeHtml(b.product_name ?? `#${b.product_id}`)}</td>
       <td class="num">${b.orders}</td>
       <td class="num">${b.qty_produced}</td>
       <td class="num">${money(b.total)}</td>
@@ -40,19 +46,21 @@ function printReport(report: ManufacturingReportOut) {
       tfoot td { font-weight: bold; background: #f3f4f6; }
     </style></head><body>
     <h1>تقرير التصنيع</h1>
-    <h2>الفترة: ${report.date_from ?? "البداية"} — ${report.date_to ?? "حتى اليوم"}</h2>
+    <h2>الفترة: ${escapeHtml(report.date_from ?? "البداية")} — ${escapeHtml(report.date_to ?? "حتى اليوم")}</h2>
     <h3>الأوامر المكتملة</h3>
     <table>
       <thead><tr>
-        <th>الرقم</th><th>المنتج</th><th>المخطط</th><th>المنتج</th><th>الخامات</th><th>الأجور والأعباء</th><th>الإجمالي</th><th>تكلفة الوحدة</th><th>الانحراف</th>
+        <th>الرقم</th><th>المنتج</th><th>المخطط</th><th>المنتج</th><th>الخامات</th><th>الأجور والأعباء</th><th>الإجمالي</th><th>تكلفة الوحدة</th><th>القياسية</th><th>انحراف القياسية</th><th>الانحراف</th>
       </tr></thead>
-      <tbody>${rowsHtml || '<tr><td colspan="9">لا توجد أوامر مكتملة في هذه الفترة</td></tr>'}</tbody>
+      <tbody>${rowsHtml || '<tr><td colspan="11">لا توجد أوامر مكتملة في هذه الفترة</td></tr>'}</tbody>
       <tfoot><tr>
         <td colspan="4">الإجمالي (${report.total_orders} أمر · ${report.total_qty_produced} وحدة)</td>
         <td class="num">${money(report.total_materials)}</td>
         <td class="num">${money(report.total_costs)}</td>
         <td class="num">${money(report.total)}</td>
         <td class="num">—</td>
+        <td class="num">—</td>
+        <td class="num">${money(report.total_variance_std)}</td>
         <td class="num">${money(report.total_variance)}</td>
       </tr></tfoot>
     </table>
@@ -76,6 +84,11 @@ export default function ProductionReports() {
     () => (valid ? api.get<ManufacturingReportOut>(`/production-orders/reports/summary?${from ? `date_from=${from}&` : ""}${to ? `date_to=${to}` : ""}`) : Promise.resolve(null)),
     `mfg-report-${from}-${to}`
   );
+  const wcPerf = useFetch(
+    () => (valid ? api.get<WorkCenterPerfOut>(`/production-orders/reports/work-centers?${from ? `date_from=${from}&` : ""}${to ? `date_to=${to}` : ""}`) : Promise.resolve(null)),
+    `wc-perf-${from}-${to}`
+  );
+  const wcRows = (wcPerf.data?.rows ?? []).filter((r) => r.orders_count > 0 || r.planned_minutes > 0);
   const r = report.data ?? null;
 
   return (
@@ -98,6 +111,40 @@ export default function ProductionReports() {
       </div>
       {!valid && <Alert>تاريخ البداية يجب ألا يتجاوز تاريخ النهاية.</Alert>}
       <Alert>{report.error}</Alert>
+
+      <div className="card card-pad" style={{ marginBottom: 16 }}>
+        <h3 style={{ margin: "0 0 8px", fontSize: 15 }}>🏁 أداء مراكز التشغيل (الفعلي مقابل المخطط)</h3>
+        {wcPerf.loading && !wcPerf.data ? (
+          <Loading />
+        ) : wcRows.length > 0 ? (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr><th>مركز التشغيل</th><th className="num">أوامر</th><th className="num">المنجز</th><th className="num">الهالك</th><th className="num">دقائق فعلية</th><th className="num">دقائق مخططة</th><th className="num">الاستغلال</th></tr>
+              </thead>
+              <tbody>
+                {wcRows.map((r) => (
+                  <tr key={r.work_center_id}>
+                    <td>{r.name}</td>
+                    <td className="num">{num(r.orders_count)}</td>
+                    <td className="num">{num(r.qty_done)}</td>
+                    <td className="num">{num(r.qty_scrapped)}</td>
+                    <td className="num">{num(r.actual_minutes)}</td>
+                    <td className="num">{num(r.planned_minutes)}</td>
+                    <td className="num">
+                      <span className={`badge ${r.utilization > 110 ? "badge-cancelled" : r.utilization >= 80 ? "badge-confirmed" : "badge-muted"}`}>
+                        {r.utilization}%
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <Empty>لا بيانات تشغيل على مراكز التشغيل في هذه الفترة — حدد مراحل بمركز تشغيل في قائمة المواد.</Empty>
+        )}
+      </div>
 
       <div className="card card-pad" style={{ marginBottom: 16 }}>
         <h3 style={{ margin: "0 0 8px", fontSize: 15 }}>⚙️ الأوامر قيد التنفيذ (WIP)</h3>
@@ -136,8 +183,10 @@ export default function ProductionReports() {
         )}
       </div>
 
-      {!r ? (
+      {!valid || report.loading ? (
         <Loading />
+      ) : !r ? (
+        <div className="card card-pad"><Empty>حدّد فترة صحيحة لعرض التقرير.</Empty></div>
       ) : (
         <>
           <div className="card card-pad" style={{ marginBottom: 16, display: "flex", gap: 24, flexWrap: "wrap" }}>
@@ -147,6 +196,7 @@ export default function ProductionReports() {
             <span>الأجور والأعباء: <b>{money(r.total_costs)}</b></span>
             <span>الإجمالي: <b style={{ fontSize: 15 }}>{money(r.total)}</b></span>
             <span>إجمالي الانحرافات: <b>{money(r.total_variance)}</b></span>
+            {Number(r.total_variance_std) !== 0 && <span>ضد القياسية: <b>{money(r.total_variance_std)}</b></span>}
           </div>
 
           <div className="card table-wrap" style={{ marginBottom: 16 }}>
@@ -163,6 +213,8 @@ export default function ProductionReports() {
                     <th className="num">الأجور والأعباء</th>
                     <th className="num">الإجمالي</th>
                     <th className="num">تكلفة الوحدة</th>
+                    <th className="num">القياسية</th>
+                    <th className="num">ضد القياسية</th>
                     <th className="num">الانحراف</th>
                   </tr>
                 </thead>
@@ -177,6 +229,8 @@ export default function ProductionReports() {
                       <td className="num">{money(l.costs)}</td>
                       <td className="num">{money(l.total)}</td>
                       <td className="num">{money(l.unit_cost)}</td>
+                      <td className="num">{l.std_unit_cost ? money(l.std_unit_cost) : "—"}</td>
+                      <td className="num">{l.variance_std !== null && l.variance_std !== undefined && Number(l.variance_std) !== 0 ? money(l.variance_std) : "—"}</td>
                       <td className="num">{Number(l.variance) !== 0 ? money(l.variance) : "—"}</td>
                     </tr>
                   ))}

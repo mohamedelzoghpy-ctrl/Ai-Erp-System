@@ -13,6 +13,7 @@ import {
   YAxis,
   Tooltip,
   CartesianGrid,
+  LabelList,
 } from "recharts";
 import { api } from "../api";
 import { useAuth } from "../auth";
@@ -20,13 +21,13 @@ import { dayLabel, money, num } from "../format";
 import { useFetch } from "../hooks";
 import { useI18n } from "../i18n";
 import type { Dashboard as DashboardData, InventoryValuationRow, SalesSummary } from "../types";
-import { Alert, Empty, Loading, PageHeader } from "../ui";
+import { Alert, Empty, PageHeader } from "../ui";
 
 const PALETTE = ["#2563eb", "#10b981", "#f59e0b", "#8b5cf6", "#ec4899", "#06b6d4", "#64748b"];
 
-function Kpi({ label, value, sub, warn, trend, trendLabel, color }: { label: string; value: string; sub?: string; warn?: boolean; trend?: { direction: "up" | "down"; percentage: number }; trendLabel?: string; color?: string }) {
-  return (
-    <div className={`card kpi${warn ? " warn" : ""}`} style={{ borderRight: color ? `4px solid ${color}` : undefined }} aria-label={label}>
+function Kpi({ label, value, sub, warn, trend, trendLabel, color, icon }: { label: string; value: string; sub?: string; warn?: boolean; trend?: { direction: "up" | "down"; percentage: number }; trendLabel?: string; color?: string; icon?: string }) {
+  const body = (
+    <div className="kpi-body">
       <div className="label">{label}</div>
       <div className="value">{value}</div>
       {sub && <div className="sub">{sub}</div>}
@@ -35,6 +36,54 @@ function Kpi({ label, value, sub, warn, trend, trendLabel, color }: { label: str
           {trendLabel || (trend.direction === "up" ? "↑" : "↓")}
           {trend.percentage}%
         </span>
+      )}
+    </div>
+  );
+  if (!icon) {
+    return (
+      <div className={`card kpi${warn ? " warn" : ""}`} style={{ borderRight: color ? `4px solid ${color}` : undefined }} aria-label={label}>
+        {body}
+      </div>
+    );
+  }
+  return (
+    <div
+      className={`card kpi has-icon${warn ? " warn" : ""}`}
+      style={color ? { background: `linear-gradient(135deg, ${color}17, ${color}2e)`, borderColor: `${color}45` } : undefined}
+      aria-label={label}
+    >
+      {body}
+      <div className="kpi-icon" style={color ? { color, background: "#ffffffd9", borderColor: `${color}55` } : undefined} aria-hidden="true">
+        {icon}
+      </div>
+    </div>
+  );
+}
+
+/** البطاقة المالية البطلة — كبيرة ملوّنة بأيقونة وشريط نسبة (لوحة التحكم الهرمية). */
+function HeroKpi({ kind, icon, label, value, sub, barPct, barLabel }: {
+  kind: "profit" | "assets" | "liabilities" | "equity";
+  icon: string;
+  label: string;
+  value: string;
+  sub: string;
+  barPct?: number | null;
+  barLabel?: string;
+}) {
+  const pct = barPct == null ? null : Math.max(0, Math.min(100, barPct));
+  return (
+    <div className={`hero-kpi ${kind}`} aria-label={label}>
+      <div className="hero-icon" aria-hidden="true">{icon}</div>
+      <div className="hero-label">{label}</div>
+      <div className="hero-value">{value}</div>
+      <div className="hero-sub">{sub}</div>
+      {pct != null && (
+        <>
+          <div className="hero-bar" role="presentation">
+            <span style={{ width: `${pct}%` }} />
+          </div>
+          {barLabel && <div className="hero-bar-label">{barLabel}</div>}
+        </>
       )}
     </div>
   );
@@ -223,14 +272,32 @@ export default function Dashboard() {
         </div>
       </PageHeader>
 
-      {/* TOP SECTION: Financial Core KPIs */}
+      {/* TOP SECTION: Financial Core KPIs — بطاقات بطل كبيرة ملوّنة */}
       {isManager && (
-        <div className="kpis" style={{ marginBottom: 20 }}>
-          <Kpi label={t("dashboard.netProfit")} value={money(pnl.data?.net_profit ?? 0)} sub={`${t("dashboard.revenues")}: ${money(pnl.data?.total_revenue ?? 0)}`} color="#10b981" />
-          <Kpi label={t("dashboard.totalAssets")} value={money(bs.data?.total_assets ?? 0)} sub={t("dashboard.assetsSub")} color="#2563eb" />
-          <Kpi label={t("dashboard.totalLiabilities")} value={money(bs.data?.total_liabilities ?? 0)} sub={t("dashboard.liabilitiesSub")} color="#ef4444" />
-          <Kpi label={t("dashboard.equity")} value={money(bs.data?.total_equity ?? 0)} sub={t("dashboard.equitySub")} color="#8b5cf6" />
-        </div>
+        ((pnl.loading && !pnl.data) || (bs.loading && !bs.data)) ? (
+          <div className="hero-kpis" aria-hidden="true">
+            {[0, 1, 2, 3].map((i) => <div key={i} className="skeleton skeleton-hero" />)}
+          </div>
+        ) : (
+          (() => {
+            const revenue = Number(pnl.data?.total_revenue ?? 0);
+            const netProfit = Number(pnl.data?.net_profit ?? 0);
+            const assets = Number(bs.data?.total_assets ?? 0);
+            const liabilities = Number(bs.data?.total_liabilities ?? 0);
+            const equity = Number(bs.data?.total_equity ?? 0);
+            const marginPct = revenue > 0 ? (netProfit / revenue) * 100 : null;
+            const debtPct = assets > 0 ? (liabilities / assets) * 100 : null;
+            const equityPct = assets > 0 ? (equity / assets) * 100 : null;
+            return (
+              <div className="hero-kpis">
+                <HeroKpi kind="profit" icon="💰" label={t("dashboard.netProfit")} value={money(netProfit)} sub={`${t("dashboard.revenues")}: ${money(revenue)}`} barPct={marginPct} barLabel={`${t("dashboard.profitMargin")}: ${marginPct != null ? marginPct.toFixed(1) + "%" : "—"}`} />
+                <HeroKpi kind="assets" icon="🏦" label={t("dashboard.totalAssets")} value={money(assets)} sub={t("dashboard.assetsFormula")} barPct={100} barLabel={t("dashboard.assetsFormula")} />
+                <HeroKpi kind="liabilities" icon="⚠️" label={t("dashboard.totalLiabilities")} value={money(liabilities)} sub={t("dashboard.liabilitiesSub")} barPct={debtPct} barLabel={`${t("dashboard.debtRatio")}: ${debtPct != null ? debtPct.toFixed(1) + "%" : "—"}`} />
+                <HeroKpi kind="equity" icon="📊" label={t("dashboard.equity")} value={money(equity)} sub={t("dashboard.equitySub")} barPct={equityPct} barLabel={`${t("dashboard.equityRatio")}: ${equityPct != null ? equityPct.toFixed(1) + "%" : "—"}`} />
+              </div>
+            );
+          })()
+        )
       )}
 
       <Alert>{dash.error || sales.error || valuation.error || pnl.error || bs.error}</Alert>
@@ -239,25 +306,62 @@ export default function Dashboard() {
           {num(d.stale_shifts)} {t("dashboard.staleShifts")}. <Link to="/shifts">{t("dashboard.reviewShifts")}</Link>
         </Alert>
       )}
+      {isManager && d && (d.lots_expiring_soon ?? 0) > 0 && (
+        <Alert kind="info">⏳ {num(d.lots_expiring_soon)} لوط ينتهي خلال 30 يومًا — راجع تنبيهات المخزون.</Alert>
+      )}
+      {isManager && d && (d.cheques_due_soon ?? 0) > 0 && (
+        <Alert kind="info">📅 {num(d.cheques_due_soon)} شيك يستحق خلال 7 أيام — راجع حافظة الشيكات.</Alert>
+      )}
+      {isManager && d && (d.recurring_journals_due ?? 0) > 0 && (
+        <Alert kind="info">🔁 {num(d.recurring_journals_due)} قيد متكرر مستحق الترحيل — من صفحة المحاسبة ← قيود متكررة.</Alert>
+      )}
+      {isManager && d && (d.pending_journal_approvals ?? 0) > 0 && (
+        <Alert kind="info">⏳ {num(d.pending_journal_approvals)} قيد بانتظار اعتمادك — من صفحة المحاسبة ← القيود.</Alert>
+      )}
 
-      {/* KPI Cards */}
+      {/* KPI Cards — مجمعة في مجموعات منطقية */}
       {isManager &&
         (dash.loading && !d ? (
-          <Loading />
+          <div className="kpi-group" aria-hidden="true">
+            <div className="skeleton skeleton-group-title" />
+            <div className="kpis">
+              {[0, 1, 2, 3].map((i) => <div key={i} className="skeleton skeleton-kpi" />)}
+            </div>
+          </div>
         ) : (
           d && (
-            <div className="kpis">
-              <Kpi label={t("dashboard.sales") + ` (${periodLabel})`} value={money(d.sales_total)} sub={`${num(d.sales_orders_confirmed)} ${t("dashboard.confirmedOrder")}`} trend={growthTrend(d.sales_growth_pct)} trendLabel={t(d.sales_growth_pct != null && d.sales_growth_pct < 0 ? "dashboard.trendDown" : "dashboard.trendUp")} />
-              <Kpi label={t("dashboard.purchases") + ` (${periodLabel})`} value={money(d.purchases_total)} sub={`${num(d.purchase_orders_received)} ${t("dashboard.receivedOrder")}`} trend={growthTrend(d.purchases_growth_pct)} trendLabel={t(d.purchases_growth_pct != null && d.purchases_growth_pct < 0 ? "dashboard.trendDown" : "dashboard.trendUp")} />
-              <Kpi label={t("dashboard.inventoryValue")} value={money(d.inventory_cost_value)} sub={`${t("dashboard.inventorySaleValue")}: ${money(d.inventory_sale_value)}`} />
-              <Kpi label={t("dashboard.profitEstimate")} value={money(Number(d.inventory_sale_value) - Number(d.inventory_cost_value))} sub={`${t("dashboard.margin")}: ` + (d.inventory_cost_value && Number(d.inventory_cost_value) > 0 ? (((Number(d.inventory_sale_value) - Number(d.inventory_cost_value)) / Number(d.inventory_cost_value)) * 100).toFixed(1) + "%" : "0%")} />
-              <Kpi label={t("dashboard.activeProducts")} value={num(d.products)} sub={`${num(d.warehouses)} ${t("dashboard.warehouses")} · ${num(d.suppliers)} ${t("dashboard.suppliers")} · ${num(d.customers)} ${t("dashboard.customers")}`} />
-              <Kpi label={t("dashboard.returns")} value={money(d.sales_returns_total)} sub={`${t("dashboard.purchaseReturn")}: ${money(d.purchase_returns_total)}`} />
-              <Kpi label={t("dashboard.receivables")} value={money(d.receivables_total)} sub={t("dashboard.totalReceivables")} warn={Number(d.receivables_total) > 0} />
-              <Kpi label={t("dashboard.payables")} value={money(d.payables_total)} sub={t("dashboard.totalPayables")} />
-              <Kpi label={t("dashboard.lowStock")} value={num(d.low_stock_products)} warn={d.low_stock_products > 0} />
-              <Kpi label={t("dashboard.draftOrders")} value={num(d.draft_sales_orders + d.draft_purchase_orders)} sub={`${num(d.draft_sales_orders)} ${t("dashboard.salesOrders")} · ${num(d.draft_purchase_orders)} ${t("dashboard.purchaseOrders")}`} />
-            </div>
+            [
+              {
+                title: t("dashboard.groupOps"), icon: "💼",
+                items: [
+                  <Kpi key="sales" icon="📈" color="#10b981" label={t("dashboard.sales") + ` (${periodLabel})`} value={money(d.sales_total)} sub={`${num(d.sales_orders_confirmed)} ${t("dashboard.confirmedOrder")}`} trend={growthTrend(d.sales_growth_pct)} trendLabel={t(d.sales_growth_pct != null && d.sales_growth_pct < 0 ? "dashboard.trendDown" : "dashboard.trendUp")} />,
+                  <Kpi key="purch" icon="🛒" color="#2563eb" label={t("dashboard.purchases") + ` (${periodLabel})`} value={money(d.purchases_total)} sub={`${num(d.purchase_orders_received)} ${t("dashboard.receivedOrder")}`} trend={growthTrend(d.purchases_growth_pct)} trendLabel={t(d.purchases_growth_pct != null && d.purchases_growth_pct < 0 ? "dashboard.trendDown" : "dashboard.trendUp")} />,
+                  <Kpi key="returns" icon="↩️" color="#f59e0b" label={t("dashboard.returns")} value={money(d.sales_returns_total)} sub={`${t("dashboard.purchaseReturn")}: ${money(d.purchase_returns_total)}`} />,
+                  <Kpi key="drafts" icon="📝" color="#64748b" label={t("dashboard.draftOrders")} value={num(d.draft_sales_orders + d.draft_purchase_orders)} sub={`${num(d.draft_sales_orders)} ${t("dashboard.salesOrders")} · ${num(d.draft_purchase_orders)} ${t("dashboard.purchaseOrders")}`} />,
+                ],
+              },
+              {
+                title: t("dashboard.groupInventory"), icon: "📦",
+                items: [
+                  <Kpi key="inv" icon="📦" color="#2563eb" label={t("dashboard.inventoryValue")} value={money(d.inventory_cost_value)} sub={`${t("dashboard.inventorySaleValue")}: ${money(d.inventory_sale_value)}`} />,
+                  <Kpi key="est" icon="💵" color="#10b981" label={t("dashboard.profitEstimate")} value={money(Number(d.inventory_sale_value) - Number(d.inventory_cost_value))} sub={`${t("dashboard.margin")}: ` + (d.inventory_cost_value && Number(d.inventory_cost_value) > 0 ? (((Number(d.inventory_sale_value) - Number(d.inventory_cost_value)) / Number(d.inventory_cost_value)) * 100).toFixed(1) + "%" : "0%")} />,
+                  <Kpi key="low" icon="⚠️" color="#ef4444" label={t("dashboard.lowStock")} value={num(d.low_stock_products)} warn={d.low_stock_products > 0} />,
+                  <Kpi key="prod" icon="🏷️" color="#8b5cf6" label={t("dashboard.activeProducts")} value={num(d.products)} sub={`${num(d.warehouses)} ${t("dashboard.warehouses")} · ${num(d.suppliers)} ${t("dashboard.suppliers")} · ${num(d.customers)} ${t("dashboard.customers")}`} />,
+                ],
+              },
+              {
+                title: t("dashboard.groupCash"), icon: "💰",
+                items: [
+                  <Kpi key="recv" icon="💰" color="#10b981" label={t("dashboard.receivables")} value={money(d.receivables_total)} sub={t("dashboard.totalReceivables")} warn={Number(d.receivables_total) > 0} />,
+                  <Kpi key="pay" icon="💸" color="#ef4444" label={t("dashboard.payables")} value={money(d.payables_total)} sub={t("dashboard.totalPayables")} />,
+                ],
+              },
+            ].map((g) => (
+              <div className="kpi-group" key={g.title}>
+                <div className="kpi-group-title"><span aria-hidden="true">{g.icon}</span>{g.title}</div>
+                <div className="kpis">{g.items}</div>
+              </div>
+            ))
           )
         ))}
 
@@ -492,15 +596,30 @@ export default function Dashboard() {
             ) : (
               <div className="chart-wrapper">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart layout="vertical" data={financialCompareData} margin={{ top: 10, right: 20, left: 10, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
-                    <XAxis type="number" tickFormatter={formatYAxisNumber} tick={{ fontSize: 11, fill: "#64748b" }} axisLine={false} tickLine={false} />
-                    <YAxis type="category" dataKey="name" tick={{ fontSize: 10, fill: "#475569" }} axisLine={false} tickLine={false} width={110} />
-                    <Tooltip content={<ChartTooltip unit="ج.م" />} />
-                    <Bar dataKey="value" name={t("dashboard.compareValue")} fill="#2563eb" radius={[0, 4, 4, 0]}>
-                      {financialCompareData.map((row) => (
-                        <Cell key={row.name} fill={row.color} />
+                  <BarChart layout="vertical" data={financialCompareData} margin={{ top: 6, right: 72, left: 6, bottom: 0 }} barCategoryGap={10}>
+                    <defs>
+                      {[...new Set(financialCompareData.map((row) => row.color))].map((color) => (
+                        <linearGradient key={color} id={`fcg-${color.slice(1)}`} x1="0" y1="0" x2="1" y2="0">
+                          <stop offset="0%" stopColor={color} stopOpacity={0.5} />
+                          <stop offset="100%" stopColor={color} stopOpacity={1} />
+                        </linearGradient>
                       ))}
+                    </defs>
+                    <XAxis type="number" hide />
+                    <YAxis type="category" dataKey="name" tick={{ fontSize: 12, fill: "#334155" }} axisLine={false} tickLine={false} width={112} />
+                    <Tooltip cursor={{ fill: "rgba(37, 99, 235, 0.06)" }} content={<ChartTooltip unit="ج.م" />} />
+                    <Bar
+                      dataKey="value"
+                      name={t("dashboard.compareValue")}
+                      barSize={16}
+                      radius={[0, 8, 8, 0]}
+                      background={{ fill: "#f1f5f9", radius: 8 }}
+                      isAnimationActive
+                    >
+                      {financialCompareData.map((row) => (
+                        <Cell key={row.name} fill={`url(#fcg-${row.color.slice(1)})`} />
+                      ))}
+                      <LabelList dataKey="value" position="right" formatter={(label) => formatYAxisNumber(Number(label ?? 0))} style={{ fill: "#334155", fontSize: 11, fontWeight: 600 }} />
                     </Bar>
                   </BarChart>
                 </ResponsiveContainer>
@@ -510,38 +629,6 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Row 3: Detail Table (Inventory by Warehouse) — low-stock alerts live on their own page under المخزون */}
-      {isManager && (
-        <div className="card card-pad">
-          <h3>{t("dashboard.inventoryByWarehouse")}</h3>
-          {valuation.data && valuation.data.length > 0 ? (
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>{t("dashboard.warehouse")}</th>
-                    <th className="num">{t("dashboard.units")}</th>
-                    <th className="num">{t("dashboard.atCost")}</th>
-                    <th className="num">{t("dashboard.atSale")}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {valuation.data.map((r) => (
-                    <tr key={r.warehouse_id ?? "none"}>
-                      <td>{r.warehouse_name ?? t("dashboard.noWarehouse")}</td>
-                      <td className="num">{num(r.units)}</td>
-                      <td className="num">{money(r.cost_value)}</td>
-                      <td className="num">{money(r.sale_value)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <Empty>{t("dashboard.noData")}</Empty>
-          )}
-        </div>
-      )}
     </>
   );
 }

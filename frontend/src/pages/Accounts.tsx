@@ -2,7 +2,7 @@ import { useState, type FormEvent } from "react";
 import { api, qs } from "../api";
 import { useAuth } from "../auth";
 import { useI18n } from "../i18n";
-import { balanceNote, CHEQUE_STATUS_LABEL, dateOnly, METHOD_LABEL, money } from "../format";
+import { balanceNote, chequeStatusLabel, CHEQUE_STATUS_LABEL, dateOnly, METHOD_LABEL, methodLabel, money } from "../format";
 import { useAction, useFetch, usePagedList } from "../hooks";
 import type { AccountStatementOut, Cheque, ChequeDirection, ChequeStatus, Payment, PaymentCategory, PaymentMethod, Statement } from "../types";
 import { Alert, Empty, Field, Loading, Modal, PageHeader, Pager } from "../ui";
@@ -72,6 +72,7 @@ export function PaymentDialog({
 }) {
   const isReceipt = kind === "customer";
   const fixedParty = partyId != null;
+  const { t } = useI18n();
   const [amount, setAmount] = useState("");
   const [method, setMethod] = useState<PaymentMethod>("cash");
   const [paidOn, setPaidOn] = useState(today());
@@ -116,11 +117,17 @@ export function PaymentDialog({
     });
   };
 
+  const currencies = useFetch(() => api.get<{ id: number; code: string; name: string; rate: string; is_active: boolean }[]>("/currencies"), "vouchers-currencies");
+  const [currencyId, setCurrencyId] = useState("");
+  const [foreignAmount, setForeignAmount] = useState("");
+  const selCurrency = (currencies.data ?? []).find((x) => String(x.id) === currencyId);
+  const fxBase = selCurrency && foreignAmount !== "" ? Number(foreignAmount) * Number(selCurrency.rate) : null;
+
   const submit = (e: FormEvent) => {
     e.preventDefault();
     void run(async () => {
       const body: Record<string, unknown> = {
-        amount,
+        amount: currencyId !== "" && fxBase != null ? fxBase.toFixed(2) : amount,
         method,
         paid_on: paidOn,
         reference: reference.trim() || null,
@@ -135,21 +142,25 @@ export function PaymentDialog({
         const [placeKind, placeId] = place.split(":");
         body[placeKind === "safe" ? "safe_id" : "bank_id"] = Number(placeId);
       }
+      if (currencyId !== "" && foreignAmount !== "") {
+        body.currency_id = Number(currencyId);
+        body.foreign_amount = foreignAmount;
+      }
       await api.post("/payments", body);
       onSaved();
     });
   };
 
   return (
-    <Modal title={fixedParty ? `${isReceipt ? "تسجيل قبض من" : "تسجيل دفعة إلى"} ${partyName}` : isReceipt ? "سند قبض جديد" : "سند صرف جديد"} onClose={onClose}>
+    <Modal title={fixedParty ? `${isReceipt ? t("تسجيل قبض من") : t("تسجيل دفعة إلى")} ${partyName}` : isReceipt ? t("سند قبض جديد") : t("سند صرف جديد")} onClose={onClose}>
       <form onSubmit={submit}>
         <Alert>{error}</Alert>
         {chosenParty && (
           <p className="muted" style={{ marginTop: 0 }}>
-            الرصيد الحالي: <b>{money(chosenParty.balance)}</b> ({balanceNote(kind, chosenParty.balance ?? "0")})
+            {t("الرصيد الحالي: ")}<b>{money(chosenParty.balance)}</b> ({balanceNote(kind, chosenParty.balance ?? "0")})
           </p>
         )}
-        <Field label={isReceipt ? "بند القبض" : "بند الصرف"} hint={fixedParty ? "اختياري — اختر من القائمة أو أضف بندًا جديدًا" : "نوع السند — اختر من القائمة أو أضف بندًا جديدًا"}>
+        <Field label={isReceipt ? t("بند القبض") : t("بند الصرف")} hint={fixedParty ? t("اختياري — اختر من القائمة أو أضف بندًا جديدًا") : t("نوع السند — اختر من القائمة أو أضف بندًا جديدًا")}>
           <div style={{ display: "flex", gap: 6 }}>
             <select
               value={String(categoryId)}
@@ -157,22 +168,22 @@ export function PaymentDialog({
               style={{ flex: 1 }}
               autoFocus={!fixedParty}
             >
-              <option value="">{fixedParty ? "— بدون بند —" : "— اختر البند —"}</option>
+              <option value="">{fixedParty ? t("— بدون بند —") : t("— اختر البند —")}</option>
               {(categories.data ?? []).map((c) => (
                 <option key={c.id} value={c.id}>
-                  {c.name}{c.requires_party ? "" : " (بدون " + (isReceipt ? "عميل" : "مورد") + ")"}
+                  {c.name}{c.requires_party ? "" : t(" (بدون ") + (isReceipt ? t("عميل") : t("مورد")) + ")"}
                 </option>
               ))}
             </select>
             <button type="button" className="btn" onClick={() => setAddingCategory((v) => !v)}>
-              {addingCategory ? "إلغاء" : "+ بند جديد"}
+              {addingCategory ? t("إلغاء") : t("+ بند جديد")}
             </button>
           </div>
         </Field>
         {addingCategory && (
           <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 10, flexWrap: "wrap" }}>
             <input
-              placeholder={`اسم ${isReceipt ? "بند القبض" : "بند الصرف"} الجديد`}
+              placeholder={`${t("اسم ")}${isReceipt ? t("بند القبض") : t("بند الصرف")}${t(" الجديد")}`}
               value={newCategory}
               onChange={(e) => setNewCategory(e.target.value)}
               onKeyDown={(e) => {
@@ -185,18 +196,18 @@ export function PaymentDialog({
               style={{ flex: 1, minWidth: 160 }}
             />
             <label className="check" style={{ fontSize: 13, whiteSpace: "nowrap" }}>
-              <input type="checkbox" checked={newCategoryNoParty} onChange={(e) => setNewCategoryNoParty(e.target.checked)} /> بدون {isReceipt ? "عميل" : "مورد"}
+              <input type="checkbox" checked={newCategoryNoParty} onChange={(e) => setNewCategoryNoParty(e.target.checked)} /> {t("بدون ")}{isReceipt ? t("عميل") : t("مورد")}
             </label>
             <button type="button" className="btn btn-primary" disabled={catAction.busy || !newCategory.trim()} onClick={addCategory}>
-              {catAction.busy ? "…" : "إضافة"}
+              {catAction.busy ? "…" : t("إضافة")}
             </button>
           </div>
         )}
         {catAction.error && <Alert>{catAction.error}</Alert>}
         {partyNeeded && !fixedParty && (
-          <Field label={isReceipt ? "العميل" : "المورد"}>
+          <Field label={isReceipt ? t("العميل") : t("المورد")}>
             <select value={String(partyChoice)} onChange={(e) => setPartyChoice(e.target.value === "" ? "" : Number(e.target.value))} required>
-              <option value="">— اختر —</option>
+              <option value="">{t("— اختر —")}</option>
               {(parties.data ?? []).map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.name}{p.balance != null ? ` — ${money(p.balance)}` : ""}
@@ -206,50 +217,64 @@ export function PaymentDialog({
           </Field>
         )}
         <Field
-          label="الخزينة / البنك"
-          hint={partyNeeded ? "اختياري — حدد اسم الخزينة أو البنك الذي سيوضع فيه المبلغ" : "مكان حفظ المبلغ — إجباري للسند بدون طرف"}
+          label={t("الخزينة / البنك")}
+          hint={partyNeeded ? t("اختياري — حدد اسم الخزينة أو البنك الذي سيوضع فيه المبلغ") : t("مكان حفظ المبلغ — إجباري للسند بدون طرف")}
         >
           <select value={place} onChange={(e) => setPlace(e.target.value)} required={!partyNeeded}>
-            <option value="">— اختر —</option>
+            <option value="">{t("— اختر —")}</option>
             {(safes.data ?? []).filter((s) => s.is_active).map((s) => (
-              <option key={`safe-${s.id}`} value={`safe:${s.id}`}>خزينة: {s.name}</option>
+              <option key={`safe-${s.id}`} value={`safe:${s.id}`}>{t("خزينة: ")}{s.name}</option>
             ))}
             {(banks.data ?? []).filter((b) => b.is_active).map((b) => (
-              <option key={`bank-${b.id}`} value={`bank:${b.id}`}>بنك: {b.name}</option>
+              <option key={`bank-${b.id}`} value={`bank:${b.id}`}>{t("بنك: ")}{b.name}</option>
             ))}
           </select>
         </Field>
         <div className="form-grid">
-          <Field label="المبلغ">
+<Field label={t("العملة")} hint={t("اختياري — الافتراضي جنيه. فرق الصرف يُرحَّل آليًا عند السداد")}>
+          <select value={currencyId} onChange={(e) => { setCurrencyId(e.target.value); setForeignAmount(""); }}>
+            <option value="">{t("جنيه مصري (EGP)")}</option>
+            {(currencies.data ?? []).filter((x) => x.is_active).map((x) => (
+              <option key={x.id} value={x.id}>{x.code} — {x.name} @{money(x.rate)}</option>
+            ))}
+          </select>
+        </Field>
+        {selCurrency && (
+          <Field label={t(`المبلغ (${selCurrency.code})`)} hint={t("المقابل بالجنيه يُحسب تلقائيًا")}>
+            <input dir="ltr" type="number" step="0.01" min={0.01} value={foreignAmount} onChange={(e) => setForeignAmount(e.target.value)} required={currencyId !== ""} />
+          </Field>
+        )}
+        {fxBase != null && <span className="field-hint">= {money(fxBase)} جنيه @ {money(selCurrency?.rate ?? "1")}</span>}
+          <Field label={t("المبلغ")}>
             <input dir="ltr" type="number" inputMode="decimal" min="0.01" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} required autoFocus={fixedParty} />
           </Field>
-          <Field label="التاريخ">
+          <Field label={t("التاريخ")}>
             <input type="date" value={paidOn} max={today()} onChange={(e) => setPaidOn(e.target.value)} required />
           </Field>
         </div>
         <div className="form-grid">
-          <Field label="طريقة الدفع">
+          <Field label={t("طريقة الدفع")}>
             <select value={method} onChange={(e) => setMethod(e.target.value as PaymentMethod)}>
-              {(Object.keys(METHOD_LABEL) as PaymentMethod[]).map((m) => (
+              {(Object.keys(METHOD_LABEL) as PaymentMethod[]).map((m: PaymentMethod) => (
                 <option key={m} value={m}>
-                  {METHOD_LABEL[m]}
+                  {methodLabel(m)}
                 </option>
               ))}
             </select>
           </Field>
-          <Field label="المرجع" hint="رقم الشيك أو التحويل (اختياري)">
+          <Field label={t("المرجع")} hint={t("رقم الشيك أو التحويل (اختياري)")}>
             <input dir="ltr" value={reference} onChange={(e) => setReference(e.target.value)} maxLength={100} />
           </Field>
         </div>
-        <Field label="ملاحظات">
+        <Field label={t("ملاحظات")}>
           <textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
         </Field>
         <div className="form-actions">
           <button className="btn btn-primary" disabled={busy}>
-            {busy ? "جارٍ الحفظ…" : "حفظ"}
+            {busy ? t("جارٍ الحفظ…") : t("حفظ")}
           </button>
           <button type="button" className="btn" onClick={onClose}>
-            إلغاء
+            {t("إلغاء")}
           </button>
         </div>
       </form>
@@ -260,6 +285,7 @@ export function PaymentDialog({
 // ------------------------------------------------------------ cheques (حافظة الشيكات)
 function ChequeDialog({ direction, onClose, onSaved }: { direction: ChequeDirection; onClose: () => void; onSaved: () => void }) {
   const isReceive = direction === "received";
+  const { t } = useI18n();
   const [number, setNumber] = useState("");
   const [bankId, setBankId] = useState<number | "">("");
   const [partyId, setPartyId] = useState<number | "">("");
@@ -293,13 +319,13 @@ function ChequeDialog({ direction, onClose, onSaved }: { direction: ChequeDirect
   };
 
   return (
-    <Modal title={isReceive ? "استلام شيك" : "صرف شيك"} onClose={onClose}>
+    <Modal title={isReceive ? t("استلام شيك") : t("صرف شيك")} onClose={onClose}>
       <form onSubmit={submit}>
         <Alert>{error}</Alert>
         <div className="form-grid">
-          <Field label={isReceive ? "العميل" : "المورد"}>
+          <Field label={isReceive ? t("العميل") : t("المورد")}>
             <select value={String(partyId)} onChange={(e) => setPartyId(e.target.value === "" ? "" : Number(e.target.value))} required>
-              <option value="">— اختر —</option>
+              <option value="">{t("— اختر —")}</option>
               {(parties.data ?? []).map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.name}
@@ -308,40 +334,40 @@ function ChequeDialog({ direction, onClose, onSaved }: { direction: ChequeDirect
               ))}
             </select>
           </Field>
-          <Field label="رقم الشيك">
+          <Field label={t("رقم الشيك")}>
             <input dir="ltr" value={number} onChange={(e) => setNumber(e.target.value)} required maxLength={60} autoFocus />
           </Field>
         </div>
         <div className="form-grid">
-          <Field label="البنك المسحوب عليه">
+          <Field label={t("البنك المسحوب عليه")}>
             <select value={String(bankId)} onChange={(e) => setBankId(e.target.value === "" ? "" : Number(e.target.value))} required>
-              <option value="">— اختر —</option>
+              <option value="">{t("— اختر —")}</option>
               {(banks.data ?? []).filter((b) => b.is_active).map((b) => (
                 <option key={b.id} value={b.id}>{b.name}</option>
               ))}
             </select>
           </Field>
-          <Field label="المبلغ">
+          <Field label={t("المبلغ")}>
             <input dir="ltr" type="number" inputMode="decimal" min="0.01" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} required />
           </Field>
         </div>
         <div className="form-grid">
-          <Field label="تاريخ الشيك">
+          <Field label={t("تاريخ الشيك")}>
             <input type="date" value={chequeDate} max={today()} onChange={(e) => setChequeDate(e.target.value)} required />
           </Field>
-          <Field label="تاريخ الاستحقاق" hint="اختياري">
+          <Field label={t("تاريخ الاستحقاق")} hint={t("اختياري")}>
             <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
           </Field>
         </div>
-        <Field label="ملاحظات">
+        <Field label={t("ملاحظات")}>
           <textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
         </Field>
         <div className="form-actions">
           <button className="btn btn-primary" disabled={busy}>
-            {busy ? "جارٍ الحفظ…" : "حفظ"}
+            {busy ? t("جارٍ الحفظ…") : t("حفظ")}
           </button>
           <button type="button" className="btn" onClick={onClose}>
-            إلغاء
+            {t("إلغاء")}
           </button>
         </div>
       </form>
@@ -351,6 +377,7 @@ function ChequeDialog({ direction, onClose, onSaved }: { direction: ChequeDirect
 
 function ChequeActionDialog({ cheque, action, onClose, onDone }: { cheque: Cheque; action: "collect" | "deposit"; onClose: () => void; onDone: () => void }) {
   const isCollect = action === "collect";
+  const { t } = useI18n();
   const [targetId, setTargetId] = useState<number | "">("");
   const { busy, error, run } = useAction();
   const targets = useFetch(
@@ -359,7 +386,7 @@ function ChequeActionDialog({ cheque, action, onClose, onDone }: { cheque: Chequ
   );
 
   return (
-    <Modal title={isCollect ? `تحصيل الشيك ${cheque.number}` : `إيداع الشيك ${cheque.number}`} onClose={onClose}>
+    <Modal title={isCollect ? `${t("تحصيل الشيك ")}${cheque.number}` : `${t("إيداع الشيك ")}${cheque.number}`} onClose={onClose}>
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -372,11 +399,11 @@ function ChequeActionDialog({ cheque, action, onClose, onDone }: { cheque: Chequ
       >
         <Alert>{error}</Alert>
         <p className="muted" style={{ marginTop: 0 }}>
-          مبلغ الشيك: <b>{money(cheque.amount)}</b> — {isCollect ? "يُضاف إلى الخزينة" : "يُضاف إلى حساب البنك"}
+          {t("مبلغ الشيك: ")}<b>{money(cheque.amount)}</b> — {isCollect ? t("يُضاف إلى الخزينة") : t("يُضاف إلى حساب البنك")}
         </p>
-        <Field label={isCollect ? "الخزينة" : "البنك"}>
+        <Field label={isCollect ? t("الخزينة") : t("البنك")}>
           <select value={String(targetId)} onChange={(e) => setTargetId(e.target.value === "" ? "" : Number(e.target.value))} required autoFocus>
-            <option value="">— اختر —</option>
+            <option value="">{t("— اختر —")}</option>
             {(targets.data ?? []).filter((t) => t.is_active).map((t) => (
               <option key={t.id} value={t.id}>{t.name}</option>
             ))}
@@ -384,10 +411,10 @@ function ChequeActionDialog({ cheque, action, onClose, onDone }: { cheque: Chequ
         </Field>
         <div className="form-actions">
           <button className="btn btn-primary" disabled={busy}>
-            {busy ? "…" : "تأكيد"}
+            {busy ? "…" : t("تأكيد")}
           </button>
           <button type="button" className="btn" onClick={onClose}>
-            إلغاء
+            {t("إلغاء")}
           </button>
         </div>
       </form>
@@ -412,6 +439,7 @@ function ChequesTable({
   dateTo?: string;
   onChanged: () => void;
 }) {
+  const { t } = useI18n();
   const list = useFetch(
     () => api.get<Cheque[]>(`/cheques?${qs({ direction: direction || undefined, status: status || undefined, bank_id: bankId || undefined, branch_id: branchId || undefined, date_from: dateFrom || undefined, date_to: dateTo || undefined })}`),
     `cheques-${direction}-${status}-${bankId}-${branchId}-${dateFrom}-${dateTo}`
@@ -420,7 +448,7 @@ function ChequesTable({
   const act = useAction();
 
   const doReturn = (c: Cheque) => {
-    if (!confirm(`ارتجاع الشيك ${c.number} بمبلغ ${money(c.amount)}؟ سيُلغى السند المرتبط ويرجع رصيد الطرف.`)) return;
+    if (!confirm(`${t("ارتجاع الشيك ")}${c.number}${t(" بمبلغ ")}${money(c.amount)}${t("؟ سيُلغى السند المرتبط ويرجع رصيد الطرف.")}`)) return;
     void act.run(async () => {
       await api.post(`/cheques/${c.id}/return`);
       list.reload();
@@ -428,7 +456,7 @@ function ChequesTable({
     });
   };
   const doCashOut = (c: Cheque) => {
-    if (!confirm(`تأكيد صرف الشيك ${c.number} من البنك بمبلغ ${money(c.amount)}؟ سيُخصم من رصيد البنك.`)) return;
+    if (!confirm(`${t("تأكيد صرف الشيك ")}${c.number}${t(" من البنك بمبلغ ")}${money(c.amount)}${t("؟ سيُخصم من رصيد البنك.")}`)) return;
     void act.run(async () => {
       await api.post(`/cheques/${c.id}/cash-out`);
       list.reload();
@@ -446,24 +474,24 @@ function ChequesTable({
             <table>
               <thead>
                 <tr>
-                  <th>الرقم</th>
-                  <th>الاتجاه</th>
-                  <th>اسم الفرع</th>
-                  <th>رقم الشيك</th>
-                  <th>البنك</th>
-                  <th>الطرف</th>
-                  <th>تاريخ الشيك</th>
-                  <th>الاستحقاق</th>
-                  <th className="num">المبلغ</th>
-                  <th>الحالة</th>
-                  <th>إجراءات</th>
+                  <th>{t("الرقم")}</th>
+                  <th>{t("الاتجاه")}</th>
+                  <th>{t("اسم الفرع")}</th>
+                  <th>{t("رقم الشيك")}</th>
+                  <th>{t("البنك")}</th>
+                  <th>{t("الطرف")}</th>
+                  <th>{t("تاريخ الشيك")}</th>
+                  <th>{t("الاستحقاق")}</th>
+                  <th className="num">{t("المبلغ")}</th>
+                  <th>{t("الحالة")}</th>
+                  <th>{t("إجراءات")}</th>
                 </tr>
               </thead>
               <tbody>
                 {list.data.map((c) => (
                   <tr key={c.id}>
                     <td dir="ltr">{c.direction === "received" ? "IN" : "OUT"}-{c.id}</td>
-                    <td>{c.direction === "received" ? "مقبوض" : "مصروف"}</td>
+                    <td>{c.direction === "received" ? t("مقبوض") : t("مصروف")}</td>
                     <td>{c.bank_branch_name ?? "—"}</td>
                     <td dir="ltr">{c.number}</td>
                     <td>{c.bank_name ?? "—"}</td>
@@ -473,23 +501,23 @@ function ChequesTable({
                     <td className="num">{money(c.amount)}</td>
                     <td>
                       <span className={`badge ${c.status === "collected" || c.status === "cashed" ? "badge-confirmed" : c.status === "returned" ? "badge-cancelled" : "badge-draft"}`}>
-                        {CHEQUE_STATUS_LABEL[c.status]}
+                        {chequeStatusLabel(c.status)}
                       </span>
                     </td>
                     <td className="actions">
                       {c.direction === "received" && c.status === "under_collection" && (
                         <>
                           <button className="btn btn-sm" onClick={() => setActionState({ cheque: c, action: "collect" })}>
-                            💵 تحصيل
+                            {t("💵 تحصيل")}
                           </button>{" "}
                           <button className="btn btn-sm" onClick={() => setActionState({ cheque: c, action: "deposit" })}>
-                            🏦 إيداع
+                            {t("🏦 إيداع")}
                           </button>{" "}
                         </>
                       )}
                       {c.direction === "issued" && c.status === "issued" && (
                         <button className="btn btn-sm" onClick={() => doCashOut(c)}>
-                          🏦 تم الصرف
+                          {t("🏦 تم الصرف")}
                         </button>
                       )}
                       {(c.status === "under_collection" || c.status === "issued") && (
@@ -498,7 +526,7 @@ function ChequesTable({
                           style={{ color: "var(--danger)", borderColor: "var(--danger)" }}
                           onClick={() => doReturn(c)}
                         >
-                          ↩️ ارتجاع
+                          {t("↩️ ارتجاع")}
                         </button>
                       )}
                       {(c.status === "collected" || c.status === "cashed" || c.status === "returned") && <span className="muted">—</span>}
@@ -508,7 +536,7 @@ function ChequesTable({
               </tbody>
             </table>
           ) : (
-            <Empty>لا توجد شيكات.</Empty>
+            <Empty>{t("لا توجد شيكات.")}</Empty>
           )}
         </div>
       {actionState && (
@@ -528,15 +556,16 @@ function ChequesTable({
 }
 
 function PortfolioModal({ onClose, onChanged }: { onClose: () => void; onChanged: () => void }) {
+  const { t } = useI18n();
   const [statusFilter, setStatusFilter] = useState<"" | ChequeStatus>("");
   return (
-    <Modal title="📁 حافظة الشيكات" onClose={onClose} wide>
+    <Modal title={t("📁 حافظة الشيكات")} onClose={onClose} wide>
       <div style={{ marginBottom: 10, display: "flex", gap: 8 }}>
         <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as "" | ChequeStatus)}>
-          <option value="">كل الحالات</option>
-          {(Object.keys(CHEQUE_STATUS_LABEL) as ChequeStatus[]).map((s) => (
+          <option value="">{t("كل الحالات")}</option>
+          {(Object.keys(CHEQUE_STATUS_LABEL) as ChequeStatus[]).map((s: ChequeStatus) => (
             <option key={s} value={s}>
-              {CHEQUE_STATUS_LABEL[s]}
+              {chequeStatusLabel(s)}
             </option>
           ))}
         </select>
@@ -547,6 +576,7 @@ function PortfolioModal({ onClose, onChanged }: { onClose: () => void; onChanged
 }
 
 function SafeBalanceModal({ onClose }: { onClose: () => void }) {
+  const { t } = useI18n();
   const [safeId, setSafeId] = useState<number | "">("");
   const safes = useFetch(() => api.get<{ id: number; name: string; code: string; balance: string; is_active: boolean }[]>("/safes"), "safe-balance-safes");
   // كشف من دفتر الأستاذ: يشمل حركات السندات والشيكات وكل ما يمس الخزينة
@@ -571,7 +601,7 @@ function SafeBalanceModal({ onClose }: { onClose: () => void }) {
         <td class="num">${Number(l.credit) ? money(l.credit) : "—"}</td>
         <td class="num">${money(l.balance)}</td>
       </tr>`).join("");
-    w.document.write(`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>كشف حركة الخزينة</title>
+    w.document.write(`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>${t("كشف حركة الخزينة")}</title>
       <style>
         body { font-family: Tahoma, Arial, sans-serif; padding: 16px; }
         h1 { text-align: center; font-size: 20px; }
@@ -582,15 +612,15 @@ function SafeBalanceModal({ onClose }: { onClose: () => void }) {
         .num { text-align: center; }
         tfoot td { font-weight: bold; background: #f3f4f6; }
       </style></head><body>
-      <h1>كشف حركة الخزينة — ${stmt.account_name}</h1>
-      <h2>الكود: ${stmt.account_code} · الرصيد الحالي: ${money(stmt.closing)}</h2>
+      <h1>${t("كشف حركة الخزينة")} — ${stmt.account_name}</h1>
+      <h2>${t("الكود: ")}${stmt.account_code} · ${t("الرصيد الحالي: ")}${money(stmt.closing)}</h2>
       <table>
         <thead><tr>
-          <th>القيد</th><th>التاريخ</th><th>البيان</th><th>المرجع</th><th>داخل</th><th>خارج</th><th>الرصيد</th>
+          <th>${t("القيد")}</th><th>${t("التاريخ")}</th><th>${t("البيان")}</th><th>${t("المرجع")}</th><th>${t("داخل")}</th><th>${t("خارج")}</th><th>${t("الرصيد")}</th>
         </tr></thead>
-        <tbody>${rowsHtml || '<tr><td colspan="7">لا توجد حركات على هذه الخزينة</td></tr>'}</tbody>
+        <tbody>${rowsHtml || `<tr><td colspan="7">${t("لا توجد حركات على هذه الخزينة")}</td></tr>`}</tbody>
         <tfoot><tr>
-          <td colspan="4">الإجمالي</td>
+          <td colspan="4">${t("الإجمالي")}</td>
           <td class="num">${money(stmt.total_debit)}</td>
           <td class="num">${money(stmt.total_credit)}</td>
           <td class="num">${money(stmt.closing)}</td>
@@ -602,21 +632,21 @@ function SafeBalanceModal({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <Modal title="💰 رصيد الخزينة" onClose={onClose} wide>
+    <Modal title={t("💰 رصيد الخزينة")} onClose={onClose} wide>
       <div style={{ marginBottom: 10, display: "flex", gap: 8 }}>
         <select value={String(safeId)} onChange={(e) => setSafeId(e.target.value === "" ? "" : Number(e.target.value))} style={{ flex: 1 }}>
-          <option value="">— اختر الخزينة —</option>
+          <option value="">{t("— اختر الخزينة —")}</option>
           {(safes.data ?? []).map((s) => (
             <option key={s.id} value={s.id}>{s.name}</option>
           ))}
         </select>
-        <button className="btn" onClick={printNow} disabled={!stmt}>🖨 طباعة</button>
+        <button className="btn" onClick={printNow} disabled={!stmt}>{t("🖨 طباعة")}</button>
       </div>
       {selSafe && (
         <div className="card card-pad" style={{ marginBottom: 10, display: "flex", gap: 24, flexWrap: "wrap" }}>
-          <span>الخزينة: <b>{selSafe.name}</b></span>
-          <span>الكود: <span dir="ltr">{selSafe.code}</span></span>
-          <span>الرصيد الحالي: <b>{money(selSafe.balance)}</b></span>
+          <span>{t("الخزينة: ")}<b>{selSafe.name}</b></span>
+          <span>{t("الكود: ")}<span dir="ltr">{selSafe.code}</span></span>
+          <span>{t("الرصيد الحالي: ")}<b>{money(selSafe.balance)}</b></span>
         </div>
       )}
       <Alert>{list.error}</Alert>
@@ -627,13 +657,13 @@ function SafeBalanceModal({ onClose }: { onClose: () => void }) {
           <table>
             <thead>
               <tr>
-                <th>القيد</th>
-                <th>التاريخ</th>
-                <th>البيان</th>
-                <th>المرجع</th>
-                <th className="num">داخل</th>
-                <th className="num">خارج</th>
-                <th className="num">الرصيد</th>
+                <th>{t("القيد")}</th>
+                <th>{t("التاريخ")}</th>
+                <th>{t("البيان")}</th>
+                <th>{t("المرجع")}</th>
+                <th className="num">{t("داخل")}</th>
+                <th className="num">{t("خارج")}</th>
+                <th className="num">{t("الرصيد")}</th>
               </tr>
             </thead>
             <tbody>
@@ -651,7 +681,7 @@ function SafeBalanceModal({ onClose }: { onClose: () => void }) {
             </tbody>
             <tfoot>
               <tr>
-                <td colSpan={4} className="num">الإجمالي</td>
+                <td colSpan={4} className="num">{t("الإجمالي")}</td>
                 <td className="num">{money(stmt.total_debit)}</td>
                 <td className="num">{money(stmt.total_credit)}</td>
                 <td className="num">{money(stmt.closing)}</td>
@@ -659,7 +689,7 @@ function SafeBalanceModal({ onClose }: { onClose: () => void }) {
             </tfoot>
           </table>
         ) : (
-          <Empty>{safeId === "" ? "اختر خزينة لعرض رصيدها وحركتها." : "لا توجد حركات على هذه الخزينة."}</Empty>
+          <Empty>{safeId === "" ? t("اختر خزينة لعرض رصيدها وحركتها.") : t("لا توجد حركات على هذه الخزينة.")}</Empty>
         )}
       </div>
     </Modal>
@@ -668,6 +698,7 @@ function SafeBalanceModal({ onClose }: { onClose: () => void }) {
 
 function AccountTransactionsModal({ kind, onClose }: { kind: "safe" | "bank"; onClose: () => void }) {
   const isSafe = kind === "safe";
+  const { t } = useI18n();
   const [accId, setAccId] = useState<number | "">("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
@@ -678,7 +709,7 @@ function AccountTransactionsModal({ kind, onClose }: { kind: "safe" | "bank"; on
   );
   const stmt = list.data ?? null;
   const valid = !from || !to || from <= to;
-  const entityLabel = isSafe ? "الخزينة" : "البنك";
+  const entityLabel = isSafe ? t("الخزينة") : t("البنك");
 
   const printNow = () => {
     if (!stmt || !valid) return;
@@ -694,7 +725,7 @@ function AccountTransactionsModal({ kind, onClose }: { kind: "safe" | "bank"; on
         <td class="num">${Number(l.credit) ? money(l.credit) : "—"}</td>
         <td class="num">${money(l.balance)}</td>
       </tr>`).join("");
-    w.document.write(`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>كشف معاملات ${entityLabel}</title>
+    w.document.write(`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>${t("كشف معاملات ")}${entityLabel}</title>
       <style>
         body { font-family: Tahoma, Arial, sans-serif; padding: 16px; }
         h1 { text-align: center; font-size: 20px; }
@@ -705,16 +736,16 @@ function AccountTransactionsModal({ kind, onClose }: { kind: "safe" | "bank"; on
         .num { text-align: center; }
         tfoot td { font-weight: bold; background: #f3f4f6; }
       </style></head><body>
-      <h1>كشف معاملات ${entityLabel} — ${stmt.account_name}</h1>
-      <h2>الفترة: ${from ? dateOnly(from) : "البداية"} — ${to ? dateOnly(to) : dateOnly(today())} · الكود: ${stmt.account_code}</h2>
-      <p style="text-align:center; font-size:14px;">رصيد ما قبل الفترة: <b>${money(stmt.opening)}</b> · الرصيد الختامي: <b>${money(stmt.closing)}</b></p>
+      <h1>${t("كشف معاملات ")}${entityLabel} — ${stmt.account_name}</h1>
+      <h2>${t("الفترة: ")}${from ? dateOnly(from) : t("البداية")} — ${to ? dateOnly(to) : dateOnly(today())} · ${t("الكود: ")}${stmt.account_code}</h2>
+      <p style="text-align:center; font-size:14px;">${t("رصيد ما قبل الفترة: ")}<b>${money(stmt.opening)}</b> · ${t("الرصيد الختامي: ")}<b>${money(stmt.closing)}</b></p>
       <table>
         <thead><tr>
-          <th>القيد</th><th>التاريخ</th><th>البيان</th><th>المرجع</th><th>داخل</th><th>خارج</th><th>الرصيد</th>
+          <th>${t("القيد")}</th><th>${t("التاريخ")}</th><th>${t("البيان")}</th><th>${t("المرجع")}</th><th>${t("داخل")}</th><th>${t("خارج")}</th><th>${t("الرصيد")}</th>
         </tr></thead>
-        <tbody>${rowsHtml || '<tr><td colspan="7">لا توجد حركات في هذه الفترة</td></tr>'}</tbody>
+        <tbody>${rowsHtml || `<tr><td colspan="7">${t("لا توجد حركات في هذه الفترة")}</td></tr>`}</tbody>
         <tfoot><tr>
-          <td colspan="4">الإجمالي</td>
+          <td colspan="4">${t("الإجمالي")}</td>
           <td class="num">${money(stmt.total_debit)}</td>
           <td class="num">${money(stmt.total_credit)}</td>
           <td class="num">${money(stmt.closing)}</td>
@@ -726,30 +757,30 @@ function AccountTransactionsModal({ kind, onClose }: { kind: "safe" | "bank"; on
   };
 
   return (
-    <Modal title={isSafe ? "🧾 معاملات الخزينة" : "🧾 معاملات البنك"} onClose={onClose} wide>
+    <Modal title={isSafe ? t("🧾 معاملات الخزينة") : t("🧾 معاملات البنك")} onClose={onClose} wide>
       <div style={{ marginBottom: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
         <select value={String(accId)} onChange={(e) => setAccId(e.target.value === "" ? "" : Number(e.target.value))} style={{ flex: 1, minWidth: 180 }}>
-          <option value="">— اختر {entityLabel} —</option>
+          <option value="">{t("— اختر ")}{entityLabel} —</option>
           {(accounts.data ?? []).map((a) => (
             <option key={a.id} value={a.id}>{a.name}</option>
           ))}
         </select>
         <label className="range-field">
-          <span className="field-label">من تاريخ</span>
+          <span className="field-label">{t("من تاريخ")}</span>
           <input type="date" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} />
         </label>
         <label className="range-field">
-          <span className="field-label">إلى تاريخ</span>
+          <span className="field-label">{t("إلى تاريخ")}</span>
           <input type="date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} />
         </label>
-        <button className="btn" onClick={printNow} disabled={!stmt || !valid}>🖨 طباعة</button>
+        <button className="btn" onClick={printNow} disabled={!stmt || !valid}>{t("🖨 طباعة")}</button>
       </div>
-      {!valid && <Alert>تاريخ البداية يجب ألا يتجاوز تاريخ النهاية.</Alert>}
+      {!valid && <Alert>{t("تاريخ البداية يجب ألا يتجاوز تاريخ النهاية.")}</Alert>}
       {stmt && (
         <div className="card card-pad" style={{ marginBottom: 10, display: "flex", gap: 24, flexWrap: "wrap" }}>
           <span>{entityLabel}: <b>{stmt.account_name}</b></span>
-          <span>رصيد ما قبل الفترة: <b>{money(stmt.opening)}</b></span>
-          <span>الرصيد الختامي: <b>{money(stmt.closing)}</b></span>
+          <span>{t("رصيد ما قبل الفترة: ")}<b>{money(stmt.opening)}</b></span>
+          <span>{t("الرصيد الختامي: ")}<b>{money(stmt.closing)}</b></span>
         </div>
       )}
       <Alert>{list.error}</Alert>
@@ -988,7 +1019,7 @@ export default function Payments() {
         p.party_name ?? "—",
         p.category_name ?? "—",
         money(p.amount),
-        METHOD_LABEL[p.method],
+        methodLabel(p.method),
         p.status === "posted" ? "مرحّل" : "ملغى",
       ]),
       totalLabel: "إجمالي مبالغ السندات المرحّلة",
@@ -998,7 +1029,7 @@ export default function Payments() {
 
   const fetchChequeDoc = async (): Promise<FilterDoc> => {
     const rows = await api.get<Cheque[]>(`/cheques?${qs({ direction: docKindC === "cheque-received" ? "received" : docKindC === "cheque-issued" ? "issued" : undefined, status: statusC || undefined, bank_id: bankFilter || undefined, branch_id: branchFilterC || undefined, date_from: fromC || undefined, date_to: toC || undefined })}`);
-    const statusName = statusC ? CHEQUE_STATUS_LABEL[statusC] : "";
+    const statusName = statusC ? chequeStatusLabel(statusC) : "";
     const branchName = (filterBranchesC.data ?? []).find((b) => String(b.id) === String(branchFilterC))?.name ?? "";
     const bankName = (filterBanks.data ?? []).find((b) => String(b.id) === String(bankFilter))?.name ?? "";
     const total = rows.reduce((s, c) => s + Number(c.amount), 0);
@@ -1016,7 +1047,7 @@ export default function Payments() {
         dateOnly(c.cheque_date),
         c.due_date ? dateOnly(c.due_date) : "—",
         money(c.amount),
-        CHEQUE_STATUS_LABEL[c.status],
+        chequeStatusLabel(c.status),
       ]),
       totalLabel: "عدد الشيكات / إجمالي المبالغ",
       total: `${rows.length} · ${money(total)}`,
@@ -1141,7 +1172,7 @@ export default function Payments() {
                   <td>{p.party_name ?? "—"}</td>
                   <td>{p.category_name ?? "—"}</td>
                   <td className="num">{money(p.amount)}</td>
-                  <td>{METHOD_LABEL[p.method]}</td>
+                  <td>{methodLabel(p.method)}</td>
                   <td dir="ltr">{p.reference || "—"}</td>
                   <td>{p.status === "posted" ? <span className="badge badge-confirmed">مرحّل</span> : <span className="badge badge-cancelled">ملغى</span>}</td>
                   <td className="actions">
@@ -1183,7 +1214,7 @@ export default function Payments() {
               <>
                 <option value="">الكل</option>
                 {((docKindC === "cheque-received" ? ["under_collection", "collected", "returned"] : ["issued", "cashed", "returned"]) as ChequeStatus[]).map((s) => (
-                  <option key={s} value={s}>{CHEQUE_STATUS_LABEL[s]}</option>
+                  <option key={s} value={s}>{chequeStatusLabel(s)}</option>
                 ))}
               </>
             )}

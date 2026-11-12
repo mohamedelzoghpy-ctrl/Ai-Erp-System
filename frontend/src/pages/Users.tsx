@@ -1,12 +1,17 @@
 import { useState, type FormEvent } from "react";
 import { api } from "../api";
+import { useI18n } from "../i18n";
 import { useAuth } from "../auth";
 import { dateTime, num } from "../format";
 import { useFetch } from "../hooks";
 import type { Branch, Warehouse } from "../types";
 import { ActiveBadge, Alert, Empty, Field, Loading, Modal, PageHeader } from "../ui";
 
-const ROLE_LABEL: Record<string, string> = { admin: "مدير عام", manager: "مدير", staff: "موظف" };
+const ROLE_LABEL: Record<string, { ar: string; en: string }> = {
+  admin: { ar: "مدير عام", en: "Admin" },
+  manager: { ar: "مدير", en: "Manager" },
+  staff: { ar: "موظف", en: "Staff" },
+};
 const ROLE_STYLE: Record<string, { background: string; color: string }> = {
   admin: { background: "#f3e8ff", color: "#6b21a8" },
   manager: { background: "#e3f2fd", color: "#0d47a1" },
@@ -72,6 +77,7 @@ const MON_ENTITY: Record<string, string> = {
 /** قائمة المستخدمين + إضافة مستخدم جديد (الإضافة من داخل الصفحة، مش من الشريط الجانبي). */
 export default function Users() {
   const { user } = useAuth();
+  const { t, lang } = useI18n();
   const users = useFetch(() => api.get<UserRow[]>("/auth/users"), "users-list");
   const branches = useFetch(() => api.get<Branch[]>("/company/branches"), "users-branches");
   const warehouses = useFetch(() => api.get<Warehouse[]>("/warehouses?limit=500"), "users-whs");
@@ -239,11 +245,11 @@ export default function Users() {
                   <td>
                     {u.is_platform_admin ? (
                       <span className="badge" style={{ background: "#f3e8ff", color: "#6b21a8", borderRadius: 999, padding: "2px 10px", fontSize: 12 }}>
-                        مدير المنصة
+                        {t("users.platformAdmin")}
                       </span>
                     ) : (
                       <span className="badge" style={{ ...ROLE_STYLE[u.role], borderRadius: 999, padding: "2px 10px", fontSize: 12 }}>
-                        {ROLE_LABEL[u.role] ?? u.role}
+                        {ROLE_LABEL[u.role]?.[lang] ?? u.role}
                       </span>
                     )}
                   </td>
@@ -266,9 +272,7 @@ export default function Users() {
                   </td>
                   <td>{new Date(u.created_at).toLocaleDateString("ar-EG")}</td>
                   <td className="actions">
-                    <button className="btn btn-sm" onClick={() => openEdit(u)}>
-                      تعديل
-                    </button>{" "}
+                    <button className="btn-edit" onClick={() => openEdit(u)}>تعديل</button>{" "}
                     <button
                       className="btn btn-sm"
                       style={{ color: "#6b21a8", borderColor: "#6b21a8" }}
@@ -411,19 +415,18 @@ export default function Users() {
             هل أنت متأكد من حذف المستخدم <strong>{confirmDel.username}</strong>؟ لا يمكن الرجوع بعد الحذف.
           </p>
           {confirmDel.is_platform_admin && (
-            <p style={{ margin: "0 0 6px", color: "var(--danger)", fontSize: 13 }}>مدير المنصة لا يمكن حذفه.</p>
+            <p style={{ margin: "0 0 6px", color: "var(--danger)", fontSize: 13 }}>{t("users.platformAdminNoDelete")}</p>
           )}
           {user && confirmDel.id === user.id && (
             <p style={{ margin: "0 0 6px", color: "var(--danger)", fontSize: 13 }}>لا يمكنك حذف حسابك بنفسك.</p>
           )}
           <div className="form-actions" style={{ marginTop: 14 }}>
             <button
-              className="btn"
-              style={{ color: "#fff", background: "var(--danger)" }}
+              className="btn-delete"
               disabled={confirmDel.is_platform_admin || (!!user && confirmDel.id === user.id) || deleting !== null}
               onClick={() => void doDelete(confirmDel)}
             >
-              {deleting !== null ? "جارٍ الحذف…" : "🗑️ نعم، حذف"}
+              {deleting !== null ? "جارٍ الحذف…" : "نعم، حذف"}
             </button>
             <button type="button" className="btn" onClick={() => setConfirmDel(null)}>
               إلغاء
