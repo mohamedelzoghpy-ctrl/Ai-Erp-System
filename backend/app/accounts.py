@@ -88,42 +88,46 @@ def _return_entries(entries: list, r, typ: str, prefix: str) -> None:
 
 
 def build_statement(
-    db: Session, kind: str, party_id: int, date_from: Optional[date], date_to: Optional[date]
+    db: Session, kind: str, party_id: int, date_from: Optional[date], date_to: Optional[date],
+    company_id: Optional[int] = None,
 ) -> Optional[schemas.Statement]:
-    """Chronological account statement with running balance. Returns None if the party does not exist."""
+    """Chronological account statement with running balance. Returns None if the party does not exist.
+
+    company_id يقيد الطرف بشركته — Session.get يتجاوز فلتر العزل التلقائي، فالتصفية
+    الصريحة هي خط الدفاع ضد قراءة كشف حساب شركة أخرى."""
+    party_model = models.Customer if kind == "customer" else models.Supplier
+    party_q = db.query(party_model).filter(party_model.id == party_id)
     if kind == "customer":
-        party = db.get(models.Customer, party_id)
+        order_model, order_party, order_status = models.SalesOrder, models.SalesOrder.customer_id, "confirmed"
+        ret_model, ret_party = models.SalesReturn, models.SalesReturn.customer_id
+        pay_party = models.Payment.customer_id
     else:
-        party = db.get(models.Supplier, party_id)
+        order_model, order_party, order_status = models.PurchaseOrder, models.PurchaseOrder.supplier_id, "received"
+        ret_model, ret_party = models.PurchaseReturn, models.PurchaseReturn.supplier_id
+        pay_party = models.Payment.supplier_id
+    if company_id is not None:
+        party_q = party_q.filter(party_model.company_id == company_id)
+    party = party_q.first()
     if party is None:
         return None
 
     # (day, group, id, type, ref, description, charge, payment); group orders charges before payments on a day
     entries: List[Tuple[date, int, int, str, str, str, Decimal, Decimal]] = []
-    if kind == "customer":
-        orders = (
-            db.query(models.SalesOrder)
-            .filter(models.SalesOrder.customer_id == party_id, models.SalesOrder.status == "confirmed")
-            .all()
-        )
-        for o in orders:
-            entries.append((_local_day(o.updated_at), 0, o.id, "sale", f"SO-{o.id}", "فاتورة بيع", _dec(o.total_amount), ZERO))  # type: ignore
-        pays = db.query(models.Payment).filter(models.Payment.customer_id == party_id, models.Payment.status == "posted").all()
-        pay_type, pay_prefix, pay_word = "receipt", "RC", "سند قبض"
-        for r in db.query(models.SalesReturn).filter(models.SalesReturn.customer_id == party_id).all():
-            _return_entries(entries, r, "sale_return", "SR")
-    else:
-        orders = (
-            db.query(models.PurchaseOrder)
-            .filter(models.PurchaseOrder.supplier_id == party_id, models.PurchaseOrder.status == "received")
-            .all()
-        )
-        for o in orders:
-            entries.append((_local_day(o.updated_at), 0, o.id, "purchase", f"PO-{o.id}", "أمر شراء مستلم", _dec(o.total_amount), ZERO))  # type: ignore
-        pays = db.query(models.Payment).filter(models.Payment.supplier_id == party_id, models.Payment.status == "posted").all()
-        pay_type, pay_prefix, pay_word = "payment", "PY", "سند دفع"
-        for r in db.query(models.PurchaseReturn).filter(models.PurchaseReturn.supplier_id == party_id).all():
-            _return_entries(entries, r, "purchase_return", "PR")
+    orders = (
+        db.query(order_model)
+        .filter(order_party == party_id, order_model.status == order_status)
+        .all()
+    )
+    label = "sale" if kind == "customer" else "purchase"
+    ref_prefix = "SO" if kind == "customer" else "PO"
+    desc = "فاتورة بيع" if kind == "customer" else "أمر شراء مستلم"
+    for o in orders:
+        entries.append((_local_day(o.updated_at), 0, o.id, label, f"{ref_prefix}-{o.id}", desc, _dec(o.total_amount), ZERO))  # type: ignore
+    pays = db.query(models.Payment).filter(pay_party == party_id, models.Payment.status == "posted").all()
+    pay_type, pay_prefix, pay_word = ("receipt", "RC", "سند قبض") if kind == "customer" else ("payment", "PY", "سند دفع")
+    ret_prefix = "SR" if kind == "customer" else "PR"
+    for r in db.query(ret_model).filter(ret_party == party_id).all():
+        _return_entries(entries, r, f"{label}_return", ret_prefix)
     for p in pays:
         detail = " · ".join(x for x in (METHOD_LABEL.get(p.method, p.method), p.reference) if x)  # type: ignore
         entries.append((p.paid_on, 1, p.id, pay_type, f"{pay_prefix}-{p.id}", f"{pay_word} ({detail})", ZERO, _dec(p.amount)))  # type: ignore
@@ -249,3 +253,49 @@ def build_aging(db: Session, kind: str, as_of: Optional[date] = None) -> schemas
     rows.sort(key=lambda r: (-r.total, r.party_id))
     tot = {k: sum((getattr(r, k) for r in rows), ZERO) for k in ("opening", *BUCKETS, "total")}
     return schemas.AgingReport(as_of=as_of, rows=rows, **{f"total_{k}": v for k, v in tot.items()})
+
+
+# ----------------------------------------------------------------------------- credit limit
+def check_credit_limit(
+    db: Session,
+    customer_id: int,
+    additional: Decimal,
+    perms=None,
+) -> None:
+    """الحد الائتماني: المديونية الحالية + دين جديد مسموحة ضمن الحد فقط.
+
+    additional = الدين الجديد الذي سيُسجّل بهذه العملية (بعد أي مدفوعات فورية).
+    التجاوز مسموح لمن يملك "*" (admin/manager) أو صلاحية sales.order.credit_exceed،
+    أو حين يكون نظام الصلاحيات غير مفعّل (perms=None). العملاء بلا حد (NULL) غير مقيدين."""
+    from decimal import Decimal as _D
+
+    from fastapi import HTTPException, status as _status
+
+    from .permissions import user_has_permission
+
+    if additional <= 0:
+        return
+    customer = (
+        db.query(models.Customer)
+        .filter(models.Customer.id == customer_id, models.Customer.company_id == db.info["company_id"])
+        .first()
+    )
+    if customer is None or customer.credit_limit is None:
+        return
+    if perms is not None and "*" not in perms and not user_has_permission(perms, "sales.order.credit_exceed"):
+        # الحد الائتماني يُقاس على دين الشركة الحقيقي — لا على الشريحة المرئية للموظف
+        # (فلتر الفروع يخفي سندات خزائن الفروع الأخرى عن الموظفين) — نتجاوزه مؤقتًا.
+        prev_scope = db.info.get("ignore_tenant_scope", False)
+        db.info["ignore_tenant_scope"] = True
+        try:
+            current = party_balances(db, "customer", [customer_id]).get(customer_id, ZERO)
+        finally:
+            db.info["ignore_tenant_scope"] = prev_scope
+        remaining = _D(str(customer.credit_limit)) - _D(str(current))
+        if _D(str(additional)) > remaining:
+            raise HTTPException(
+                _status.HTTP_409_CONFLICT,
+                f"تجاوز الحد الائتماني للعميل «{customer.name}»: الحد {_D(str(customer.credit_limit)):.2f} "
+                f"· المستحق حاليًا {_D(str(current)):.2f} · المتبقي {max(remaining, _D('0')):.2f} · "
+                f"المطلوب {_D(str(additional)):.2f}",
+            )

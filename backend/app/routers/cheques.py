@@ -30,10 +30,37 @@ def _out(c: models.Cheque) -> models.Cheque:
 
 
 def _get_or_404(db: Session, cheque_id: int) -> models.Cheque:
-    c = db.get(models.Cheque, cheque_id)
+    # company-scoped: Session.get يتجاوز فلتر العزل التلقائي — نرشح صراحةً
+    c = (
+        db.query(models.Cheque)
+        .filter(models.Cheque.id == cheque_id, models.Cheque.company_id == db.info["company_id"])
+        .first()
+    )
     if c is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Cheque {cheque_id} not found")
     return c
+
+
+def _bank_in_company(db: Session, bank_id: int) -> models.Bank:
+    bank = (
+        db.query(models.Bank)
+        .filter(models.Bank.id == bank_id, models.Bank.company_id == db.info["company_id"])
+        .first()
+    )
+    if bank is None:
+        raise HTTPException(422, "البنك غير موجود")
+    return bank
+
+
+def _party_in_company(db: Session, model, party_id, label: str):
+    obj = (
+        db.query(model)
+        .filter(model.id == party_id, model.company_id == db.info["company_id"])
+        .first()
+    )
+    if obj is None:
+        raise HTTPException(422, f"{label} غير موجود")
+    return obj
 
 
 def _portfolio_acc_id(db: Session, direction: str) -> int:
@@ -84,15 +111,11 @@ def create_cheque(
     user: models.User = Depends(get_current_user),
 ):
     company_id = db.info["company_id"]
-    bank = db.get(models.Bank, payload.bank_id)
-    if bank is None or bank.company_id != company_id:
-        raise HTTPException(422, "البنك غير موجود")
+    bank = _bank_in_company(db, payload.bank_id)
     if payload.direction == "received":
-        if db.get(models.Customer, payload.customer_id) is None:
-            raise HTTPException(422, "العميل غير موجود")
+        _party_in_company(db, models.Customer, payload.customer_id, "العميل")
     else:
-        if db.get(models.Supplier, payload.supplier_id) is None:
-            raise HTTPException(422, "المورد غير موجود")
+        _party_in_company(db, models.Supplier, payload.supplier_id, "المورد")
     cheque_date = payload.cheque_date or date.today()
 
     # The voucher: a Payment with method='cheque' so balances/statements stay consistent.
@@ -105,6 +128,8 @@ def create_cheque(
         paid_on=cheque_date,
         notes=payload.notes,
     )
+    # create_payment commits mid-flow؛ لو فشل إنشاء الشيك بعدها نُبطل السند
+    # حتى لا يبقى سند يتيم بلا صف شيك مرتبط (لا يتسرب لأرصدة الأطراف غلط).
     payment_out = create_payment(payment_payload, db=db, user=user)
 
     cheque = models.Cheque(
@@ -123,7 +148,15 @@ def create_cheque(
         created_by=user.id,  # type: ignore
     )
     db.add(cheque)
-    db.commit()
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        try:
+            void_payment(payment_out.id, db=db, user=user)
+        except Exception:
+            db.rollback()
+        raise HTTPException(422, "تعذر إنشاء الشيك — تم إبطال السند المرتبط")
     db.refresh(cheque)
     audit(db, user, "create", "cheque", cheque, f"{'استلام' if payload.direction == 'received' else 'صرف'} شيك {cheque.number} — {cheque.amount}")
     return _out(cheque)
@@ -140,8 +173,12 @@ def collect_cheque(
     c = _get_or_404(db, cheque_id)
     if c.direction != "received" or c.status != "under_collection":
         raise HTTPException(status.HTTP_409_CONFLICT, "يمكن تحصيل الشيكات المقبوضة فقط وهي تحت التحصيل")
-    safe = db.get(models.Safe, payload.safe_id)
-    if safe is None or safe.company_id != db.info["company_id"]:
+    safe = (
+        db.query(models.Safe)
+        .filter(models.Safe.id == payload.safe_id, models.Safe.company_id == db.info["company_id"])
+        .first()
+    )
+    if safe is None:
         raise HTTPException(422, "الخزينة غير موجودة")
     link_safe_coa(db, safe, db.info["company_id"])
     if safe.chart_account_id is None:
@@ -176,9 +213,7 @@ def deposit_cheque(
     c = _get_or_404(db, cheque_id)
     if c.direction != "received" or c.status != "under_collection":
         raise HTTPException(status.HTTP_409_CONFLICT, "يمكن إيداع الشيكات المقبوضة فقط وهي تحت التحصيل")
-    bank = db.get(models.Bank, payload.bank_id)
-    if bank is None or bank.company_id != db.info["company_id"]:
-        raise HTTPException(422, "البنك غير موجود")
+    bank = _bank_in_company(db, payload.bank_id)
     link_bank_coa(db, bank, db.info["company_id"])
     if bank.chart_account_id is None:
         raise HTTPException(422, "لا يوجد حساب محاسبي مرتبط بالبنك")
@@ -211,9 +246,7 @@ def cash_out_cheque(
     c = _get_or_404(db, cheque_id)
     if c.direction != "issued" or c.status != "issued":
         raise HTTPException(status.HTTP_409_CONFLICT, "يمكن صرف الشيكات المصروفة فقط قبل تحصيلها")
-    bank = db.get(models.Bank, c.bank_id)
-    if bank is None or bank.company_id != db.info["company_id"]:
-        raise HTTPException(422, "البنك غير موجود")
+    bank = _bank_in_company(db, c.bank_id)
     link_bank_coa(db, bank, db.info["company_id"])
     if bank.chart_account_id is None:
         raise HTTPException(422, "لا يوجد حساب محاسبي مرتبط بالبنك")

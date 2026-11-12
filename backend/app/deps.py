@@ -2,7 +2,7 @@
 
 from typing import Optional
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 
@@ -16,9 +16,16 @@ ROLES = ("admin", "manager", "staff")
 
 
 def get_current_user(
+    request: Request = None,  # type: ignore[assignment]
     token_header: Optional[str] = Depends(oauth2_scheme),
     db: Session = Depends(get_db),
 ) -> models.User:
+    # البوابة المركزية (permission_gate) تصادق مسبقاً وتخزّن النتيجة — نعيد استخدامها
+    # بدل فكّ التوكن والاستعلام عن المستخدم مرة ثانية في كل طلب.
+    cached = getattr(request.state, "_current_user", None) if request is not None else None
+    if cached is not None:
+        return cached
+
     token = token_header
     if not token:
         raise HTTPException(
@@ -26,14 +33,22 @@ def get_current_user(
             "Not authenticated",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    user_id = decode_access_token(token)
-    user = db.get(models.User, user_id) if user_id is not None else None
+    claims = decode_access_token(token)
+    user = db.get(models.User, claims["id"]) if claims is not None else None
+    if user is not None and claims.get("ver", 1) != int(getattr(user, "token_version", 1) or 1):
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED,
+            "انتهت الجلسة — سُجّل خروجك من هذا الجهاز، سجّل الدخول من جديد",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     if user is None or not user.is_active:  # type: ignore
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED,
             "Invalid or expired credentials",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    if request is not None:
+        request.state._current_user = user
 
     membership = None
     if getattr(user, "active_company_id", None):
@@ -131,6 +146,25 @@ def get_current_user(
 
 def user_role(user: models.User) -> str:
     return getattr(user, "_company_role", user.role)  # type: ignore
+
+
+def require_permission_or_role(permission: str, *roles: str):
+    """يسمح لحامل الصلاحية (حتى لو staff بمنح فردي) أو لأحد الأدوار المحددة."""
+
+    def checker(
+        request: Request,
+        user: models.User = Depends(get_current_user),
+    ) -> models.User:
+        if user_role(user) in roles or user.is_platform_admin:  # type: ignore
+            return user
+        from .permissions import current_permissions, user_has_permission
+
+        perms = getattr(request.state, "permissions", None) or current_permissions.get() or set()
+        if user_has_permission(perms, permission):
+            return user
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "No permission")
+
+    return checker
 
 
 def require_roles(*allowed: str):

@@ -47,6 +47,14 @@ def make_product(c, sku, qty, wid, **extra):
     return ok(c.post("/products", json={"sku": sku, "name": f"Item {sku}", "sale_price": "10", "cost_price": "5", "quantity": qty, "warehouse_id": wid, **extra}), 201)
 
 
+def give_section(c, user_id: int, codes):
+    """نظام الصلاحيات: قسم مؤقت للاختبار + إسناده للمستخدم."""
+    sec = ok(c.post("/access-sections", json={"code": f"t{user_id}", "name": "قسم اختبار"}), 201)
+    ok(c.put(f"/access-sections/{sec['id']}/permissions", json={"permission_codes": codes}))
+    ok(c.put(f"/auth/users/{user_id}/section", json={"section_id": sec["id"]}))
+    return sec
+
+
 def by_wh(c, pid):
     return {r["warehouse_id"]: r["quantity"] for r in ok(c.get(f"/products/{pid}/stock"))}
 
@@ -258,6 +266,8 @@ def test_staff_only_see_and_move_stock_of_their_own_warehouses(api):
     me = ok(api.get("/auth/me"))
     branch = ok(api.get("/warehouses"))[0]["branch_id"]
     ok(api.post("/company/employees", json={"username": "clerk", "password": "clerk-password", "role": "staff", "warehouse_ids": [w2["id"]]}), 201)
+    clerk_id = ok(api.get("/auth/users"))[0]["id"] if ok(api.get("/auth/users"))[0]["username"] == "clerk" else [u for u in ok(api.get("/auth/users")) if u["username"] == "clerk"][0]["id"]
+    give_section(api, clerk_id, ["inventory.product.view", "inventory.product.stock", "inventory.transfer.view", "inventory.transfer.create"])
     tok = ok(api.post("/auth/login", data={"username": "clerk", "password": "clerk-password"}))["access_token"]
     staff = TestClient(app, headers={"Authorization": f"Bearer {tok}"})
     assert by_wh(staff, p["id"]) == {w2["id"]: 4}  # the Main warehouse row is not theirs to see

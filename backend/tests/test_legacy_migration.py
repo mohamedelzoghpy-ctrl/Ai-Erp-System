@@ -229,7 +229,7 @@ def _verify_tenant_ownership(database_url: str) -> None:
                     "WHERE sku = 'LEGACY-SKU'"
                 )
             ).one()
-            assert (product.sku, product.quantity, product.company_id) == (
+            assert (product.sku, float(product.quantity), product.company_id) == (
                 "LEGACY-SKU",
                 25,
                 company_id,
@@ -242,10 +242,10 @@ def _verify_tenant_ownership(database_url: str) -> None:
                     "WHERE p.sku = 'LEGACY-SKU'"
                 )
             ).all()
-            assert [(r.code, r.quantity, r.company_id) for r in stock_rows] == [("legacy", 25, company_id)]
+            assert [(r.code, float(r.quantity), r.company_id) for r in stock_rows] == [("legacy", 25, company_id)]
             assert connection.execute(
                 text("SELECT version_num FROM alembic_version")
-            ).scalar_one() == "0013"
+            ).scalar_one() == "l1m2n3o4p5q6"
     finally:
         engine.dispose()
 

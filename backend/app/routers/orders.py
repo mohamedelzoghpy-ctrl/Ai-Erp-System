@@ -10,7 +10,8 @@ from datetime import datetime
 from decimal import Decimal
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -18,6 +19,7 @@ from ..accounts import attach_settlement
 from ..audit import audit
 from ..deps import get_current_user
 from ..pagination import paginate
+from ..permissions import user_has_permission
 from .. import exports, models, schemas, stock
 from ..database import get_db
 from ..accounting import AccountingEngine
@@ -71,6 +73,53 @@ def _require_draft(order, action: str):
 
 
 # ======================= Purchases =======================
+@purchases.post("/from-suggestions", response_model=schemas.PurchaseOrderOut, status_code=status.HTTP_201_CREATED)
+def create_purchase_order_from_suggestions(
+    payload: dict,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """مسودة أمر شراء من اقتراحات الشراء: كميات مقترحة بتكلفة المتوسط المرجح — بلا حركة مخزون حتى الاستلام."""
+
+    supplier = db.query(models.Supplier).filter(
+        models.Supplier.id == payload.get("supplier_id"), models.Supplier.company_id == db.info["company_id"]
+    ).first()
+    if supplier is None:
+        raise HTTPException(422, "المورد غير موجود")
+    from .reports import _purchase_suggestion_rows  # مصدر الحقيقة نفسه (استيراد متأخر لتفادي الدورية)
+    warehouse = db.query(models.Warehouse).filter(
+        models.Warehouse.id == payload.get("warehouse_id"), models.Warehouse.company_id == db.info["company_id"]
+    ).first()
+    if warehouse is None:
+        raise HTTPException(422, "المخزن غير موجود")
+    wanted_ids = set(payload.get("product_ids") or [])
+    rows = _purchase_suggestion_rows(db, warehouse_id=warehouse.id, supplier_id=supplier.id)
+    rows = [r for r in rows if not wanted_ids or r["product_id"] in wanted_ids]
+    if not rows:
+        raise HTTPException(409, "لا اقتراحات مطابقة لهذا المورد/المخزن")
+
+    order = models.PurchaseOrder(
+        supplier_id=supplier.id, warehouse_id=warehouse.id,  # type: ignore
+        notes="مسودة من اقتراحات الشراء", status="draft",
+    )
+    total = Decimal("0")
+    for r in rows:
+        qty = Decimal(str(r["suggested_qty"])).quantize(Decimal("0.001"))
+        cost = Decimal(str(r["cost_price"]))
+        order.items.append(models.PurchaseOrderItem(
+            product_id=r["product_id"], quantity=qty, unit_cost=cost,  # type: ignore
+        ))
+        total += cost * qty
+    order.total_amount = total.quantize(Decimal("0.01"))  # type: ignore
+    db.add(order)
+    db.flush()
+    audit(db, user, "create", "purchase_order", order,
+          f"مسودة من اقتراحات الشراء · {len(rows)} صنف · الإجمالي {order.total_amount}")
+    db.commit()
+    db.refresh(order)
+    return order
+
+
 @purchases.post("", response_model=schemas.PurchaseOrderOut, status_code=status.HTTP_201_CREATED)
 def create_purchase_order(payload: schemas.PurchaseOrderCreate, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     supplier = _require(db, models.Supplier, payload.supplier_id, "Supplier")
@@ -96,7 +145,7 @@ def create_purchase_order(payload: schemas.PurchaseOrderCreate, db: Session = De
                 product_id=product.id, quantity=item.quantity, unit_cost=item.unit_cost  # type: ignore
             )
         )
-        total += item.unit_cost * item.quantity
+        total += item.unit_cost * Decimal(str(item.quantity))
     discount = total * payload.discount_value / Decimal("100") if payload.discount_mode == "percent" else payload.discount_value
     if discount > total:
         raise HTTPException(422, "Purchase discount cannot exceed the subtotal")
@@ -104,6 +153,12 @@ def create_purchase_order(payload: schemas.PurchaseOrderCreate, db: Session = De
     tax = (taxable * payload.tax_rate / Decimal("100")).quantize(Decimal("0.01"))
     total = taxable + tax
     order.total_amount = total  # type: ignore
+    from ..pricing import resolve_currency
+    _currency, _rate = resolve_currency(db, getattr(payload, "currency_id", None))
+    if _currency is not None:
+        order.currency_id = _currency.id  # type: ignore
+        order.exchange_rate = _rate  # type: ignore
+        order.foreign_total = (total / _rate).quantize(Decimal("0.01"))  # type: ignore
     if payload.discount_value or payload.tax_rate:
         discount_note = f"الخصم: {discount:.2f}" + (f" ({payload.discount_value}%)" if payload.discount_mode == "percent" else "")
         tax_note = f"ضريبة القيمة المضافة {payload.tax_rate}%: {tax:.2f}"
@@ -112,13 +167,49 @@ def create_purchase_order(payload: schemas.PurchaseOrderCreate, db: Session = De
     db.flush()
 
     # Receipt is immediate; stock, cost, payable, and cash settlement commit atomically.
+    # المتوسط المرجح: تكلفة الاستلام تُحتسب مرة واحدة لكل منتج (بنوده مجتمعة)
+    received_qty: dict = {}
+    received_value: dict = {}
+    for item in order.items:
+        received_qty[item.product_id] = received_qty.get(item.product_id, Decimal("0")) + Decimal(str(item.quantity))
+        received_value[item.product_id] = received_value.get(item.product_id, Decimal("0")) + item.unit_cost * Decimal(str(item.quantity))
+    for pid, qty in received_qty.items():
+        product = products[pid]
+        old_qty = max(Decimal(str(product.quantity or 0)), Decimal("0"))
+        old_cost = Decimal(str(product.cost_price or 0))
+        new_qty = old_qty + qty
+        product.cost_price = ((old_qty * old_cost + received_value[pid]) / new_qty).quantize(Decimal("0.01")) if new_qty > 0 else product.cost_price
     for item in order.items:
         product = products[item.product_id]
         stock.move_stock(db, product, order.warehouse_id, item.quantity, "purchase_receipt", f"PO-{order.id}")  # type: ignore
-        product.cost_price = item.unit_cost
+        # لوط تلقائي لكل استلام شراء — كود اللوط = رقم أمر الشراء (التتبع العكسي)
+        lot = (
+            db.query(models.StockLot)
+            .filter(
+                models.StockLot.company_id == db.info["company_id"],
+                models.StockLot.product_id == item.product_id,
+                models.StockLot.warehouse_id == order.warehouse_id,
+                models.StockLot.lot_code == f"PO-{order.id}",
+            )
+            .first()
+        )
+        if lot is None:
+            db.add(models.StockLot(
+                company_id=db.info["company_id"],  # type: ignore
+                product_id=item.product_id,  # type: ignore
+                warehouse_id=order.warehouse_id,  # type: ignore
+                lot_code=f"PO-{order.id}",  # type: ignore
+                source="purchase",  # type: ignore
+                reference=f"PO-{order.id}",  # type: ignore
+                qty_received=item.quantity,  # type: ignore
+                qty_remaining=item.quantity,  # type: ignore
+            ))
+        else:
+            lot.qty_received = Decimal(str(lot.qty_received)) + item.quantity  # type: ignore
+            lot.qty_remaining = Decimal(str(lot.qty_remaining)) + item.quantity  # type: ignore
     order.status = "received"  # type: ignore
 
-    from ..accounting import link_party_coa, link_safe_coa, seed_default_coa
+    from ..accounting import VAT_INPUT_CODE, link_party_coa, link_safe_coa, seed_default_coa
     company_id = db.info["company_id"]
     seed_default_coa(db, company_id)
     link_party_coa(db, supplier, company_id, is_customer=False)
@@ -126,15 +217,26 @@ def create_purchase_order(payload: schemas.PurchaseOrderCreate, db: Session = De
     if not inventory_acc or not supplier.chart_account_id:
         db.rollback()
         raise HTTPException(409, "Purchase accounting accounts could not be initialized")
+    # فصل ضريبة المدخلات: مدين المخزون (صافي) + مدين 1145 (ضريبة) · دائن المورد (إجمالي)
+    po_tax = tax if payload.tax_rate else Decimal("0")  # ضريبة أمر الشراء المحسوبة أعلاه
+    po_items = [
+        {"account_id": inventory_acc.id, "debit": total - po_tax, "credit": 0},
+        {"account_id": supplier.chart_account_id, "debit": 0, "credit": total},
+    ]
+    if po_tax > 0:
+        vat_in_acc = db.query(models.ChartAccount).filter(
+            models.ChartAccount.company_id == company_id, models.ChartAccount.code == VAT_INPUT_CODE
+        ).first()
+        if vat_in_acc is None or vat_in_acc.is_group:
+            db.rollback()
+            raise HTTPException(409, "حساب ضريبة المشتريات (1145) غير موجود — حدّث شجرة الحسابات")
+        po_items.insert(1, {"account_id": vat_in_acc.id, "debit": po_tax, "credit": 0})
     AccountingEngine.create_entry(
         db=db,
         company_id=company_id,
         user_id=user.id,
         description=f"Purchase Receipt PO-{order.id}",
-        items=[
-            {"account_id": inventory_acc.id, "debit": total, "credit": 0},
-            {"account_id": supplier.chart_account_id, "debit": 0, "credit": total},
-        ],
+        items=po_items,
         reference=f"PO-{order.id}",
     )
 
@@ -212,6 +314,31 @@ def receive_purchase_order(order_id: int, db: Session = Depends(get_db), user: m
         product = _locked_product(db, item.product_id)
         stock.move_stock(db, product, order.warehouse_id, item.quantity, "purchase_receipt", f"PO-{order.id}")  # type: ignore
         product.cost_price = item.unit_cost
+        # لوط تلقائي لكل استلام شراء — أساس التتبع العكسي (كود اللوط = رقم أمر الشراء)
+        lot = (
+            db.query(models.StockLot)
+            .filter(
+                models.StockLot.company_id == db.info["company_id"],
+                models.StockLot.product_id == item.product_id,
+                models.StockLot.warehouse_id == order.warehouse_id,
+                models.StockLot.lot_code == f"PO-{order.id}",
+            )
+            .first()
+        )
+        if lot is None:
+            db.add(models.StockLot(
+                company_id=db.info["company_id"],  # type: ignore
+                product_id=item.product_id,  # type: ignore
+                warehouse_id=order.warehouse_id,  # type: ignore
+                lot_code=f"PO-{order.id}",  # type: ignore
+                source="purchase",  # type: ignore
+                reference=f"PO-{order.id}",  # type: ignore
+                qty_received=item.quantity,  # type: ignore
+                qty_remaining=item.quantity,  # type: ignore
+            ))
+        else:
+            lot.qty_received = Decimal(str(lot.qty_received)) + item.quantity  # type: ignore
+            lot.qty_remaining = Decimal(str(lot.qty_remaining)) + item.quantity  # type: ignore
     order.status = "received"  # type: ignore
 
     # Accounting: Debit Inventory, Credit Supplier
@@ -274,12 +401,19 @@ def apply_sale_stock(db: Session, order) -> None:
 
     for pid, qty in needed.items():
         stock.move_stock(db, products[pid], order.warehouse_id, -qty, "sale", f"SO-{order.id}")
+        stock.consume_lots(db, products[pid], order.warehouse_id, qty)  # FEFO: أقرب انتهاءً أولًا
 
 
 @sales.post("", response_model=schemas.SalesOrderOut, status_code=status.HTTP_201_CREATED)
-def create_sales_order(payload: schemas.SalesOrderCreate, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
-    _require(db, models.Customer, payload.customer_id, "Customer")
+def create_sales_order(payload: schemas.SalesOrderCreate, request: Request, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    customer = _require(db, models.Customer, payload.customer_id, "Customer")
     _require(db, models.Warehouse, payload.warehouse_id, "Warehouse")
+    # خريطة أسعار قائمة العميل (مرة واحدة للأمر كله)
+    from ..pricing import list_price_map
+    list_prices = list_price_map(db, getattr(customer, "price_list_id", None) or 0)
+    # صلاحية تعديل سعر البيع: بدونها يُباع بسعر البيع المعتمد فقط، ومعها الزيادة فقط.
+    perms = getattr(request.state, "permissions", None)
+    price_edit_locked = perms is not None and "*" not in perms
     order = models.SalesOrder(
         customer_id=payload.customer_id, warehouse_id=payload.warehouse_id, notes=payload.notes, created_by=user.id,  # type: ignore
         rep_id=payload.rep_id if payload.rep_id and db.get(models.SalesRep, payload.rep_id) else None,
@@ -292,14 +426,36 @@ def create_sales_order(payload: schemas.SalesOrderCreate, db: Session = Depends(
     total = Decimal("0")
     for item in payload.items:
         product = _require(db, models.Product, item.product_id, "Product")
-        price = item.unit_price if item.unit_price is not None else product.sale_price
+        # السعر المعتمد: قائمة العميل إن ورد الصنف فيها — وإلا سعر البيع العام
+        base_price = list_prices.get(product.id) or product.sale_price
+        if price_edit_locked and item.unit_price is not None and base_price is not None:
+            if item.unit_price > base_price:
+                if not user_has_permission(perms, "sales.order.price_increase"):
+                    raise HTTPException(status.HTTP_403_FORBIDDEN, "لا تملك صلاحية تعديل سعر البيع (الزيادة فقط)")
+            elif item.unit_price < base_price:
+                raise HTTPException(status.HTTP_403_FORBIDDEN, "تعديل سعر البيع مسموح بالزيادة فقط")
+        price = item.unit_price if item.unit_price is not None else base_price
         order.items.append(
             models.SalesOrderItem(
                 product_id=product.id, quantity=item.quantity, unit_price=price, unit_cost=product.cost_price  # type: ignore
             )
         )
-        total += price * item.quantity
-    order.total_amount = total  # type: ignore
+        total += price * Decimal(str(item.quantity))
+    # ضريبة القيمة المضافة على البيع: total_amount = الصافي + الضريبة (مثل أوامر الشراء)
+    subtotal = total.quantize(Decimal("0.01"))
+    tax_rate = Decimal(str(payload.tax_rate or 0))
+    tax_amount = (subtotal * tax_rate / Decimal("100")).quantize(Decimal("0.01"))
+    order.subtotal = subtotal  # type: ignore
+    order.tax_rate = tax_rate  # type: ignore
+    order.tax_amount = tax_amount  # type: ignore
+    order.total_amount = subtotal + tax_amount  # type: ignore
+    # عملة الفاتورة (اختياري): تُثبّت على المستند — الدفاتر تبقى بالجنيه
+    from ..pricing import resolve_currency
+    currency, rate = resolve_currency(db, getattr(payload, "currency_id", None))
+    if currency is not None:
+        order.currency_id = currency.id  # type: ignore
+        order.exchange_rate = rate  # type: ignore
+        order.foreign_total = (Decimal(str(order.total_amount)) / rate).quantize(Decimal("0.01"))  # type: ignore
     db.add(order)
     audit(db, user, 'create', 'sales_order', order, f"{len(order.items)} بند · {order.total_amount}")
     db.commit()
@@ -342,15 +498,18 @@ def get_sales_order(order_id: int, db: Session = Depends(get_db)):
 
 
 @sales.post("/{order_id}/confirm", response_model=schemas.SalesOrderOut)
-def confirm_sales_order(order_id: int, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+def confirm_sales_order(order_id: int, request: Request, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     """Confirm the sale: removes stock (all-or-nothing) and logs movements."""
     order = _locked_order_or_404(db, models.SalesOrder, order_id, "Sales order")
     _require_draft(order, "confirm")
+    # الحد الائتماني: الدين الجديد كامل الفاتورة (المديونية تُسجّل هنا)
+    from ..accounts import check_credit_limit
+    check_credit_limit(db, order.customer_id, Decimal(str(order.total_amount)), perms=getattr(request.state, "permissions", None))
     apply_sale_stock(db, order)
     order.status = "confirmed"  # type: ignore
 
-    # Accounting: Debit Customer, Credit Sales Revenue
-    from ..accounting import seed_default_coa, link_party_coa
+    # Accounting: Debit Customer (gross), Credit Sales Revenue (net), Credit VAT output (tax)
+    from ..accounting import VAT_OUTPUT_CODE, seed_default_coa, link_party_coa
     seed_default_coa(db, db.info["company_id"])
     customer = db.get(models.Customer, order.customer_id)
     if customer is not None:
@@ -359,22 +518,157 @@ def confirm_sales_order(order_id: int, db: Session = Depends(get_db), user: mode
     if not revenue_acc or not customer or not customer.chart_account_id:
         db.rollback()
         raise HTTPException(409, "Sales accounting accounts could not be initialized")
+    sale_items = [
+        {"account_id": customer.chart_account_id, "debit": order.total_amount, "credit": 0},
+        {"account_id": revenue_acc.id, "debit": 0, "credit": order.subtotal if order.subtotal is not None else order.total_amount},
+    ]
+    if (order.tax_amount or Decimal("0")) > 0:
+        vat_acc = db.query(models.ChartAccount).filter(
+            models.ChartAccount.company_id == db.info["company_id"], models.ChartAccount.code == VAT_OUTPUT_CODE
+        ).first()
+        if vat_acc is None or vat_acc.is_group:
+            db.rollback()
+            raise HTTPException(409, "حساب ضريبة القيمة المضافة (2130) غير موجود — حدّث شجرة الحسابات")
+        sale_items.append({"account_id": vat_acc.id, "debit": 0, "credit": order.tax_amount})
     AccountingEngine.create_entry(
         db=db,
         company_id=db.info["company_id"],
         user_id=user.id,
         description=f"Sales Confirmation SO-{order.id}",
-        items=[
-            {"account_id": customer.chart_account_id, "debit": order.total_amount, "credit": 0},
-            {"account_id": revenue_acc.id, "debit": 0, "credit": order.total_amount},
-        ],
+        items=sale_items,
         reference=f"SO-{order.id}"
     )
+
+    # Accounting: Debit COGS, Credit Inventory — relieve stock value at the cost frozen on the order lines.
+    cogs_total = sum(((it.unit_cost or Decimal("0")) * it.quantity for it in order.items), Decimal("0"))
+    if cogs_total > 0:
+        inventory_acc = db.query(models.ChartAccount).filter(
+            models.ChartAccount.company_id == db.info["company_id"], models.ChartAccount.code == "1101"
+        ).first()
+        cogs_acc = db.query(models.ChartAccount).filter(
+            models.ChartAccount.company_id == db.info["company_id"], models.ChartAccount.code == "5100"
+        ).first()
+        if not inventory_acc or not cogs_acc:
+            db.rollback()
+            raise HTTPException(409, "COGS accounting accounts could not be initialized")
+        AccountingEngine.create_entry(
+            db=db,
+            company_id=db.info["company_id"],
+            user_id=user.id,
+            description=f"COGS SO-{order.id}",
+            items=[
+                {"account_id": cogs_acc.id, "debit": cogs_total, "credit": 0},
+                {"account_id": inventory_acc.id, "debit": 0, "credit": cogs_total},
+            ],
+            reference=f"SO-{order.id}"
+        )
 
     audit(db, user, 'confirm', 'sales_order', order, f"إجمالي {order.total_amount}")
     db.commit()
     db.refresh(order)
+    # تنبيه تطبيق المندوب: فاتورته اتأكدت (صندوق + Push إن ضُبط FCM)
+    if order.rep_id:
+        from ..push import notify_rep
+        try:
+            notify_rep(db, order.rep_id, kind="order_confirmed",
+                       title=f"تم تأكيد فاتورتك SO-{order.id}",
+                       body=f"الإجمالي {order.total_amount} ج.م — العميل {order.party_name or ''}",
+                       ref_id=order.id)
+        except Exception:
+            pass  # الإشعار لا يعطل التأكيد أبدًا
     return order
+
+
+class DeliveryLineIn(BaseModel):
+    product_id: int
+    quantity: float = Field(gt=0)
+
+
+class DeliveryIn(BaseModel):
+    items: List[DeliveryLineIn] = Field(min_length=1)
+    notes: Optional[str] = None
+
+
+@sales.post("/{order_id}/deliveries", response_model=schemas.SalesOrderOut, status_code=status.HTTP_201_CREATED)
+def create_delivery(
+    order_id: int,
+    payload: DeliveryIn,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """تسليم جزئي: يخصم الكمية المسلَّمة من المخزن (بأقفال ومنع النقص) ويزيد delivered_quantity.
+
+    المحاسبة بقيت كاملة عند التأكيد (الإيراد والـ COGS) — التسليم لوجستي فقط.
+    عند اكتمال كل البنود تُعلَّم الفاتورة «مُسلَّمة كاملة» في الملاحظات."""
+    order = _locked_order_or_404(db, models.SalesOrder, order_id, "Sales order")
+    if order.status != "confirmed":  # type: ignore
+        raise HTTPException(status.HTTP_409_CONFLICT, "التسليم يتطلب فاتورة مؤكدة")
+    items_by_pid: dict = {}
+    for it in order.items:
+        items_by_pid[it.product_id] = it
+    wanted: dict = {}
+    for ln in payload.items:
+        wanted[ln.product_id] = wanted.get(ln.product_id, 0) + Decimal(str(ln.quantity))
+    for pid, qty in wanted.items():
+        item = items_by_pid.get(pid)
+        if item is None:
+            raise HTTPException(422, f"الصنف {pid} ليس في الفاتورة")
+        remaining = Decimal(str(item.quantity)) - Decimal(str(item.delivered_quantity or 0))
+        if qty > remaining:
+            raise HTTPException(409, f"الصنف {pid}: المتبقي للتسليم {remaining} فقط")
+    # حركة المخزون all-or-nothing (أقفال + منع النقص) ثم خصم لوطات FEFO
+    for pid, qty in wanted.items():
+        product = _locked_product(db, pid)
+        if stock.available(db, pid, order.warehouse_id) < qty:
+            db.rollback()
+            raise HTTPException(status.HTTP_409_CONFLICT, "Insufficient stock: " + stock.shortage_message(db, product, order.warehouse_id, qty))
+        stock.move_stock(db, product, order.warehouse_id, -qty, "delivery", f"DLV-SO-{order.id}")
+        stock.consume_lots(db, product, order.warehouse_id, qty)
+    delivered_note_lines = []
+    for it in order.items:
+        if it.product_id in wanted:
+            it.delivered_quantity = Decimal(str(it.delivered_quantity or 0)) + wanted[it.product_id]  # type: ignore
+        delivered_note_lines.append(f"{it.product_id}:{it.delivered_quantity or 0}/{it.quantity}")
+    fully = all(
+        Decimal(str(it.delivered_quantity or 0)) >= Decimal(str(it.quantity))
+        for it in order.items
+    )
+    if fully and "مُسلَّمة كاملة" not in (order.notes or ""):
+        order.notes = ((order.notes or "") + " · مُسلَّمة كاملة").strip(" ·")  # type: ignore
+    audit(db, user, "deliver", "sales_order", order,
+          f"تسليم جزئي: " + "، ".join(f"{p}×{q}" for p, q in wanted.items()) + (" — اكتمل" if fully else ""))
+    db.commit()
+    db.refresh(order)
+    return order
+
+
+@sales.get("/{order_id}/deliveries")
+def list_deliveries(
+    order_id: int,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+):
+    """سجل حركات تسليم هذه الفاتورة (من سجل حركة المخزون بمرجع DLV-SO-{id})."""
+    moves = (
+        db.query(models.StockMovement, models.Product.sku, models.Product.name, models.Warehouse.name)
+        .join(models.Product, models.Product.id == models.StockMovement.product_id)
+        .outerjoin(models.Warehouse, models.Warehouse.id == models.StockMovement.warehouse_id)
+        .filter(
+            models.StockMovement.company_id == db.info["company_id"],
+            models.StockMovement.reference == f"DLV-SO-{order_id}",
+        )
+        .order_by(models.StockMovement.id.desc())
+        .all()
+    )
+    return [
+        {
+            "id": m.id,
+            "created_at": m.created_at.isoformat() if m.created_at else None,
+            "product_id": m.product_id, "sku": sku, "product_name": name,
+            "warehouse_name": wname, "change": float(m.change),
+        }
+        for m, sku, name, wname in moves
+    ]
 
 
 @sales.post("/{order_id}/cancel", response_model=schemas.SalesOrderOut)
@@ -452,7 +746,30 @@ def purchase_order_xlsx(order_id: int, db: Session = Depends(get_db)):
 
 @sales.get("/{order_id}/pdf")
 def sales_order_invoice_pdf(order_id: int, db: Session = Depends(get_db)):
-    return _export("sales", "pdf", _order_or_404(db, models.SalesOrder, order_id, "Sales order"), "invoice")
+    order = _order_or_404(db, models.SalesOrder, order_id, "Sales order")
+    doc = _document("sales", order)
+    # حقول المنظومة على المطبوع (متطلب ETA): UUID + Long ID + QR
+    valid_sub = (
+        db.query(models.EtaSubmission)
+        .filter(
+            models.EtaSubmission.company_id == db.info["company_id"],
+            models.EtaSubmission.order_id == order.id,
+            models.EtaSubmission.document_type == "I",
+            models.EtaSubmission.status == "valid",
+        )
+        .order_by(models.EtaSubmission.id.desc())
+        .first()
+    )
+    if valid_sub is not None:
+        doc["eta_uuid"] = valid_sub.eta_uuid
+        doc["eta_long_id"] = valid_sub.eta_long_id
+    # العملة الأجنبية على المطبوع (إن وجدت)
+    if order.currency_id is not None:
+        doc["currency_code"] = order.currency_code
+        doc["exchange_rate"] = order.exchange_rate
+        doc["foreign_total"] = order.foreign_total
+    content = exports.build_document_pdf(doc)
+    return _download(content, exports.PDF_MIME, f"invoice-SO-{order.id}.pdf")
 
 
 @sales.get("/{order_id}/quotation.pdf")
@@ -477,3 +794,68 @@ def sales_order_receipt(order_id: int, db: Session = Depends(get_db)):
 @sales.get("/{order_id}/xlsx")
 def sales_order_invoice_xlsx(order_id: int, db: Session = Depends(get_db)):
     return _export("sales", "xlsx", _order_or_404(db, models.SalesOrder, order_id, "Sales order"), "invoice")
+
+
+@sales.get("/{order_id}/eta-json")
+def sales_order_eta_json(order_id: int, db: Session = Depends(get_db)):
+    """تصدير الفاتورة بصيغة منظومة الضرائب المصرية (ETA e-invoice JSON, documentType=I).
+
+    مسودة جاهزة للرفع على بيئة ETA التجريبية — الربط الحي يحتاج تسجيل الشركة
+    (client_id/secret + تسجيل الأجهزة)، وهذه البنية تختصر الطريق إليه."""
+    import json as _json
+    from ..accounting import local_today
+
+    order = _order_or_404(db, models.SalesOrder, order_id, "Sales order")
+    if order.status != "confirmed":  # type: ignore
+        raise HTTPException(status.HTTP_409_CONFLICT, "الفاتورة الإلكترونية تتطلب أمر بيع مؤكدًا")
+    company = db.get(models.Company, db.info["company_id"])
+    customer = db.get(models.Customer, order.customer_id)
+    product_rows = {
+        p.id: p for p in db.query(models.Product).filter(
+            models.Product.id.in_([it.product_id for it in order.items])
+        ).all()
+    } if order.items else {}
+    lines = []
+    for i, it in enumerate(order.items, 1):
+        unit_price = Decimal(str(it.unit_price or 0))
+        qty = Decimal(str(it.quantity))
+        product = product_rows.get(it.product_id)
+        lines.append({
+            "description": it.product_name or (product.name if product else f"صنف #{it.product_id}"),
+            "itemType": "GS1",
+            "unitType": "EA",
+            "quantity": float(qty),
+            "internalCode": (product.sku if product else None) or str(it.product_id),
+            "salesTotal": float((unit_price * qty).quantize(Decimal("0.01"))),
+            "total": float((unit_price * qty).quantize(Decimal("0.01"))),
+            "valueDifference": 0,
+            "unitValue": {"currencySold": "EGP", "amountEGP": float(unit_price)},
+        })
+    doc = {
+        "documentType": "I",
+        "documentTypeVersion": "1.0",
+        "dateTimeIssued": datetime.now(exports.LOCAL_TZ).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "taxpayerActivityCode": "4690",
+        "internalID": f"SO-{order.id}",
+        "issuer": {
+            "type": "B", "id": "", "name": company.name if company else "",
+            "address": {
+                "country": "EG", "governate": "", "regionCity": "", "street": "",
+                "buildingNumber": "0", "postalCode": "", "floor": "", "room": "", "landmark": "",
+            },
+        },
+        "receiver": {
+            "type": "P", "id": "", "name": order.party_name or (customer.name if customer else ""),
+            "address": {"country": "EG", "governate": "", "regionCity": "", "street": "", "buildingNumber": "0"},
+        },
+        "invoiceLines": lines,
+        "totalDiscountAmount": 0,
+        "totalSalesAmount": float(order.subtotal if order.subtotal is not None else order.total_amount),
+        "netAmount": float(order.subtotal if order.subtotal is not None else order.total_amount),
+        "taxTotals": [{"taxType": "T1", "amount": float(order.tax_amount or 0)}],
+        "totalAmount": float(order.total_amount),
+        "extraDiscountAmount": 0,
+        "totalItemsDiscountAmount": 0,
+    }
+    return _download(_json.dumps(doc, ensure_ascii=False, indent=2).encode("utf-8"),
+                     "application/json", f"eta-SO-{order.id}.json")

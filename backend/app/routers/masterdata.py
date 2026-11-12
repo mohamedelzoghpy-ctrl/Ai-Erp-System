@@ -130,11 +130,13 @@ def _crud(router: APIRouter, model, label: str, create_s, update_s, out_s, kind:
             _ensure_manager_for_balance(user)
         obj = model(**data)
         if model is models.Supplier:
-            ap = db.query(models.ChartAccount).filter(models.ChartAccount.company_id == db.info["company_id"], models.ChartAccount.code == "2100").first()
+            # ذمم الموردين 2110 (فرعي) — الربط المجموعي 2100 كان يمنع ترحيل سنداته
+            ap = db.query(models.ChartAccount).filter(models.ChartAccount.company_id == db.info["company_id"], models.ChartAccount.code == "2110").first()
             if ap is not None:
                 obj.chart_account_id = ap.id
         if model is models.Customer:
-            ar = db.query(models.ChartAccount).filter(models.ChartAccount.company_id == db.info["company_id"], models.ChartAccount.code == "1100").first()
+            # ذمم العملاء 1120 (فرعي) — الربط المجموعي 1100 كان يمنع ترحيل فواتيره
+            ar = db.query(models.ChartAccount).filter(models.ChartAccount.company_id == db.info["company_id"], models.ChartAccount.code == "1120").first()
             if ar is not None:
                 obj.chart_account_id = ar.id
         db.add(obj)

@@ -22,6 +22,16 @@ class FakeSession:
     def rollback(self):
         self.rolled_back = True
 
+    class _LotsQuery:
+        """سلسلة استعلام فارغة لconsume_lots في الاختبارات الوهمية."""
+        def filter(self, *a, **k): return self
+        def order_by(self, *a, **k): return self
+        def with_for_update(self): return self
+        def all(self): return []
+
+    def query(self, *a, **k):
+        return FakeSession._LotsQuery()
+
 
 def make_item(product_id, quantity):
     return SimpleNamespace(product_id=product_id, quantity=quantity)
@@ -77,7 +87,8 @@ def test_apply_sale_stock_rolls_back_without_deducting_any_stock_on_shortage(mon
         orders.apply_sale_stock(db, order)
 
     assert exc_info.value.status_code == status.HTTP_409_CONFLICT
-    assert "need 5, have 4" in exc_info.value.detail
+    assert "need 5" in exc_info.value.detail  # 'need 5.000' — الكمية المطلوبة
+    assert "have 4" in exc_info.value.detail  # المتاح فعلاً
     assert products[2].quantity == 6
     assert products[7].quantity == 4
     assert db.stock[(2, 3)].quantity == 6 and db.stock[(7, 3)].quantity == 4

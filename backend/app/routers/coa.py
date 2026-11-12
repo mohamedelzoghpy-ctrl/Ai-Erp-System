@@ -1,3 +1,4 @@
+from decimal import Decimal
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy import func
@@ -5,7 +6,7 @@ from sqlalchemy.orm import Session
 from .. import models, schemas, deps
 from ..deps import get_current_user, require_manager
 from ..audit import audit
-from ..accounting import seed_default_coa
+from ..accounting import seed_default_coa, AccountingEngine
 from ..codegen import unique_code
 import csv
 import io
@@ -14,10 +15,17 @@ router = APIRouter(prefix="/chart-of-accounts", tags=["Chart of Accounts"])
 
 # ---------------------------------------------------------------- مطابقة أرصدة الشجرة مع دفتر الأستاذ
 RECONCILE_TYPES_ASSET = ("asset", "expense")
+_TWO_PLACES = Decimal("0.01")
+_ZERO = Decimal("0")
+
+
+def _q(value) -> Decimal:
+    """تقريب مبلغ إلى منزلتين بـ Decimal (البيانات قد تأتي Decimal من PG أو float من SQLite)."""
+    return Decimal(str(value or 0)).quantize(_TWO_PLACES)
 
 
 def _reconcile_lines(db: Session, company_id: int):
-    """لكل حساب: الرصيد المخزن مقابل صافي بنود دفتر الأستاذ والفرق بينهما."""
+    """لكل حساب: الرصيد المخزن مقابل صافي بنود دفتر الأستاذ والفرق بينهما (Decimal)."""
     accounts = db.query(models.ChartAccount).filter(models.ChartAccount.company_id == company_id).order_by(models.ChartAccount.code).all()
     sums = dict(db.query(
         models.JournalItem.account_id,
@@ -26,19 +34,34 @@ def _reconcile_lines(db: Session, company_id: int):
       .filter(models.JournalItem.company_id == company_id)
       .group_by(models.JournalItem.account_id).all())
     lines = []
-    total_stored = total_ledger = total_drift = 0.0
+    total_stored = total_ledger = total_drift = _ZERO
     for acc in accounts:
-        net = float(sums.get(acc.id, 0) or 0)
+        net = _q(sums.get(acc.id, 0))
         ledger = net if acc.type in RECONCILE_TYPES_ASSET else -net
-        stored = float(acc.balance or 0)
+        stored = _q(acc.balance)
         if stored == 0 and ledger == 0:
             continue
-        drift = round(stored - ledger, 2)
+        drift = (stored - ledger).quantize(_TWO_PLACES)
         lines.append((acc, stored, ledger, drift))
         total_stored += stored
         total_ledger += ledger
         total_drift += drift
     return lines, total_stored, total_ledger, total_drift
+
+
+def _reconcile_response(db: Session, company_id: int, changed: int = 0,
+                        journal_entry_id: Optional[int] = None, cash_synced: int = 0) -> schemas.ReconcileOut:
+    lines, ts, tl, td = _reconcile_lines(db, company_id)
+    return schemas.ReconcileOut(
+        lines=[
+            schemas.ReconcileLine(
+                account_id=acc.id, code=acc.code, name=acc.name, type=acc.type,
+                stored=stored, ledger=ledger, drift=drift,
+            ) for acc, stored, ledger, drift in lines
+        ],
+        total_stored=ts, total_ledger=tl, total_drift=td,
+        changed=changed, journal_entry_id=journal_entry_id, cash_synced=cash_synced,
+    )
 
 
 @router.get("/reconcile", response_model=schemas.ReconcileOut)
@@ -47,46 +70,121 @@ def reconcile_report(
     user = Depends(get_current_user),
 ):
     company_id = user.active_company_id
-    lines, ts, tl, td = _reconcile_lines(db, company_id)
-    return schemas.ReconcileOut(
-        lines=[
-            schemas.ReconcileLine(
-                account_id=acc.id, code=acc.code, name=acc.name, type=acc.type,
-                stored=round(stored, 2), ledger=round(ledger, 2), drift=drift,
-            ) for acc, stored, ledger, drift in lines
-        ],
-        total_stored=round(ts, 2), total_ledger=round(tl, 2), total_drift=round(td, 2),
-    )
+    return _reconcile_response(db, company_id)
 
 
 @router.post("/reconcile/apply", response_model=schemas.ReconcileOut)
 def apply_reconcile(
+    payload: Optional[schemas.ReconcileApplyIn] = None,
     db: Session = Depends(deps.get_db),
     user = Depends(require_manager),
 ):
-    """تطبيق التسوية: إعادة بناء الرصيد المخزن لكل حساب من دفتر الأستاذ (يُسجل في سجل التدقيق)."""
+    """تطبيق التسوية على الحسابات المختارة (أو كل المتنافرة):
+    rebuild = إعادة بناء الرصيد المخزن من الدفتر · journal = ترحيل الفرق كقيد موزون على حساب مقابل.
+    يُسجل في سجل التدقيق."""
+    body = payload or schemas.ReconcileApplyIn()
     company_id = user.active_company_id
-    lines, ts, tl, td = _reconcile_lines(db, company_id)
+    lines, _, _, _ = _reconcile_lines(db, company_id)
+    drifted = [(acc, stored, ledger, drift) for acc, stored, ledger, drift in lines if drift != 0]
+    if body.account_ids is not None:
+        wanted = set(body.account_ids)
+        targets = [t for t in drifted if t[0].id in wanted]
+        missing = wanted - {t[0].id for t in targets}
+        if missing:
+            raise HTTPException(status_code=400, detail=f"حسابات غير متنافرة أو غير موجودة: {sorted(missing)}")
+    else:
+        targets = drifted
+
     changed = 0
-    for acc, stored, ledger, drift in lines:
-        if drift != 0:
-            acc.balance = round(ledger, 2)
-            changed += 1
-    audit(
-        db, user, "update", "account_reconcile", None,
-        f"تسوية أرصدة شجرة الحسابات — {changed} حساب · إجمالي الفروق {round(td, 2)}",
-    )
+    journal_entry_id = None
+    if targets:
+        if body.mode == "rebuild":
+            for acc, stored, ledger, drift in targets:
+                acc.balance = ledger
+                changed += 1
+            audit(
+                db, user, "update", "account_reconcile", None,
+                f"تسوية شجرة الحسابات (إعادة بناء) — {changed} حساب",
+            )
+        else:  # journal — ترحيل الفروق كقيد واحد موزون
+            if not body.counter_account_id:
+                raise HTTPException(status_code=400, detail="يلزم تحديد الحساب المقابل في وضع ترحيل القيود")
+            counter = db.query(models.ChartAccount).filter(
+                models.ChartAccount.id == body.counter_account_id,
+                models.ChartAccount.company_id == company_id,
+            ).first()
+            if not counter:
+                raise HTTPException(status_code=400, detail="الحساب المقابل غير موجود")
+            if counter.is_group:
+                raise HTTPException(status_code=400, detail="لا يمكن الترحيل على حساب مجموعي")
+            if counter.id in {t[0].id for t in targets}:
+                raise HTTPException(status_code=400, detail="الحساب المقابل ضمن الحسابات المُسوّاة نفسها")
+            groups = [t[0].code for t in targets if t[0].is_group]
+            if groups:
+                raise HTTPException(status_code=400, detail=f"حسابات مجموعية لا تقبل الترحيل: {groups}")
+
+            # لكل حساب: البند الناقص من الدفتر ليطابق الرصيد المخزن
+            pre_stored = {acc.id: stored for acc, stored, ledger, drift in targets}
+            items = []
+            total_debit = total_credit = _ZERO
+            for acc, stored, ledger, drift in targets:
+                amount = abs(drift)
+                debit_side = (acc.type in RECONCILE_TYPES_ASSET) == (drift > 0)
+                item = {"account_id": acc.id, "debit": _ZERO, "credit": _ZERO,
+                        "notes": f"تسوية فرق {drift}"}
+                item["debit" if debit_side else "credit"] = amount
+                total_debit += item["debit"]
+                total_credit += item["credit"]
+                items.append(item)
+            counter_net = total_credit - total_debit  # ما يوازن القيد
+            if counter_net > 0:
+                items.append({"account_id": counter.id, "debit": counter_net, "credit": _ZERO})
+            elif counter_net < 0:
+                items.append({"account_id": counter.id, "debit": _ZERO, "credit": -counter_net})
+
+            entry = AccountingEngine.create_entry(
+                db, company_id, user.id,
+                "قيد تسوية أرصدة شجرة الحسابات", items, reference="RECONCILE",
+            )
+            journal_entry_id = entry.id
+            # المحرك حدّث الرصيد المخزن لل-targets بالفعل — نعيده للرصيد المخزن الأصلي
+            # (القيد رفع رصيد الدفتر ليساويه، فلا يجب أن يُحتسب مرتين)
+            for acc, stored, ledger, drift in targets:
+                acc.balance = pre_stored[acc.id]
+                changed += 1
+            audit(
+                db, user, "update", "account_reconcile", None,
+                f"تسوية شجرة الحسابات (قيد رقم {entry.id}) — {changed} حساب · مقابل {counter.code}",
+            )
     db.commit()
-    lines, ts, tl, td = _reconcile_lines(db, company_id)
-    return schemas.ReconcileOut(
-        lines=[
-            schemas.ReconcileLine(
-                account_id=acc.id, code=acc.code, name=acc.name, type=acc.type,
-                stored=round(stored, 2), ledger=round(ledger, 2), drift=drift,
-            ) for acc, stored, ledger, drift in lines
-        ],
-        total_stored=round(ts, 2), total_ledger=round(tl, 2), total_drift=round(td, 2),
-    )
+    return _reconcile_response(db, company_id, changed=changed, journal_entry_id=journal_entry_id)
+
+
+@router.post("/reconcile/sync-cash")
+def sync_cash_balances(
+    db: Session = Depends(deps.get_db),
+    user = Depends(require_manager),
+):
+    """مزامنة أرصدة الخزائن والبنوك المتوازية مع أرصدة حساباتها في الشجرة (بعد التسوية)."""
+    company_id = user.active_company_id
+    acc_balances = {a.id: _q(a.balance) for a in db.query(models.ChartAccount).filter(models.ChartAccount.company_id == company_id).all()}
+    synced = 0
+    for entity in (
+        db.query(models.Safe).filter(models.Safe.company_id == company_id).all()
+        + db.query(models.Bank).filter(models.Bank.company_id == company_id).all()
+    ):
+        target = acc_balances.get(entity.chart_account_id) if entity.chart_account_id else None
+        if target is None or _q(entity.balance) == target:
+            continue
+        entity.balance = target
+        synced += 1
+    if synced:
+        audit(
+            db, user, "update", "cash_sync", None,
+            f"مزامنة أرصدة الخزائن/البنوك مع الشجرة — {synced} كيان",
+        )
+    db.commit()
+    return {"synced": synced}
 
 
 @router.post("/import", status_code=status.HTTP_201_CREATED)
@@ -248,3 +346,54 @@ def update_account(
     db.commit()
     db.refresh(db_acc)
     return db_acc
+
+
+@router.delete("/{id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_account(
+    id: int,
+    db: Session = Depends(deps.get_db),
+    user = Depends(require_manager),
+):
+    """حذف حساب: مسموح فقط للفرعيات الخاملة بلا حركة دفترية ولا أبناء ولا روابط كيانات."""
+    company_id = user.active_company_id
+    if not company_id:
+        raise HTTPException(status_code=400, detail="No active company selected")
+
+    acc = db.query(models.ChartAccount).filter(
+        models.ChartAccount.id == id,
+        models.ChartAccount.company_id == company_id,
+    ).first()
+    if not acc:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    if db.query(models.ChartAccount).filter(models.ChartAccount.parent_id == id).count():
+        raise HTTPException(status_code=409, detail="لا يمكن حذف حساب له حسابات فرعية")
+    has_ledger = db.query(models.JournalItem.id).filter(
+        models.JournalItem.account_id == id,
+        models.JournalItem.company_id == company_id,
+    ).first()
+    if has_ledger:
+        raise HTTPException(status_code=409, detail="الحساب عليه حركة دفترية — عطّله بدل حذفه")
+    for model in (models.Safe, models.Bank, models.Customer, models.Supplier):
+        if db.query(model.id).filter(model.chart_account_id == id).first():  # type: ignore[attr-defined]
+            raise HTTPException(status_code=409, detail="الحساب مرتبط بخزينة/بنك/عميل/مورد — افصل الرابط أولًا")
+
+    db.delete(acc)
+    audit(db, user, "delete", "chart_account", id, f"حساب {acc.code} — {acc.name}")
+    db.commit()
+    return None
+
+
+@router.post("/roll-up")
+def roll_up_balances(
+    db: Session = Depends(deps.get_db),
+    user = Depends(require_manager),
+):
+    """إعادة احتساب أرصدة الحسابات المجموعية من أبنائها (الفرعيات تبقى مرجع الحقيقة)."""
+    company_id = db.info["company_id"]
+    if not company_id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "No active company selected")
+    changed = AccountingEngine.roll_up_balances(db, company_id)
+    audit(db, user, "update", "chart_account_rollup", None, f"إعادة احتساب {changed} حساب مجموعي")
+    db.commit()
+    return {"changed": changed}

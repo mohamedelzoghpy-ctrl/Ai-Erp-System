@@ -7,6 +7,13 @@ from app.database import Base, get_db
 from app.main import app
 
 
+def _grant_section(client, headers, user_id: int, codes):
+    """نظام الصلاحيات: قسم مؤقت للموظف + إسناده."""
+    sec = client.post("/access-sections", headers=headers, json={"code": f"t{user_id}", "name": "قسم اختبار"}).json()
+    client.put(f"/access-sections/{sec['id']}/permissions", headers=headers, json={"permission_codes": codes})
+    client.put(f"/auth/users/{user_id}/section", headers=headers, json={"section_id": sec["id"]})
+
+
 def test_platform_company_creation_limits_and_employee_resource_scope():
     engine = create_engine(
         "sqlite://",
@@ -248,6 +255,12 @@ def test_platform_company_creation_limits_and_employee_resource_scope():
         assert response.json()["employee_code"].isdigit()
         assert response.json()["branch_ids"] == [branch_three_id]
         assert response.json()["warehouse_ids"] == [warehouse_id]
+        _grant_section(
+            client,
+            company_headers,
+            [u for u in client.get("/auth/users", headers=company_headers).json() if u["username"] == "branch-staff-legacy"][0]["id"],
+            ["admin.branch.view", "inventory.warehouse.view"],
+        )
 
         response = client.post(
             "/auth/users",
@@ -271,6 +284,7 @@ def test_platform_company_creation_limits_and_employee_resource_scope():
             },
         )
         assert response.status_code == 201, response.text
+        _grant_section(client, company_headers, response.json()["id"], ["admin.branch.view", "inventory.warehouse.view"])
 
         response = client.post(
             "/auth/login",
@@ -419,6 +433,105 @@ def test_platform_company_creation_limits_and_employee_resource_scope():
         deleted_department = client.delete(f"/platform/companies/{company_id}/departments/{department_id}", headers=platform_headers)
         assert deleted_department.status_code == 204, deleted_department.text
         assert client.get(f"/platform/companies/{company_id}/departments", headers=platform_headers).json() == []
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+        engine.dispose()
+
+
+def test_company_license_expiry_blocks_usage_and_renewal_restores(monkeypatch):
+    """رخصة الاستخدام: انتهاؤها يوقف عمليات العمل (غير مدير المنصة) والتجديد بكلمة سر المورّد يعيد التشغيل."""
+    monkeypatch.setenv("LICENSE_RENEWAL_PASSWORD", "vendor-secret-123")
+    from datetime import date, timedelta
+
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(bind=engine)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+    def override_get_db():
+        db = session_factory()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = override_get_db
+    try:
+        client = TestClient(app)
+        assert client.post("/auth/setup", json={"username": "platform", "password": "long-password"}).status_code == 201
+        platform_token = client.post("/auth/login", data={"username": "platform", "password": "long-password"}).json()["access_token"]
+        platform_headers = {"Authorization": f"Bearer {platform_token}"}
+
+        resp = client.post(
+            "/platform/companies",
+            headers=platform_headers,
+            json={
+                "name": "Licensed Co",
+                "admin_username": "co-admin",
+                "admin_full_name": "Co Admin",
+                "admin_password": "company-password",
+            },
+        )
+        assert resp.status_code == 201, resp.text
+        company_id = resp.json()["id"]
+
+        co_token = client.post("/auth/login", data={"username": "co-admin", "password": "company-password"}).json()["access_token"]
+        co_headers = {"Authorization": f"Bearer {co_token}"}
+
+        # بلا رخصة (NULL = غير مقيّد): العمل طبيعي
+        assert client.post("/company/branches", headers=co_headers, json={"name": "B1"}).status_code == 201
+
+        # رخصة منتهية (أمس): مسارات الذات تعمل وعمليات العمل محجوبة
+        yesterday = (date.today() - timedelta(days=1)).isoformat()
+        resp = client.put(f"/platform/companies/{company_id}/license", headers=platform_headers, json={"license_until": yesterday, "license_password": "vendor-secret-123"})
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["license_until"] == yesterday
+
+        assert client.get("/auth/me", headers=co_headers).status_code == 200  # self يمر
+        blocked = client.get("/company/branches", headers=co_headers)
+        assert blocked.status_code == 403, blocked.text
+        assert "انتهت رخصة" in blocked.text
+        # مدير الشركة (admin) لا يتجاوز الرخصة — الحجب تعاقدي
+        # ومدير المنصة يتجاوز ويستطيع العمل على الشركة المنتهية
+        assert client.get("/platform/companies", headers=platform_headers).status_code == 200
+
+        # التجديد لتاريخ مستقبلي يعيد التشغيل
+        renewed = (date.today() + timedelta(days=30)).isoformat()
+        resp = client.put(f"/platform/companies/{company_id}/license", headers=platform_headers, json={"license_until": renewed, "license_password": "vendor-secret-123"})
+        assert resp.status_code == 200, resp.text
+        assert client.get("/company/branches", headers=co_headers).status_code == 200
+
+        # إلغاء القيد (NULL) يعيد الوضع غير المقيّد
+        resp = client.put(f"/platform/companies/{company_id}/license", headers=platform_headers, json={"license_until": None, "license_password": "vendor-secret-123"})
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["license_until"] is None
+        assert client.get("/company/branches", headers=co_headers).status_code == 200
+
+        # الرخصة ممنوعة على غير مدير المنصة
+        assert client.put(
+            f"/platform/companies/{company_id}/license", headers=co_headers, json={"license_until": yesterday, "license_password": "vendor-secret-123"}
+        ).status_code == 403
+        # كلمة سر خاطئة → مرفوض
+        resp = client.put(
+            f"/platform/companies/{company_id}/license",
+            headers=platform_headers,
+            json={"license_until": renewed, "license_password": "wrong-password"},
+        )
+        assert resp.status_code == 403, resp.text
+        assert "كلمة سر التجديد غير صحيحة" in resp.text
+
+        # بدون ضبط متغير البيئة على الخادم → التجديد متعذر (503)
+        monkeypatch.delenv("LICENSE_RENEWAL_PASSWORD", raising=False)
+        resp = client.put(
+            f"/platform/companies/{company_id}/license",
+            headers=platform_headers,
+            json={"license_until": renewed, "license_password": "vendor-secret-123"},
+        )
+        assert resp.status_code == 503, resp.text
+
     finally:
         app.dependency_overrides.pop(get_db, None)
         engine.dispose()

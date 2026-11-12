@@ -326,7 +326,7 @@ def transfer_pdf(transfer_id: int, db: Session = Depends(get_db)):
     for i in t.items:
         p = products.get(i.product_id)
         price = float(p.sale_price if (use_sale and p) else (p.cost_price if p else 0))  # type: ignore
-        total_value += price * i.quantity
+        total_value += price * float(i.quantity)  # الكمية Decimal والسعر float — نوحّد النوع
         item_rows.append({"sku": i.sku, "name": i.product_name, "quantity": i.quantity, "price": price})
     content = exports.build_transfer_pdf(
         {

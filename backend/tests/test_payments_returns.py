@@ -43,6 +43,11 @@ def make_staff_with_branch(client, branch_id: int, username: str, warehouse_id=N
     }
     r = client.post("/auth/users", json=payload)
     assert r.status_code == 201, r.text
+    user_id = r.json()["id"]
+    # نظام الصلاحيات: منح الموظف صلاحيات السندات لاختبار نطاق الفروع
+    sec = client.post("/access-sections", json={"code": f"t{user_id}", "name": "قسم اختبار"}).json()
+    client.put(f"/access-sections/{sec['id']}/permissions", json={"permission_codes": ["accounting.payment.view", "accounting.payment.create"]})
+    client.put(f"/auth/users/{user_id}/section", json={"section_id": sec["id"]})
     token = client.post("/auth/login", data={"username": username, "password": "long-password"}).json()["access_token"]
     staff = TestClient(app)
     staff.headers["Authorization"] = f"Bearer {token}"

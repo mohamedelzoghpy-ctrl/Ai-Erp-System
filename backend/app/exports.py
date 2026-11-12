@@ -396,6 +396,20 @@ def build_document_pdf(doc: Dict[str, Any]) -> bytes:
             sub_y -= 13
     pdf.text(LEFT, pdf.y - 16, KIND_TITLE[doc["kind"]], font="Amiri-Bold", size=19, align="l", color=ACCENT)
     pdf.text(LEFT, pdf.y - 36, f"# {doc['number']}", font="Amiri-Bold", size=13, align="l")
+    # ---- حقول منظومة الضرائب (عند الإرسال): UUID + Long ID + QR للتحقق
+    if doc.get("eta_uuid"):
+        from reportlab.graphics.barcode.qr import QrCodeWidget
+        from reportlab.graphics.shapes import Drawing as _Drawing
+        from reportlab.graphics.renderPDF import draw as _draw
+        qr_text = str(doc.get("eta_long_id") or doc["eta_uuid"])
+        qr = QrCodeWidget(qr_text)
+        qr_drawing = _Drawing(58, 58)
+        qr_drawing.add(qr)
+        qr_y = pdf.y - 64
+        _draw(qr_drawing, c, LEFT, qr_y)
+        pdf.text(LEFT + 64, qr_y + 44, "منظومة الفاتورة الإلكترونية", font="Amiri-Bold", size=9.5, align="l", color=MUTED)
+        pdf.text(LEFT + 64, qr_y + 28, f"UUID: {doc['eta_uuid']}", size=8.5, align="l", color=MUTED)
+        pdf.text(LEFT + 64, qr_y + 14, f"Long ID: {doc.get('eta_long_id') or '—'}", size=8.5, align="l", color=MUTED)
     pdf.y = min(sub_y, pdf.y - 44) - 6
     pdf.rule(pdf.y)
     pdf.y -= 22
@@ -501,6 +515,9 @@ def build_document_pdf(doc: Dict[str, Any]) -> bytes:
     c.roundRect(LEFT, pdf.y - 30, box_w, 32, 5, stroke=0, fill=1)
     pdf.text(LEFT + box_w - 10, pdf.y - 20, "الإجمالي", font="Amiri-Bold", size=12.5)  # type: ignore
     pdf.text(LEFT + 10, pdf.y - 20, f"{fmt_money(doc['total'])} {CURRENCY}", font="Amiri-Bold", size=13, align="l", color=ACCENT)
+    # العملة الأجنبية (إن وجدت): المبلغ الأجنبي وسعر الصرف لحظة الإصدار
+    if doc.get("currency_code") and doc.get("foreign_total"):
+        pdf.text(LEFT + 10, pdf.y - 38, f"{fmt_money(doc['foreign_total'])} {doc['currency_code']} @ {fmt_money(doc['exchange_rate'])}", size=11, align="l", color=MUTED)
     pdf.y -= 46
 
     # ---- notes
@@ -670,6 +687,53 @@ def build_tables_xlsx(title: str, subtitle: str, tables: Iterable[Table]) -> byt
     out = io.BytesIO()
     wb.save(out)
     return out.getvalue()
+
+
+def build_tables_pdf(title: str, subtitle: str, tables: Iterable[Table]) -> bytes:
+    """تقرير PDF عام: جداول RTL بنفس عقد build_tables_xlsx (text/int/money)."""
+    pdf = _Pdf(title)
+    c = pdf.c
+    pdf.text(RIGHT, pdf.y - 16, COMPANY_NAME, font="Amiri-Bold", size=18)
+    pdf.text(LEFT, pdf.y - 16, title, font="Amiri-Bold", size=18, align="l", color=ACCENT)
+    pdf.y -= 34
+    pdf.text(RIGHT, pdf.y, subtitle, size=11, color=MUTED)
+    pdf.y -= 20
+    for name, headers, rows in tables:
+        pdf.ensure(60)
+        pdf.text(RIGHT, pdf.y, name, font="Amiri-Bold", size=13)
+        pdf.y -= 10
+        # الأعمدة: أول عمود في أقصى اليمين، والعرض يُقسم بالتساوي ما عدا الأول (نص)
+        n = len(headers)
+        first_w = min(0.4 * CONTENT_W, max(110.0, CONTENT_W / max(2, n)))
+        other_w = (CONTENT_W - first_w) / max(1, n - 1)
+        widths = [first_w] + [other_w] * (n - 1)
+
+        def header() -> None:
+            c.setFillColor(HEAD_BG)
+            c.rect(LEFT, pdf.y - 6, CONTENT_W, 20, stroke=0, fill=1)
+            x = RIGHT
+            for h, w in zip(headers, widths):
+                pdf.text(x - 4, pdf.y, h, font="Amiri-Bold", size=10, color=MUTED)  # type: ignore
+                x -= w
+            pdf.y -= 22
+
+        header()
+        for row in rows:
+            pdf.ensure(22, header)
+            x = RIGHT
+            for (kind, value), w in zip(row, widths):
+                if kind == "money":
+                    shown = fmt_money(value)
+                elif kind == "int":
+                    shown = fmt_int(value)
+                else:
+                    shown = str(value if value is not None else "—")
+                pdf.text(x - 4, pdf.y, shown, size=10)
+                x -= w
+            pdf.rule(pdf.y - 7)
+            pdf.y -= 20
+        pdf.y -= 12
+    return pdf.finish()
 
 
 def decorate_template_xlsx(content: bytes, required_titles: Sequence[str], yes_no_title: Optional[str] = "نشط") -> bytes:

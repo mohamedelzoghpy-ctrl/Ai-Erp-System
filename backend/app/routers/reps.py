@@ -2,7 +2,8 @@
 
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
@@ -39,6 +40,11 @@ def list_reps(
     for r in q.order_by(RA.id).all():
         item = schemas.SalesRepOut.model_validate(r)
         item.branch_ids = branch_map.get(r.id, [])  # type: ignore[union-attr]
+        if r.user_id:
+            item.user_id = r.user_id  # type: ignore[union-attr]
+            linked = db.get(models.User, r.user_id)
+            if linked is not None:
+                item.username = linked.username  # type: ignore[union-attr]
         out.append(item)
     return out
 
@@ -94,6 +100,11 @@ def create_rep(
 def _rep_out(db: Session, rep: models.SalesRep) -> schemas.SalesRepOut:
     item = schemas.SalesRepOut.model_validate(rep)
     item.branch_ids = [a.branch_id for a in rep.branch_access]  # type: ignore[union-attr]
+    if rep.user_id:
+        item.user_id = rep.user_id  # type: ignore[union-attr]
+        linked = db.get(models.User, rep.user_id)
+        if linked is not None:
+            item.username = linked.username  # type: ignore[union-attr]
     return item
 
 
@@ -142,3 +153,219 @@ def delete_rep(
     audit(db, user, "delete", "sales_rep", None, f"deleted {code} ({name})")
     db.commit()
     return None
+
+
+# ================================================================ تطبيق المندوبين
+from fastapi import Body  # noqa: E402
+from ..security import hash_password  # noqa: E402
+from ..deps import get_current_user  # noqa: E402
+from ..accounting import local_today  # noqa: E402
+from sqlalchemy import func as _func  # noqa: E402
+from datetime import timedelta as _td  # noqa: E402
+
+
+def _rep_for_user(db, user) -> "models.SalesRep":
+    rep = db.query(models.SalesRep).filter(
+        models.SalesRep.company_id == db.info["company_id"],
+        models.SalesRep.user_id == user.id,
+        models.SalesRep.is_active.is_(True),
+    ).first()
+    if rep is None:
+        raise HTTPException(403, "هذا الحساب غير مرتبط بمندوب — اطلب من الإدارة الربط")
+    return rep
+
+
+@router.put("/{rep_id}/link-user", status_code=200)
+def link_rep_user(
+    rep_id: int,
+    payload: dict = Body(...),
+    db: Session = Depends(get_db),
+    user: models.User = Depends(require_manager),
+):
+    """ربط المندوب بحساب دخول لتطبيق الموبايل: ينشئ مستخدم staff بصلاحيات البيع
+    (أو يربط مستخدمًا قائمًا بالاسم) ويعيد بيانات الدخول مرة واحدة."""
+    rep = _rep_query(db, db.info["company_id"]).filter(models.SalesRep.id == rep_id).first()
+    if rep is None:
+        raise HTTPException(404, "المندوب غير موجود")
+    if rep.user_id is not None and not payload.get("force"):
+        raise HTTPException(409, "المندوب مرتبط بحساب بالفعل (force=true لإعادة الربط)")
+    username = str(payload.get("username") or "").strip().lower()
+    password = str(payload.get("password") or "")
+    if not (username and len(password) >= 8):
+        raise HTTPException(422, "اسم مستخدم وكلمة سر (8+ أحرف) مطلوبان")
+    existing_user = db.query(models.User).filter(models.User.username == username).first()
+    if existing_user is not None:
+        if existing_user.is_platform_admin:  # type: ignore
+            raise HTTPException(403, "لا يمكن ربط مدير المنصة بمندوب")
+        # فك أي ربط سابق لنفس المستخدم ثم اربطه
+        db.query(models.SalesRep).filter(models.SalesRep.user_id == existing_user.id).update({"user_id": None})
+        target = existing_user
+        created = False
+    else:
+        branch_ids = payload.get("branch_ids") or []
+        target = models.User(username=username, full_name=rep.name,
+                             hashed_password=hash_password(password), role="staff")
+        db.add(target)
+        db.flush()
+        company_id = db.info["company_id"]
+        # عضوية الشركة + شركة نشطة — شرطا الدخول عبر get_current_user
+        db.add(models.UserCompanyMembership(user_id=target.id, company_id=company_id, role="staff"))
+        target.active_company_id = company_id  # type: ignore
+        for bid in branch_ids:
+            db.add(models.UserBranchAccess(user_id=target.id, branch_id=bid))
+        created = True
+    rep.user_id = target.id  # type: ignore
+    audit(db, user, "update", "sales_rep", rep,
+          f"ربط حساب دخول للتطبيق: {username}{' (جديد)' if created else ' (قائم)'}")
+    db.commit()
+    return {"rep_id": rep.id, "username": username, "created": created,
+            "note": "أدخل هذه البيانات في تطبيق المندوب"}
+
+
+@router.get("/me")
+def me_profile(db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    rep = _rep_for_user(db, user)
+    return {
+        "rep_id": rep.id, "name": rep.name, "code": rep.code, "phone": rep.phone,
+        "commission_percent": rep.commission_percent,
+    }
+
+
+@router.get("/me/customers")
+def me_customers(db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    """عملاء الشركة كما يراهم المندوب: الرصيد + الحد الائتماني + قائمة أسعار كل عميل."""
+    from ..accounts import party_balances
+    rep = _rep_for_user(db, user)
+    customers = db.query(models.Customer).filter(
+        models.Customer.company_id == db.info["company_id"], models.Customer.is_active.is_(True)
+    ).order_by(models.Customer.name).all()
+    balances = party_balances(db, "customer", [c.id for c in customers] or [0])
+    lists = {pl.id: pl.name for pl in db.query(models.PriceList).filter(
+        models.PriceList.company_id == db.info["company_id"]).all()}
+    return [{
+        "id": c.id, "name": c.name, "phone": c.phone, "code": c.code,
+        "balance": balances.get(c.id, 0),
+        "credit_limit": c.credit_limit,
+        "price_list_id": c.price_list_id,
+        "price_list_name": lists.get(c.price_list_id) if c.price_list_id else None,
+    } for c in customers]
+
+
+@router.get("/me/summary")
+def me_summary(
+    days: int = Query(30, ge=1, le=90),
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """ملخص اليوم والشهر للمندوب: فواتير اليوم، تحصيلات اليوم، عمولة الفترة."""
+    from ..accounts import party_balances
+    rep = _rep_for_user(db, user)
+    from ..accounting import local_today
+    from ..exports import LOCAL_TZ
+    from datetime import datetime as _dt, time as _time, timezone as _tz
+    today = local_today()
+    # حدود اليوم/الفترة بالتوقيت المحلي محوّلة إلى UTC ساذج — تطابق ما يخزنه السيرفر
+    day_start_local = _dt.combine(today, _time.min, tzinfo=LOCAL_TZ)
+    today_start_u = day_start_local.astimezone(_tz.utc).replace(tzinfo=None)
+    today_end_u = (day_start_local + _td(days=1)).astimezone(_tz.utc).replace(tzinfo=None)
+    period_start_u = (day_start_local - _td(days=days - 1)).astimezone(_tz.utc).replace(tzinfo=None)
+
+    SO = models.SalesOrder
+    # بيانات المندوب الخاصة به: مفلترة صراحةً بـ company_id و rep_id، فتتجاوز
+    # نطاق الفروع (المندوب الميداني يرى أوامره حتى لو صُرفت من مخزن خارج فرعه).
+    orders_today = db.query(_func.count(SO.id), _func.coalesce(_func.sum(SO.total_amount), 0)).filter(
+        SO.company_id == db.info["company_id"], SO.rep_id == rep.id,
+        SO.status == "confirmed",
+        SO.updated_at >= today_start_u, SO.updated_at < today_end_u,
+    ).execution_options(ignore_tenant_scope=True).one()
+    P = models.Payment
+    collected_today = db.query(_func.coalesce(_func.sum(P.amount), 0)).filter(
+        P.company_id == db.info["company_id"], P.status == "posted",
+        P.created_by == user.id,
+        P.created_at >= today_start_u, P.created_at < today_end_u,
+    ).execution_options(ignore_tenant_scope=True).scalar() or 0
+    gross = db.query(_func.coalesce(_func.sum(SO.total_amount), 0)).filter(
+        SO.company_id == db.info["company_id"], SO.rep_id == rep.id,
+        SO.status == "confirmed", SO.updated_at >= period_start_u,
+    ).execution_options(ignore_tenant_scope=True).scalar() or 0
+    SR = models.SalesReturn
+    returns_val = db.query(_func.coalesce(_func.sum(SR.total_amount - SR.refund_amount), 0)).filter(
+        SR.company_id == db.info["company_id"], SR.rep_id == rep.id,
+        SR.created_at >= period_start_u,
+    ).execution_options(ignore_tenant_scope=True).scalar() or 0
+    net = float(gross) - float(returns_val)
+    return {
+        "today_orders": orders_today[0] or 0,
+        "today_sales": float(orders_today[1] or 0),
+        "today_collected": float(collected_today),
+        "period_days": days,
+        "period_gross": float(gross),
+        "period_returns": float(returns_val),
+        "period_net": net,
+        "commission_percent": float(rep.commission_percent or 0),
+        "period_commission": round(net * float(rep.commission_percent or 0) / 100.0, 2),
+    }
+
+
+@router.get("/me/notifications")
+def me_notifications(
+    unread_only: bool = False,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    rep = _rep_for_user(db, user)
+    q = db.query(models.RepNotification).filter(models.RepNotification.rep_id == rep.id)
+    if unread_only:
+        q = q.filter(models.RepNotification.read_at.is_(None))
+    rows = q.order_by(models.RepNotification.id.desc()).limit(100).all()
+    return [{
+        "id": n.id, "kind": n.kind, "title": n.title, "body": n.body,
+        "ref_id": n.ref_id, "read": n.read_at is not None,
+        "created_at": n.created_at.isoformat() if n.created_at else None,
+    } for n in rows]
+
+
+@router.post("/me/notifications/{notification_id}/read", status_code=204)
+def mark_notification_read(
+    notification_id: int,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    rep = _rep_for_user(db, user)
+    n = db.query(models.RepNotification).filter(
+        models.RepNotification.id == notification_id, models.RepNotification.rep_id == rep.id
+    ).first()
+    if n is None:
+        raise HTTPException(404, "التنبيه غير موجود")
+    if n.read_at is None:
+        from datetime import datetime as _dt, timezone as _tz
+        n.read_at = _dt.now(_tz.utc)
+        db.commit()
+    return None
+
+
+class DeviceIn(BaseModel):
+    fcm_token: str = Field(min_length=20, max_length=255)
+    platform: str = Field(default="android", pattern="^(android|ios)$")
+
+
+@router.post("/me/devices", status_code=201)
+def register_device(
+    payload: DeviceIn,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """تسجيل/تجديد جهاز المندوب (توكن FCM) — idempotent لكل (مندوب، توكن)."""
+    rep = _rep_for_user(db, user)
+    dev = db.query(models.RepDevice).filter(
+        models.RepDevice.rep_id == rep.id, models.RepDevice.fcm_token == payload.fcm_token
+    ).first()
+    if dev is None:
+        dev = models.RepDevice(company_id=db.info["company_id"], rep_id=rep.id,
+                               fcm_token=payload.fcm_token, platform=payload.platform)
+        db.add(dev)
+    dev.platform = payload.platform  # type: ignore
+    from datetime import datetime as _dt, timezone as _tz
+    dev.last_seen_at = _dt.now(_tz.utc)  # type: ignore
+    db.commit()
+    return {"device_id": dev.id, "registered": True}

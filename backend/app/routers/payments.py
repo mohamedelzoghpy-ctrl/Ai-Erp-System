@@ -5,6 +5,7 @@ audit trail stays intact. Voided payments no longer count towards balances.
 """
 
 from datetime import date, datetime, timezone
+from decimal import Decimal
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -36,6 +37,7 @@ def _out(p: models.Payment) -> models.Payment:
     p.party_name = party.name if party else None  # type: ignore[attr-defined]
     p.company_name = p.company.name if p.company else None  # type: ignore[attr-defined]
     p.safe_branch_name = (p.safe.branch.name if p.safe and p.safe.branch else None)  # type: ignore[attr-defined]
+    p.currency_code = p.currency.code if getattr(p, "currency", None) else None  # type: ignore[attr-defined]
     return p
 
 
@@ -44,6 +46,18 @@ def _get_or_404(db: Session, payment_id: int) -> models.Payment:
     if p is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Payment {payment_id} not found")
     return p
+
+
+def _party_in_company(db: Session, model, party_id: int, label: str):
+    """جلب طرف (عميل/مورد) مقيّدًا بالشركة الحالية — Session.get يتجاوز فلتر العزل."""
+    obj = (
+        db.query(model)
+        .filter(model.id == party_id, model.company_id == db.info["company_id"])
+        .first()
+    )
+    if obj is None:
+        raise HTTPException(422, f"{label} {party_id} does not exist")
+    return obj
 
 
 # ------------------------------------------------------------ بنود القبض والصرف
@@ -89,10 +103,10 @@ def create_payment_category(
 def create_payment(
     payload: schemas.PaymentCreate, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)
 ):
-    if payload.customer_id is not None and db.get(models.Customer, payload.customer_id) is None:
-        raise HTTPException(422, f"Customer {payload.customer_id} does not exist")
-    if payload.supplier_id is not None and db.get(models.Supplier, payload.supplier_id) is None:
-        raise HTTPException(422, f"Supplier {payload.supplier_id} does not exist")
+    if payload.customer_id is not None:
+        _party_in_company(db, models.Customer, payload.customer_id, "Customer")
+    if payload.supplier_id is not None:
+        _party_in_company(db, models.Supplier, payload.supplier_id, "Supplier")
     category = None
     if payload.category_id is not None:
         category = db.get(models.PaymentCategory, payload.category_id)
@@ -152,15 +166,11 @@ def create_payment(
 
     counter_acc_id = None
     if payload.customer_id is not None:
-        cust = db.get(models.Customer, payload.customer_id)
-        if cust is None:
-            raise HTTPException(422, "Customer not found")
+        cust = _party_in_company(db, models.Customer, payload.customer_id, "Customer")
         link_party_coa(db, cust, company_id, is_customer=True)
         counter_acc_id = cust.chart_account_id
     elif payload.supplier_id is not None:
-        supp = db.get(models.Supplier, payload.supplier_id)
-        if supp is None:
-            raise HTTPException(422, "Supplier not found")
+        supp = _party_in_company(db, models.Supplier, payload.supplier_id, "Supplier")
         link_party_coa(db, supp, company_id, is_customer=False)
         counter_acc_id = supp.chart_account_id
     else:
@@ -180,6 +190,52 @@ def create_payment(
         import logging
         logging.getLogger(__name__).warning("Payment: could not provision CoA links (safe=%s party=%s); skipping double-entry", payload.safe_id or payload.bank_id, payload.customer_id or payload.supplier_id)
 
+    # ---- العملة الأجنبية ----
+    # currency معطاة → amount الوارد يُتجاهل ويُحسب: settle_base (تسوية الطرف بالسعر الموزون)
+    # و cash_base (النقدية الفعلية بالسعر الحالي) — والفرق فرق صرف يُرحّل داخل قيد السند نفسه.
+    currency = rate = None
+    foreign_amount = None
+    settle_base = cash_base = payload.amount
+    fx_gain_loss = Decimal("0")
+    if getattr(payload, "currency_id", None):
+        from ..pricing import resolve_currency
+        currency, rate = resolve_currency(db, payload.currency_id)
+        if currency is None:
+            raise HTTPException(422, "عملة غير صالحة أو غير نشطة")
+        foreign_amount = payload.foreign_amount or (Decimal(str(payload.amount)) / rate).quantize(Decimal("0.01"))
+        foreign_amount = Decimal(str(foreign_amount)).quantize(Decimal("0.01"))
+        cash_base = (foreign_amount * rate).quantize(Decimal("0.01"))
+        settle_base = cash_base
+        if payload.customer_id is not None or payload.supplier_id is not None:
+            PartyOrder = models.SalesOrder if is_receipt else models.PurchaseOrder
+            party_col = PartyOrder.customer_id if is_receipt else PartyOrder.supplier_id
+            party_orders = db.query(PartyOrder).filter(
+                PartyOrder.company_id == company_id,
+                party_col == (payload.customer_id or payload.supplier_id),
+                PartyOrder.status == ("confirmed" if is_receipt else "received"),
+                PartyOrder.currency_id == currency.id,  # type: ignore
+            ).all()
+            foreign_invoiced = sum((Decimal(str(o.foreign_total or 0)) for o in party_orders), Decimal("0"))
+            prev_pays = db.query(models.Payment).filter(
+                models.Payment.company_id == company_id,
+                models.Payment.status == "posted",
+                models.Payment.currency_id == currency.id,  # type: ignore
+                (models.Payment.customer_id == payload.customer_id) if is_receipt else (models.Payment.supplier_id == payload.supplier_id),
+            ).all()
+            foreign_paid = sum((Decimal(str(pp.foreign_amount or 0)) for pp in prev_pays), Decimal("0"))
+            party_foreign = foreign_invoiced - foreign_paid
+            if party_foreign > 0:
+                from ..accounts import party_balances as _pb
+                party_base = _pb(db, "customer" if is_receipt else "supplier",
+                                 [payload.customer_id or payload.supplier_id]).get(payload.customer_id or payload.supplier_id, 0)
+                weighted = Decimal(str(party_base)) / party_foreign
+                applied = min(foreign_amount, party_foreign)
+                settle_base = (applied * weighted + (foreign_amount - applied) * rate).quantize(Decimal("0.01"))
+                # اتجاه الربح يتبع الجهة: قبض (العميل يسدد لنا) → صعود السعر ربح؛
+                # دفع (نحن نسدد لمورد) → هبوط السعر ربح.
+                fx_gain_loss = (applied * ((rate - weighted) if is_receipt else (weighted - rate))).quantize(Decimal("0.01"))
+                cash_base = (foreign_amount * rate).quantize(Decimal("0.01"))
+
     p = models.Payment(
         kind="receipt" if is_receipt else "payment",  # type: ignore
         customer_id=payload.customer_id,  # type: ignore
@@ -187,11 +243,14 @@ def create_payment(
         safe_id=payload.safe_id,  # type: ignore
         bank_id=payload.bank_id,  # type: ignore
         category_id=payload.category_id,  # type: ignore
-        amount=payload.amount,  # type: ignore
+        amount=settle_base,  # type: ignore
         method=payload.method,  # type: ignore
         reference=(payload.reference or "").strip() or None,  # type: ignore
         notes=payload.notes,  # type: ignore
         paid_on=paid_on,  # type: ignore
+        currency_id=(currency.id if currency else None),  # type: ignore
+        exchange_rate=(rate if currency else None),  # type: ignore
+        foreign_amount=foreign_amount,  # type: ignore
         created_by=user.id,  # type: ignore
     )
     db.add(p)
@@ -211,19 +270,58 @@ def create_payment(
         ]
 
     if post_je:
+        # الدفع بعملة أجنبية: النقدية بسعر السداد الفعلي، وتسوية الطرف بالسعر الموزون،
+        # والفرق سطر ثالث في القيد نفسه (ربح صرف 4240 / خسارة 5350) — القيد موزون دائمًا.
+        description = f"Payment {p.id}: {p.reference or 'No Ref'}"
+        if currency is not None and fx_gain_loss != 0:
+            items = [dict(it) for it in items]
+            for it in items:
+                it["debit"] = cash_base if it.get("debit") else it.get("debit", 0)
+                it["credit"] = cash_base if it.get("credit") else it.get("credit", 0)
+            # تصحيح الاتجاهات: سطر النقدية بالسعر الفعلي، وسطر الطرف بالتسوية
+            for it in items:
+                if it["account_id"] == cash_acc_id:
+                    if it.get("debit"):
+                        it["debit"] = cash_base; it["credit"] = 0
+                    else:
+                        it["credit"] = cash_base; it["debit"] = 0
+                else:
+                    if it.get("debit"):
+                        it["debit"] = settle_base; it["credit"] = 0
+                    else:
+                        it["credit"] = settle_base; it["debit"] = 0
+            diff = sum((it["debit"] for it in items), Decimal("0")) - sum((it["credit"] for it in items), Decimal("0"))
+            fx_code = "4240" if fx_gain_loss > 0 else "5350"
+            fx_acc = db.query(models.ChartAccount).filter(
+                models.ChartAccount.company_id == db.info["company_id"], models.ChartAccount.code == fx_code
+            ).first()
+            if fx_acc is None or fx_acc.is_group:
+                raise HTTPException(409, f"حساب فرق الصرف ({fx_code}) غير موجود — حدّث شجرة الحسابات")
+            if diff > 0:
+                items.append({"account_id": fx_acc.id, "debit": 0, "credit": diff})
+            elif diff < 0:
+                items.append({"account_id": fx_acc.id, "debit": -diff, "credit": 0})
+            description = f"Payment {p.id}: {p.reference or 'No Ref'} (FX {currency.code} @{rate})"
+        if currency is not None:
+            description = f"{description} (FX {currency.code} @{rate})"
         AccountingEngine.create_entry(
             db=db,
             company_id=db.info["company_id"],
             user_id=user.id,
-            description=f"Payment {p.id}: {p.reference or 'No Ref'}",
+            description=description,
             items=items,
-            reference=p.reference,
+            # مرجع deterministic فريد: الإلغاء يجد القيد الأصلي به بدقة بدل مطابقة نص الوصف
+            reference=f"PAY-{p.id}",
             date=paid_on,
         )
+        if currency is not None and fx_gain_loss:
+            audit(db, user, "create", "fx_adjustment", p,
+                  f"فرق صرف {'ربح' if fx_gain_loss > 0 else 'خسارة'} {fx_gain_loss} ({currency.code} @{rate})")
 
     # Keep legacy balance update for backward compatibility if needed,
     # though AccountingEngine now handles ChartAccount.balance
-    delta = payload.amount if is_receipt else -payload.amount
+    # (بعملة أجنبية: النقدية الفعلية cash_base قد تختلف عن التسوية settle_base)
+    delta = (cash_base if currency is not None else payload.amount) if is_receipt else -(cash_base if currency is not None else payload.amount)
     if payload.safe_id is not None:
         safe = db.get(models.Safe, payload.safe_id)
         if safe: safe.balance = (safe.balance or 0) + delta
@@ -322,10 +420,18 @@ def void_payment(payment_id: int, db: Session = Depends(get_db), user: models.Us
 
     counter_acc_id = None
     if p.customer_id is not None:
-        cust = db.get(models.Customer, p.customer_id)
+        cust = (
+            db.query(models.Customer)
+            .filter(models.Customer.id == p.customer_id, models.Customer.company_id == db.info["company_id"])
+            .first()
+        )
         counter_acc_id = cust.chart_account_id if cust else None
     elif p.supplier_id is not None:
-        supp = db.get(models.Supplier, p.supplier_id)
+        supp = (
+            db.query(models.Supplier)
+            .filter(models.Supplier.id == p.supplier_id, models.Supplier.company_id == db.info["company_id"])
+            .first()
+        )
         counter_acc_id = supp.chart_account_id if supp else None
     else:
         # Party-less voucher: reverse against the general income / misc expense account.
@@ -336,22 +442,37 @@ def void_payment(payment_id: int, db: Session = Depends(get_db), user: models.Us
         counter_acc_id = acc.id if acc else None
 
     if cash_acc_id and counter_acc_id:
+        # القيد الأصلي يحمل مرجع PAY-{id} الفريد؛ للسندات القديمة (قبل المرجع) نallback
+        # على مطابقة الوصف مع استبعاد قيود الإلغاء نفسها.
         existing_je = db.query(models.JournalEntry).filter(
             models.JournalEntry.company_id == db.info["company_id"],
-            models.JournalEntry.description.like(f"Payment {p.id}:%"),
+            models.JournalEntry.reference == f"PAY-{p.id}",
         ).first()
+        if existing_je is None:
+            existing_je = db.query(models.JournalEntry).filter(
+                models.JournalEntry.company_id == db.info["company_id"],
+                models.JournalEntry.description.like(f"Payment {p.id}:%"),
+                ~models.JournalEntry.reference.like("VOID-%"),
+            ).first()
         if existing_je is not None:
-            amount = p.amount
-            if p.kind == "receipt":  # reversal: Debit counter, Credit cash
+            if p.currency_id is not None:
+                # سند أجنبي: اقلب أسطر القيد الأصلي حرفيًا (نقدية + تسوية + فرق صرف)
                 items = [
-                    {"account_id": counter_acc_id, "debit": amount, "credit": 0},
-                    {"account_id": cash_acc_id, "debit": 0, "credit": amount},
+                    {"account_id": ji.account_id, "debit": ji.credit, "credit": ji.debit}
+                    for ji in existing_je.items
                 ]
-            else:  # reversal: Debit cash, Credit counter
-                items = [
-                    {"account_id": cash_acc_id, "debit": amount, "credit": 0},
-                    {"account_id": counter_acc_id, "debit": 0, "credit": amount},
-                ]
+            else:
+                amount = p.amount
+                if p.kind == "receipt":  # reversal: Debit counter, Credit cash
+                    items = [
+                        {"account_id": counter_acc_id, "debit": amount, "credit": 0},
+                        {"account_id": cash_acc_id, "debit": 0, "credit": amount},
+                    ]
+                else:  # reversal: Debit cash, Credit counter
+                    items = [
+                        {"account_id": cash_acc_id, "debit": amount, "credit": 0},
+                        {"account_id": counter_acc_id, "debit": 0, "credit": amount},
+                    ]
             AccountingEngine.create_entry(
                 db=db,
                 company_id=db.info["company_id"],
@@ -363,7 +484,9 @@ def void_payment(payment_id: int, db: Session = Depends(get_db), user: models.Us
             )
 
     # Reverse legacy safe/bank balance.
-    delta = p.amount if p.kind == "receipt" else -p.amount
+    # (سند أجنبي: النقدية الفعلية = الأجنبي × سعره — قد تختلف عن amount التسوية)
+    p_cash = (Decimal(str(p.foreign_amount)) * Decimal(str(p.exchange_rate))).quantize(Decimal("0.01")) if p.currency_id is not None else p.amount
+    delta = p_cash if p.kind == "receipt" else -p_cash
     if p.safe_id is not None:
         safe = db.get(models.Safe, p.safe_id)
         if safe is not None:
@@ -382,7 +505,7 @@ def void_payment(payment_id: int, db: Session = Depends(get_db), user: models.Us
 def _statement(db: Session, kind: str, party_id: int, date_from: Optional[date], date_to: Optional[date]) -> schemas.Statement:
     if date_from and date_to and date_from > date_to:
         raise HTTPException(422, "date_from must not be after date_to")
-    stmt = accounts.build_statement(db, kind, party_id, date_from, date_to)
+    stmt = accounts.build_statement(db, kind, party_id, date_from, date_to, company_id=db.info["company_id"])
     if stmt is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"{kind.capitalize()} {party_id} not found")
     return stmt

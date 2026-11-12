@@ -727,7 +727,7 @@ def undo_warehouse_stock_xlsx(warehouse_id: int, db: Session = Depends(get_db), 
         change = per_pid[pid]
         stock.move_stock(db, product, warehouse_id, change, "stock_import_undo", f"stock-undo:{ts}:{batch_ref}")
         applied += 1
-        audit(db, user, "stock_import_undo", "warehouse", w, f"stock undo «{product.name}» في «{w.name}»: {change:+d} (تراجع عن {batch_ref})")
+        audit(db, user, "stock_import_undo", "warehouse", w, f"stock undo «{product.name}» في «{w.name}»: {stock.q3(change):+} (تراجع عن {batch_ref})")
     db.commit()
     return {"warehouse_id": warehouse_id, "undone_batch": batch_ref, "products": applied, "changed_qty": sum(per_pid.values())}
 

@@ -1,10 +1,77 @@
 from typing import List, Optional
+from datetime import date as _date, datetime
 from decimal import Decimal
+from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from . import models, schemas
 from .audit import audit
 from .codegen import unique_code
+
+
+def local_today() -> _date:
+    """اليوم حسب توقيت التشغيل المحلي (نفس مرجع LOCAL_TZ في exports — بوابة التراخيص)."""
+    try:
+        from .exports import LOCAL_TZ
+        return datetime.now(LOCAL_TZ).date()
+    except Exception:
+        return _date.today()
+
+
+def ensure_fiscal_open(db: Session, company_id: int, entry_date: _date) -> None:
+    """ترحيل في سنة مالية أو شهر مالي مقفول ممنوع → 409.
+
+    التواريخ التي لا تغطيها أي سنة/شهر مالي تبقى متاحة (لم يتغير السلوك القديم)."""
+    closed = db.query(models.FiscalYear).filter(
+        models.FiscalYear.company_id == company_id,
+        models.FiscalYear.is_closed.is_(True),
+        models.FiscalYear.start_date <= entry_date,
+        models.FiscalYear.end_date >= entry_date,
+    ).first()
+    if closed is not None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"السنة المالية «{closed.name}» مقفولة — لا يمكن الترحيل بتاريخ {entry_date}",
+        )
+    closed_period = db.query(models.FiscalPeriod).filter(
+        models.FiscalPeriod.company_id == company_id,
+        models.FiscalPeriod.is_closed.is_(True),
+        models.FiscalPeriod.start_date <= entry_date,
+        models.FiscalPeriod.end_date >= entry_date,
+    ).first()
+    if closed_period is not None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"الشهر المالي «{closed_period.name}» مقفول — لا يمكن الترحيل بتاريخ {entry_date}",
+        )
+
+
+# أكواد حسابات ضريبة القيمة المضافة (تُستخدم في الطلبات والنقاط البيع والتقارير)
+VAT_OUTPUT_CODE = "2130"  # ضريبة القيمة المضافة (مخرجات) — خصوم
+VAT_INPUT_CODE = "1145"   # ضريبة القيمة المضافة على المشتريات (مدخلات) — أصول قابلة للاسترداد
+
+
+def postable_account(db: Session, company_id: int, account_id: int) -> "models.ChartAccount":
+    """حساب قابل للترحيل: موجود، ضمن الشركة، وليس حسابًا مجموعيًا (رأس شجرة).
+
+    نقطة الدفاع المركزية لكل مسارات القيود — تغلق باب الترحيل على حسابات
+    مجموعة أو حسابات تابعة لشركة أخرى."""
+    acc = (
+        db.query(models.ChartAccount)
+        .filter(models.ChartAccount.id == account_id, models.ChartAccount.company_id == company_id)
+        .first()
+    )
+    if acc is None:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            f"الحساب {account_id} غير موجود ضمن هذه الشركة",
+        )
+    if acc.is_group:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            f"لا يمكن الترحيل على حساب مجموعي «{acc.code} — {acc.name}» — اختر حسابًا فرعيًا",
+        )
+    return acc
 
 
 def seed_default_cost_centers(db, company_id: int) -> int:
@@ -96,7 +163,7 @@ def link_party_coa(db, party: "models.Supplier | models.Customer", company_id: i
     if party.chart_account_id:
         return
     seed_default_coa(db, company_id)
-    code = "1100" if is_customer else "2100"
+    code = "1120" if is_customer else "2110"  # ذمم العملاء / ذمم الموردين — حسب شجرة الحسابات الحالية
     acc = db.query(models.ChartAccount).filter(
         models.ChartAccount.company_id == company_id, models.ChartAccount.code == code
     ).first()
@@ -117,13 +184,25 @@ class AccountingEngine:
         description: str,
         items: List[dict],
         reference: Optional[str] = None,
-        date = None
+        date = None,
+        status: str = "posted",
     ):
         """
-        Creates a balanced journal entry and updates the balances of the affected accounts.
+        Creates a balanced journal entry. With status="pending_approval" the rows are
+        created but account balances are NOT touched until approve_entry runs.
         items: List of { "account_id": int, "debit": Decimal, "credit": Decimal, "cost_center_id": int, "notes": str }
         """
-        # Validate balance up front
+        # توحيد التاريخ: نص ISO → date (SQLite يرفض النصوص؛ Postgres يقبلها بالتحويل الضمني فقط)
+        if isinstance(date, str):
+            date = _date.fromisoformat(date)
+        if date is None:
+            date = local_today()
+        ensure_fiscal_open(db, company_id, date)
+
+        # Validate balance up front — تطبيع الأنواع: القيم قد تأتي نصوصًا من JSON (القيود المتكررة)
+        for item in items:
+            item["debit"] = Decimal(str(item.get("debit") or 0))
+            item["credit"] = Decimal(str(item.get("credit") or 0))
         total_debit = sum((item.get("debit", Decimal("0")) for item in items), Decimal("0"))
         total_credit = sum((item.get("credit", Decimal("0")) for item in items), Decimal("0"))
         if total_debit != total_credit:
@@ -135,13 +214,16 @@ class AccountingEngine:
             created_by=user_id,
             description=description,
             reference=reference,
-            date=date or models.func.current_date()
+            date=date,
+            status=status,
         )
         db.add(db_entry)
         db.flush() # Get entry.id
 
         # 2. Create Journal Items and update account balances
         for item in items:
+            # حسابات المجموعة والحسابات الأجنبية عن الشركة تُرفض مركزيًا هنا
+            acc = postable_account(db, company_id, item["account_id"])
             db_item = models.JournalItem(
                 entry_id=db_entry.id,
                 company_id=company_id,
@@ -153,12 +235,8 @@ class AccountingEngine:
             )
             db.add(db_item)
 
-            # Update the account balance
-            # For Assets/Expenses: Debit increases balance, Credit decreases it.
-            # For Liabilities/Equity/Revenue: Credit increases balance, Debit decreases it.
-            acc = db.query(models.ChartAccount).get(item["account_id"])
-            if not acc:
-                raise ValueError(f"Account {item['account_id']} not found")
+            if status == "pending_approval":
+                continue  # الأرصدة تُطبق عند الاعتماد فقط
 
             delta = item.get("debit", Decimal("0")) - item.get("credit", Decimal("0"))
 
@@ -171,44 +249,58 @@ class AccountingEngine:
         return db_entry
 
     @staticmethod
-    def roll_up_balances(db: Session, company_id: int):
+    def approve_entry(db: Session, company_id: int, entry: "models.JournalEntry", approver_id: Optional[int]) -> "models.JournalEntry":
+        """اعتماد قيد معلّق: تطبيق أثره على أرصدة الحسابات ثم ترحيله."""
+        if entry.status != "pending_approval":
+            raise HTTPException(status.HTTP_409_CONFLICT, "القيد ليس في حالة انتظار اعتماد")
+        ensure_fiscal_open(db, company_id, entry.date)
+        for ji in entry.items:
+            acc = postable_account(db, company_id, ji.account_id)
+            delta = (ji.debit or Decimal("0")) - (ji.credit or Decimal("0"))
+            if acc.type in ("liability", "equity", "revenue"):
+                acc.balance -= delta
+            else:
+                acc.balance += delta
+        entry.status = "posted"  # type: ignore
+        entry.approved_by = approver_id  # type: ignore
+        entry.approved_at = datetime.now()  # type: ignore
+        db.flush()
+        return entry
+
+    @staticmethod
+    def roll_up_balances(db: Session, company_id: int) -> int:
         """
         Recursively updates the balances of group accounts based on their children.
-        This should be called after major updates or as a scheduled task.
+        Exposed via POST /chart-of-accounts/roll-up (manager) — leaves stay authoritative
+        (they are maintained by create_entry); only group headers are recomputed.
+        Returns the number of group accounts updated.
         """
-        # We fetch all accounts for the company
         accounts = db.query(models.ChartAccount).filter(models.ChartAccount.company_id == company_id).all()
 
-        # Build a map of children for each parent
         children_map = {}
         for acc in accounts:
             if acc.parent_id:
                 children_map.setdefault(acc.parent_id, []).append(acc)
 
-        # Bottom-up update: start with accounts that have no children (leaf nodes)
-        # In a real scenario, we would use a recursive function or a topological sort.
-        def calculate_balance(acc_id):
-            acc = db.query(models.ChartAccount).get(acc_id)
-            children = children_map.get(acc_id, [])
+        changed = 0
 
+        def calculate_balance(acc) -> Decimal:
+            nonlocal changed
+            children = children_map.get(acc.id, [])
             if not children:
-                # Leaf account: balance is already correct from JournalItems
-                return acc.balance
-
-            # Group account: balance is sum of children balances
+                return Decimal(str(acc.balance or 0))
             total = Decimal("0")
             for child in children:
-                total += calculate_balance(child.id)
-
-            acc.balance = total
+                total += calculate_balance(child)
+            if Decimal(str(acc.balance or 0)) != total:
+                acc.balance = total
+                changed += 1
             return total
 
-        # Update all root accounts (those without parents)
-        roots = [a for a in accounts if a.parent_id is None]
-        for root in roots:
-            calculate_balance(root.id)
+        for root in (a for a in accounts if a.parent_id is None):
+            calculate_balance(root)
 
-        db.commit()
+        return changed
 
 
 def seed_default_coa(db, company_id: int) -> int:
@@ -241,6 +333,7 @@ def seed_default_coa(db, company_id: int) -> int:
         ("2111", "شيكات مصروفة (Issued Cheques)", "liability", "2100", False),
         ("2120", "مصاريف مستحقة (Accrued Expenses)", "liability", "2100", False),
         ("2130", "ضريبة القيمة المضافة (VAT Payable)", "liability", "2100", False),
+        ("1145", "ضريبة القيمة المضافة على المشتريات (VAT Input)", "asset", "1100", False),
         ("2140", "رواتب مستحقة (Salaries Payable)", "liability", "2100", False),
         ("2200", "الخصوم طويلة الأجل", "liability", "2000", True),
         ("2210", "قروض (Loans Payable)", "liability", "2200", False),

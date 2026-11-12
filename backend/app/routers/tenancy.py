@@ -1,5 +1,7 @@
 """Platform company provisioning and company-scoped organization management."""
 
+import os
+import secrets
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -8,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from .. import models, schemas
 from ..accounting import seed_default_coa, seed_default_cost_centers, seed_default_fiscal_year
+from ..permissions import seed_company_sections
 from ..audit import audit
 from ..codegen import unique_code
 from ..database import get_db
@@ -157,6 +160,8 @@ def create_company(
         seed_default_coa(db, company_obj.id)
         seed_default_cost_centers(db, company_obj.id)
         seed_default_fiscal_year(db, company_obj.id)
+        # الأقسام النظامية الافتراضية للصلاحيات — دون انتظار إعادة تشغيل الخادم.
+        seed_company_sections(db, company_obj.id)
         db.commit()
     except IntegrityError as exc:
         db.rollback()
@@ -254,6 +259,44 @@ def update_platform_company(company_id: int, payload: schemas.CompanyUpdate, db:
     db.commit()
     db.refresh(company)
     audit(db, actor, "update", "company", company, f"{company.code}")
+    return company
+
+
+@platform.put("/companies/{company_id}/license", response_model=schemas.CompanyOut)
+def set_company_license(
+    company_id: int,
+    payload: schemas.CompanyLicenseUpdate,
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(require_platform_admin),
+):
+    """ضبط/تجديد رخصة استخدام الشركة — مدير المنصة + كلمة سر التجديد (سر المورّد).
+
+    تاريخ انتهاء محدد يوقف عمليات العمل بعد مروره، و NULL = غير مقيّد.
+    كلمة السر تُقرأ من متغير البيئة LICENSE_RENEWAL_PASSWORD — بدون ضبطها يتعذر التجديد.
+    """
+    company = db.get(models.Company, company_id)
+    if company is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Company not found")
+
+    expected = os.getenv("LICENSE_RENEWAL_PASSWORD", "")
+    if not expected:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "لم يتم ضبط كلمة سر التجديد على الخادم (LICENSE_RENEWAL_PASSWORD) — لا يمكن التجديد",
+        )
+    if not secrets.compare_digest(payload.license_password, expected):
+        audit(db, actor, "update", "company_license_denied", company, f"محاولة تجديد رخصة «{company.name}» بكلمة سر خاطئة")
+        db.commit()
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "كلمة سر التجديد غير صحيحة")
+
+    old = company.license_until
+    company.license_until = payload.license_until
+    audit(
+        db, actor, "update", "company_license", company,
+        f"رخصة «{company.name}»: {old.isoformat() if old else 'غير مقيّد'} → {payload.license_until.isoformat() if payload.license_until else 'غير مقيّد'}",
+    )
+    db.commit()
+    db.refresh(company)
     return company
 
 @platform.get("/companies/{company_id}/admin", response_model=schemas.UserOut)
@@ -440,7 +483,7 @@ def platform_create_safe(company_id: int, payload: schemas.SafeCreate, db: Sessi
             raise HTTPException(status.HTTP_409_CONFLICT, "Branch safe limit reached")
     code = (payload.code or "").strip() or unique_code(db, models.Safe, company_id, payload.name, "SAFE", max_length=50)
     safe = models.Safe(company_id=company_id, branch_id=branch.id, name=payload.name.strip(), code=code, balance=payload.opening_balance, is_active=payload.is_active)
-    cash_parent = db.query(models.ChartAccount).filter(models.ChartAccount.company_id == company_id, models.ChartAccount.code == "1011").first()
+    cash_parent = db.query(models.ChartAccount).filter(models.ChartAccount.company_id == company_id, models.ChartAccount.code.in_(("1011", "1111"))).first()
     if cash_parent is not None:
         acc = models.ChartAccount(company_id=company_id, code=unique_code(db, models.ChartAccount, company_id, payload.name, "CASH", max_length=50), name=f"Safe: {payload.name.strip()}", type="asset", parent_id=cash_parent.id, is_group=False, balance=payload.opening_balance, is_active=payload.is_active)
         db.add(acc)
@@ -539,7 +582,7 @@ def platform_create_bank(company_id: int, payload: schemas.BankCreate, db: Sessi
         is_active=payload.is_active,
         branch_id=branch_id,
     )
-    bank_parent = db.query(models.ChartAccount).filter(models.ChartAccount.company_id == company_id, models.ChartAccount.code == "1010").first()
+    bank_parent = db.query(models.ChartAccount).filter(models.ChartAccount.company_id == company_id, models.ChartAccount.code.in_(("1010", "1112"))).first()
     if bank_parent is not None:
         acc = models.ChartAccount(company_id=company_id, code=unique_code(db, models.ChartAccount, company_id, payload.name, "BANK", max_length=50), name=f"Bank: {payload.name.strip()}", type="asset", parent_id=bank_parent.id, is_group=False, balance=payload.opening_balance, is_active=payload.is_active)
         db.add(acc)

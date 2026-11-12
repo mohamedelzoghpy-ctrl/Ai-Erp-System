@@ -20,12 +20,18 @@ import jwt
 logger = logging.getLogger("erp.security")
 
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "480"))
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
 
 SECRET_KEY = os.getenv("SECRET_KEY")
 if not SECRET_KEY:
     SECRET_KEY = secrets.token_urlsafe(48)
     logger.warning("SECRET_KEY is not set: using a random key; all tokens are invalidated on restart.")
+elif len(SECRET_KEY) < 32:
+    logger.warning(
+        "SECRET_KEY is shorter than the recommended 32 bytes (%d given) — rotate it with: "
+        "python3 -c \"import secrets; print(secrets.token_urlsafe(48))\"",
+        len(SECRET_KEY),
+    )
 
 _PBKDF2_ITERATIONS = 600_000
 
@@ -57,15 +63,16 @@ def verify_password(password: str, stored: str) -> bool:
 DUMMY_HASH = hash_password(secrets.token_urlsafe(16))
 
 
-def create_access_token(user_id: int, expires_minutes: Optional[int] = None) -> str:
+def create_access_token(user_id: int, expires_minutes: Optional[int] = None, token_version: int = 1) -> str:
+    """توكن يحمل إصدار الجلسة (ver) — رفع الإصدار على المستخدم يبطل كل التوكنات السابقة."""
     expire = datetime.now(timezone.utc) + timedelta(minutes=expires_minutes or ACCESS_TOKEN_EXPIRE_MINUTES)
-    return jwt.encode({"sub": str(user_id), "exp": expire}, SECRET_KEY, algorithm=ALGORITHM)
+    return jwt.encode({"sub": str(user_id), "exp": expire, "ver": token_version}, SECRET_KEY, algorithm=ALGORITHM)
 
 
-def decode_access_token(token: str) -> Optional[int]:
-    """Returns the user id, or None if the token is invalid or expired."""
+def decode_access_token(token: str) -> Optional[dict]:
+    """Returns {id, ver} or None if the token is invalid or expired. ver=1 للتوكنات القديمة."""
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        return int(payload["sub"])
+        return {"id": int(payload["sub"]), "ver": int(payload.get("ver", 1))}
     except (jwt.PyJWTError, KeyError, ValueError):
         return None

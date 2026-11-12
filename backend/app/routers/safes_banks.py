@@ -138,7 +138,7 @@ def create_safe(payload: schemas.SafeCreate, db: Session = Depends(get_db), user
         raise HTTPException(status.HTTP_409_CONFLICT, "Safe code already exists")
     s = models.Safe(company_id=company_id, branch_id=branch.id, name=payload.name.strip(), code=code, balance=payload.opening_balance, is_active=payload.is_active)  # type: ignore
     # Auto-link a Chart of Accounts entry (cash) for this safe
-    cash_parent = db.query(models.ChartAccount).filter(models.ChartAccount.company_id == company_id, models.ChartAccount.code == "1011").first()
+    cash_parent = db.query(models.ChartAccount).filter(models.ChartAccount.company_id == company_id, models.ChartAccount.code.in_(("1011", "1111"))).first()
     if cash_parent is not None:
         acc = models.ChartAccount(company_id=company_id, code=unique_code(db, models.ChartAccount, company_id, payload.name, "CASH", max_length=50), name=f"Safe: {payload.name.strip()}", type="asset", parent_id=cash_parent.id, is_group=False, balance=payload.opening_balance, is_active=payload.is_active)
         db.add(acc)
@@ -204,6 +204,18 @@ def list_banks(branch_id: Optional[int] = None, db: Session = Depends(get_db)):
     return q.order_by(models.Bank.id).all()
 
 
+@banks.get("/{bank_id}", response_model=schemas.BankOut)
+def get_bank(bank_id: int, db: Session = Depends(get_db)):
+    bank = (
+        db.query(models.Bank)
+        .filter(models.Bank.id == bank_id, models.Bank.company_id == db.info["company_id"])
+        .first()
+    )
+    if bank is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Bank {bank_id} not found")
+    return bank
+
+
 @banks.get("/{bank_id}/statement", response_model=schemas.AccountStatementOut)
 def bank_statement(
     bank_id: int,
@@ -237,7 +249,7 @@ def create_bank(payload: schemas.BankCreate, db: Session = Depends(get_db), user
             raise HTTPException(422, "فرع غير موجود في هذه الشركة")
     b = models.Bank(company_id=company_id, name=payload.name.strip(), code=code, account_number=payload.account_number, balance=payload.opening_balance, is_active=payload.is_active, branch_id=branch_id)  # type: ignore
     # Auto-link a Chart of Accounts entry (bank) for this bank
-    bank_parent = db.query(models.ChartAccount).filter(models.ChartAccount.company_id == company_id, models.ChartAccount.code == "1010").first()
+    bank_parent = db.query(models.ChartAccount).filter(models.ChartAccount.company_id == company_id, models.ChartAccount.code.in_(("1010", "1112"))).first()
     if bank_parent is not None:
         acc = models.ChartAccount(company_id=company_id, code=unique_code(db, models.ChartAccount, company_id, payload.name, "BANK", max_length=50), name=f"Bank: {payload.name.strip()}", type="asset", parent_id=bank_parent.id, is_group=False, balance=payload.opening_balance, is_active=payload.is_active)
         db.add(acc)

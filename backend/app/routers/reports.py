@@ -8,7 +8,7 @@ Dates are interpreted as UTC. Each report is also available as an Excel download
 
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import func
@@ -65,6 +65,7 @@ def _low_stock_rows(db: Session, warehouse_id: Optional[int] = None, branch_id: 
     """
     PS = models.ProductStock
     compared: dict = {}
+    warehouse_mins: dict = {}
     if warehouse_id or branch_id:
         WH = models.Warehouse
         q = db.query(PS.product_id, func.coalesce(func.sum(PS.quantity), 0)).join(WH, WH.id == PS.warehouse_id)
@@ -73,8 +74,24 @@ def _low_stock_rows(db: Session, warehouse_id: Optional[int] = None, branch_id: 
         else:
             q = q.filter(WH.branch_id == branch_id)
         compared = dict(q.group_by(PS.product_id).all())
+        # حد المخزن الخاص (min_level) يتجاوز العام عند ضبطه — في نطاق مخزن واحد فقط يُطبق بدقة
+        if warehouse_id:
+            warehouse_mins = {
+                pid: mn for pid, mn in db.query(PS.product_id, PS.min_level)
+                .filter(PS.warehouse_id == warehouse_id, PS.min_level.isnot(None)).all()
+            }
+            _scope = warehouse_id
+        else:
+            _scope = None
         products = db.query(models.Product).filter(models.Product.is_active.is_(True)).all()
-        products = [p for p in products if compared.get(p.id, 0) <= p.reorder_level]  # type: ignore[union-attr,operator]
+        def _effective_min(p):
+            if _scope is not None and p.id in warehouse_mins:
+                return warehouse_mins[p.id], "warehouse"
+            return p.reorder_level, "product"
+        products = [
+            p for p in products
+            if compared.get(p.id, 0) <= _effective_min(p)[0]  # type: ignore[union-attr,operator]
+        ]
     else:
         products = (
             db.query(models.Product)
@@ -95,8 +112,12 @@ def _low_stock_rows(db: Session, warehouse_id: Optional[int] = None, branch_id: 
             sku=p.sku,  # type: ignore
             name=p.name,  # type: ignore
             quantity=(compared.get(p.id, 0) if compared else p.quantity),  # type: ignore
-            reorder_level=p.reorder_level,  # type: ignore
-            shortfall=p.reorder_level - (compared.get(p.id, 0) if compared else p.quantity),  # type: ignore
+            reorder_level=(int(warehouse_mins[p.id]) if (warehouse_id and p.id in warehouse_mins) else p.reorder_level),  # type: ignore[union-attr,operator]
+            shortfall=(
+                (float(warehouse_mins[p.id]) if (warehouse_id and p.id in warehouse_mins) else float(p.reorder_level))  # type: ignore[union-attr,operator]
+                - float(compared.get(p.id, 0) if compared else p.quantity or 0)  # type: ignore
+            ),
+            min_source=("warehouse" if (warehouse_id and p.id in warehouse_mins) else "product"),  # type: ignore[union-attr,operator]
             image_url=p.image_url,  # type: ignore
             image_uploaded=p.image_uploaded,  # type: ignore
             warehouse_id=p.warehouse_id,  # type: ignore
@@ -276,11 +297,11 @@ def _sales_summary(
     if supplier_id:
         extra.append(SO.id.in_(db.query(SI.order_id).join(P, P.id == SI.product_id).filter(P.supplier_id == supplier_id)))
 
-    orders, total = db.query(func.count(SO.id), func.coalesce(func.sum(SO.total_amount), 0)).filter(*in_period, *extra).one()
+    orders, total = db.query(func.count(SO.id), func.coalesce(func.sum(func.coalesce(SO.subtotal, SO.total_amount)), 0)).filter(*in_period, *extra).one()
 
     day = func.date(SO.updated_at)
     by_day = (
-        db.query(day, func.count(SO.id), func.coalesce(func.sum(SO.total_amount), 0))
+        db.query(day, func.count(SO.id), func.coalesce(func.sum(func.coalesce(SO.subtotal, SO.total_amount)), 0))
         .filter(*in_period, *extra)
         .group_by(day)
         .order_by(day)
@@ -299,7 +320,7 @@ def _sales_summary(
         .all()
     )
 
-    cust_total = func.sum(SO.total_amount)
+    cust_total = func.sum(func.coalesce(SO.subtotal, SO.total_amount))  # الصافي بدون الضريبة
     cust_rows = (
         db.query(C.id, C.name, func.count(SO.id), cust_total)
         .join(SO, SO.customer_id == C.id)
@@ -310,7 +331,7 @@ def _sales_summary(
         .all()
     )
     U = models.User
-    cashier_total = func.sum(SO.total_amount)
+    cashier_total = func.sum(func.coalesce(SO.subtotal, SO.total_amount))
     cashier_rows = (
         db.query(U.username, func.count(SO.id), cashier_total)
         .select_from(SO)
@@ -727,7 +748,344 @@ def payables_aging_xlsx(db: Session = Depends(get_db), _: models.User = Depends(
     return _aging_xlsx(accounts.build_aging(db, "supplier"), "أعمار ديون الموردين", "المورد", "report-payables-aging.xlsx")
 
 
+# ---------------------------------------------------------------- اقتراحات الشراء
+def _purchase_suggestion_rows(db: Session, warehouse_id: Optional[int] = None, supplier_id: Optional[int] = None) -> List[Dict[str, Any]]:
+    """ما ينبغي طلبه الآن: الهدف (حد المخزن الخاص أو العام) − المتاح، بتكلفة المتوسط المرجح."""
+    PS = models.ProductStock
+    products = db.query(models.Product).filter(models.Product.is_active.is_(True)).all()
+    supplier_names = dict(db.query(models.Supplier.id, models.Supplier.name).all())
+    warehouse_mins: dict = {}
+    compared: Dict[int, float] = {}
+    if warehouse_id:
+        warehouse_mins = {
+            pid: float(mn) for pid, mn in db.query(PS.product_id, PS.min_level)
+            .filter(PS.warehouse_id == warehouse_id, PS.min_level.isnot(None)).all()
+        }
+        compared = dict(db.query(PS.product_id, PS.quantity).filter(PS.warehouse_id == warehouse_id).all())
+    rows: List[Dict[str, Any]] = []
+    for p in products:
+        if supplier_id and p.supplier_id != supplier_id:
+            continue
+        available = float(compared.get(p.id, 0)) if warehouse_id else float(p.quantity or 0)
+        target = warehouse_mins.get(p.id) if (warehouse_id and p.id in warehouse_mins) else float(p.reorder_level or 0)
+        suggested = max(target - available, 0.0)
+        if suggested <= 0:
+            continue
+        rows.append({
+            "product_id": p.id,
+            "sku": p.sku,
+            "name": p.name,
+            "unit": p.unit,
+            "available": available,
+            "target": target,
+            "suggested_qty": suggested,
+            "cost_price": float(p.cost_price or 0),
+            "estimated_cost": round(suggested * float(p.cost_price or 0), 2),
+            "supplier_id": p.supplier_id,
+            "supplier_name": supplier_names.get(p.supplier_id),
+        })
+    rows.sort(key=lambda r: -r["estimated_cost"])
+    return rows
+
+
+@router.get("/purchase-suggestions")
+def purchase_suggestions(
+    warehouse_id: Optional[int] = None,
+    supplier_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_manager),
+):
+    """اقتراحات الشراء: ما دون حد الطلب (يحترم حد المخزن الخاص) بكمية مقترحة وتكلفة تقديرية."""
+    return _purchase_suggestion_rows(db, warehouse_id, supplier_id)
+
+
+@router.get("/purchase-suggestions/xlsx")
+def purchase_suggestions_xlsx(
+    warehouse_id: Optional[int] = None,
+    supplier_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_manager),
+):
+    rows = _purchase_suggestion_rows(db, warehouse_id, supplier_id)
+    tables = [(
+        "اقتراحات الشراء",
+        ["الكود", "الصنف", "المتاح", "حد الطلب", "الكمية المقترحة", "التكلفة", "التكلفة التقديرية", "المورد"],
+        [[
+            ("text", r["sku"]), ("text", r["name"]), ("int", r["available"]), ("int", r["target"]),
+            ("int", r["suggested_qty"]), ("money", r["cost_price"]), ("money", r["estimated_cost"]),
+            ("text", r["supplier_name"] or "—"),
+        ] for r in rows],
+    )]
+    total = sum(r["estimated_cost"] for r in rows)
+    content = exports.build_tables_xlsx("اقتراحات الشراء", f"إجمالي تقديري: {total:,.2f}", tables)
+    return _xlsx_response(content, "report-purchase-suggestions.xlsx")
+
+
+# ---------------------------------------------------------------- لوطات تنتهي قريبًا
+@router.get("/lots-expiring")
+def lots_expiring(
+    days: int = Query(30, ge=1, le=365),
+    warehouse_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_manager),
+):
+    """لوطات كميتها المتبقية > 0 وتاريخ انتهائها خلال `days` يومًا (أو انتهت بالفعل)."""
+    L, P, WH = models.StockLot, models.Product, models.Warehouse
+    from ..accounting import local_today
+    cutoff = local_today() + timedelta(days=days)
+    q = (
+        db.query(L, P.sku, P.name, WH.name)
+        .join(P, P.id == L.product_id)
+        .outerjoin(WH, WH.id == L.warehouse_id)
+        .filter(
+            L.company_id == db.info["company_id"],
+            L.expiry_date.isnot(None),
+            L.expiry_date <= cutoff,
+            L.qty_remaining > 0,
+        )
+    )
+    if warehouse_id:
+        q = q.filter(L.warehouse_id == warehouse_id)
+    rows = []
+    for lot, sku, pname, wname in q.order_by(L.expiry_date).all():
+        rows.append({
+            "lot_id": lot.id,
+            "product_id": lot.product_id,
+            "sku": sku,
+            "product_name": pname,
+            "warehouse_name": wname,
+            "lot_code": lot.lot_code,
+            "expiry_date": str(lot.expiry_date),
+            "days_left": (lot.expiry_date - local_today()).days,
+            "qty_remaining": float(lot.qty_remaining),
+            "expired": bool(lot.expiry_date < local_today()),
+        })
+    return rows
+
+
+@router.get("/lots-expiring/xlsx")
+def lots_expiring_xlsx(
+    days: int = Query(30, ge=1, le=365),
+    warehouse_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_manager),
+):
+    from fastapi import Query as _Q
+    rows = lots_expiring(days=days, warehouse_id=warehouse_id, db=db)
+    tables = [(
+        "لوطات تنتهي قريبًا",
+        ["الكود", "الصنف", "المخزن", "اللوط", "تاريخ الانتهاء", "أيام متبقية", "الحالة", "الكمية المتبقية"],
+        [[
+            ("text", r["sku"]), ("text", r["product_name"]), ("text", r["warehouse_name"] or "—"),
+            ("text", r["lot_code"]), ("text", r["expiry_date"]),
+            ("int", r["days_left"]), ("text", "منتهي ⚠️" if r["expired"] else "ساري"),
+            ("int", r["qty_remaining"]),
+        ] for r in rows],
+    )]
+    content = exports.build_tables_xlsx("لوطات تنتهي قريبًا", f"خلال {days} يوم", tables)
+    return _xlsx_response(content, "report-lots-expiring.xlsx")
+
+
+# ---------------------------------------------------------------- حركات المخزون
+def _stock_movement_rows(db: Session, product_id, warehouse_id, reason, date_from, date_to, skip=0, limit=100):
+    """سجل حركات المخزون المركزي بفلاتر (صنف/مخزن/سبب/فترة) — الأحدث أولًا."""
+    M, P, WH = models.StockMovement, models.Product, models.Warehouse
+    q = db.query(M, P.sku, P.name, WH.name).join(P, P.id == M.product_id).outerjoin(WH, WH.id == M.warehouse_id)
+    q = q.filter(M.company_id == db.info["company_id"])
+    if product_id:
+        q = q.filter(M.product_id == product_id)
+    if warehouse_id:
+        q = q.filter(M.warehouse_id == warehouse_id)
+    if reason:
+        q = q.filter(M.reason == reason)
+    if date_from:
+        q = q.filter(M.created_at >= datetime(date_from.year, date_from.month, date_from.day))
+    if date_to:
+        q = q.filter(M.created_at < datetime(date_to.year, date_to.month, date_to.day) + timedelta(days=1))
+    total = q.count()
+    rows = []
+    for m, sku, pname, wname in q.order_by(M.id.desc()).offset(skip).limit(limit).all():
+        rows.append({
+            "id": m.id,
+            "created_at": m.created_at.isoformat() if m.created_at else None,
+            "product_id": m.product_id,
+            "sku": sku,
+            "product_name": pname,
+            "warehouse_id": m.warehouse_id,
+            "warehouse_name": wname,
+            "reason": m.reason,
+            "reference": m.reference,
+            "change": float(m.change),
+        })
+    return rows, total
+
+
+@router.get("/stock-movements")
+def stock_movements(
+    response: Response,
+    product_id: Optional[int] = None,
+    warehouse_id: Optional[int] = None,
+    reason: Optional[str] = None,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    skip: int = 0,
+    limit: int = Query(100, ge=1, le=1000),
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_manager),
+):
+    rows, total = _stock_movement_rows(db, product_id, warehouse_id, reason, date_from, date_to, skip, limit)
+    response.headers["X-Total-Count"] = str(total)
+    return rows
+
+
+@router.get("/stock-movements/xlsx")
+def stock_movements_xlsx(
+    product_id: Optional[int] = None,
+    warehouse_id: Optional[int] = None,
+    reason: Optional[str] = None,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_manager),
+):
+    rows, _total = _stock_movement_rows(db, product_id, warehouse_id, reason, date_from, date_to, 0, 5000)
+    tables = [(
+        "حركات المخزون",
+        ["التاريخ", "الكود", "الصنف", "المخزن", "السبب", "المرجع", "التغيير"],
+        [[
+            ("text", (r["created_at"] or "")[:16]), ("text", r["sku"]), ("text", r["product_name"]),
+            ("text", r["warehouse_name"] or "—"), ("text", r["reason"]), ("text", r["reference"] or "—"),
+            ("int", r["change"]),
+        ] for r in rows],
+    )]
+    content = exports.build_tables_xlsx("حركات المخزون", f"{len(rows)} حركة", tables)
+    return _xlsx_response(content, "report-stock-movements.xlsx")
+
+
 # ---------------------------------------------------------------- dashboard
+# ---------------------------------------------------------------- عمولات المندوبين
+@router.get("/reps-commissions")
+def reps_commissions(
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    days: int = Query(30, ge=1, le=366),
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_manager),
+):
+    """عمولات المندوبين للفترة: صافي المبيعات (بعد المرتجعات) × نسبة العمولة.
+
+    المرتجع يُخصم من مندوب الفاتورة الأصلية (rep_id محفوظ على المرتجع)."""
+    if date_from is None and date_to is None:
+        date_from = date.today() - timedelta(days=days - 1)
+    SO, SI = models.SalesOrder, models.SalesOrderItem
+    SR = models.SalesReturn
+    in_period = (SO.status == "confirmed", SO.updated_at >= _period(date_from, date_to, default_days=days)[0],
+                 SO.updated_at < _period(date_from, date_to, default_days=days)[1])
+    reps = {r.id: r for r in db.query(models.SalesRep).filter(models.SalesRep.company_id == db.info["company_id"]).all()}
+    # المبيعات: (rep_id → صافي مبيعات مُجمّعة من بنود الأوامر المؤكدة)
+    sales_q = (
+        db.query(SO.rep_id, func.coalesce(func.sum(func.coalesce(SI.quantity * SI.unit_price, 0)), 0))
+        .join(SI, SI.order_id == SO.id)
+        .filter(*in_period, SO.rep_id.isnot(None))
+        .group_by(SO.rep_id)
+        .all()
+    )
+    # المرتجعات في نفس الفترة (على مندوب الفاتورة)
+    ret_start, ret_end = _period(date_from, date_to, default_days=days)
+    returns_q = (
+        db.query(SR.rep_id, func.coalesce(func.sum(SR.total_amount - SR.refund_amount), 0))
+        .filter(
+            SR.company_id == db.info["company_id"],
+            SR.created_at >= ret_start, SR.created_at < ret_end,
+            SR.rep_id.isnot(None),
+        )
+        .group_by(SR.rep_id)
+        .all()
+    )
+    returns_map = {rid: float(v) for rid, v in returns_q}
+    rows = []
+    for rid, gross in sales_q:
+        rep = reps.get(rid)
+        if rep is None:
+            continue
+        gross_f = float(gross)
+        net = gross_f - returns_map.get(rid, 0.0)
+        pct = float(rep.commission_percent or 0)
+        rows.append({
+            "rep_id": rid,
+            "rep_name": rep.name,
+            "commission_percent": pct,
+            "gross_sales": round(gross_f, 2),
+            "returns": round(returns_map.get(rid, 0.0), 2),
+            "net_sales": round(net, 2),
+            "commission_amount": round(net * pct / 100.0, 2),
+        })
+    rows.sort(key=lambda r: -r["commission_amount"])
+    return rows
+
+
+@router.get("/reps-commissions/xlsx")
+def reps_commissions_xlsx(
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    days: int = Query(30, ge=1, le=366),
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_manager),
+):
+    rows = reps_commissions(date_from, date_to, days, db)
+    tables = [(
+        "عمولات المندوبين",
+        ["المندوب", "النسبة %", "المبيعات", "المرتجعات", "الصافي", "العمولة المستحقة"],
+        [[
+            ("text", r["rep_name"]), ("int", r["commission_percent"]),
+            ("money", r["gross_sales"]), ("money", r["returns"]),
+            ("money", r["net_sales"]), ("money", r["commission_amount"]),
+        ] for r in rows],
+    )]
+    total = sum(r["commission_amount"] for r in rows)
+    content = exports.build_tables_xlsx("عمولات المندوبين", f"إجمالي مستحق: {total:,.2f}", tables)
+    return _xlsx_response(content, "report-reps-commissions.xlsx")
+
+
+# ---------------------------------------------------------------- أرصدة العملاء الدائنة
+@router.get("/customer-credits")
+def customer_credits(
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_manager),
+):
+    """عملاء عندهم رصيد دائن (دفعوا زيادة / دفعة مقدمة غير مستهلكة) — مرشح للسداد أو الخصم من فاتورة قادمة."""
+    from ..accounts import party_balances
+    customers = db.query(models.Customer).filter(models.Customer.company_id == db.info["company_id"], models.Customer.is_active.is_(True)).all()
+    balances = party_balances(db, "customer", [c.id for c in customers] or [0])
+    rows = []
+    for c in customers:
+        bal = float(balances.get(c.id, 0) or 0)
+        if bal < -0.009:
+            rows.append({
+                "customer_id": c.id, "name": c.name, "code": c.code,
+                "credit_balance": round(-bal, 2),
+                "price_list": (c.price_list.name if getattr(c, "price_list", None) else None),
+            })
+    rows.sort(key=lambda r: -r["credit_balance"])
+    return rows
+
+
+@router.get("/customer-credits/xlsx")
+def customer_credits_xlsx(
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_manager),
+):
+    rows = customer_credits(db)
+    tables = [(
+        "أرصدة العملاء الدائنة",
+        ["الكود", "العميل", "قائمة الأسعار", "الرصيد الدائن"],
+        [[("text", r["code"] or "—"), ("text", r["name"]), ("text", r["price_list"] or "—"), ("money", r["credit_balance"])] for r in rows],
+    )]
+    total = sum(r["credit_balance"] for r in rows)
+    content = exports.build_tables_xlsx("أرصدة العملاء الدائنة", f"الإجمالي: {total:,.2f}", tables)
+    return _xlsx_response(content, "report-customer-credits.xlsx")
+
+
 @router.get("/dashboard", response_model=schemas.Dashboard)
 def dashboard(
     days: int = Query(30, ge=1, le=366),
@@ -769,7 +1127,7 @@ def dashboard(
     # the parameter is accepted for API compatibility but ignored.
 
     s_orders = so_q.with_entities(func.count(SO.id)).scalar() or 0
-    s_total = so_q.with_entities(func.coalesce(func.sum(SO.total_amount), 0)).scalar() or 0
+    s_total = so_q.with_entities(func.coalesce(func.sum(func.coalesce(SO.subtotal, SO.total_amount)), 0)).scalar() or 0
     p_orders = po_q.with_entities(func.count(PO.id)).scalar() or 0
     p_total = po_q.with_entities(func.coalesce(func.sum(PO.total_amount), 0)).scalar() or 0
 
@@ -777,7 +1135,7 @@ def dashboard(
     prev_start = start - timedelta(days=span_days)
     prev_so_q = db.query(SO).filter(SO.status == "confirmed", SO.updated_at >= prev_start, SO.updated_at < start)
     prev_po_q = db.query(PO).filter(PO.status == "received", PO.updated_at >= prev_start, PO.updated_at < start)
-    prev_s_total = prev_so_q.with_entities(func.coalesce(func.sum(SO.total_amount), 0)).scalar() or 0
+    prev_s_total = prev_so_q.with_entities(func.coalesce(func.sum(func.coalesce(SO.subtotal, SO.total_amount)), 0)).scalar() or 0
     prev_p_total = prev_po_q.with_entities(func.coalesce(func.sum(PO.total_amount), 0)).scalar() or 0
 
     def growth_pct(current, prev):
@@ -797,6 +1155,42 @@ def dashboard(
     pending_transfers = (
         db.query(func.count(models.StockTransfer.id))
         .filter(models.StockTransfer.status == "pending")
+        .scalar() or 0
+    )
+
+    # شيكات تستحق قريبًا (مقبوضة تحت التحصيل خلال CHEQUES_DUE_DAYS أيام)
+    from datetime import timedelta as _td
+    from ..accounting import local_today
+    due_limit = local_today() + _td(days=7)
+    cheques_due_soon = (
+        db.query(func.count(models.Cheque.id))
+        .filter(
+            models.Cheque.status == "under_collection",
+            models.Cheque.due_date.isnot(None),
+            models.Cheque.due_date <= due_limit,
+        )
+        .scalar() or 0
+    )
+    lots_expiring_soon = (
+        db.query(func.count(models.StockLot.id))
+        .filter(
+            models.StockLot.expiry_date.isnot(None),
+            models.StockLot.expiry_date <= local_today() + _td(days=30),
+            models.StockLot.qty_remaining > 0,
+        )
+        .scalar() or 0
+    )
+    recurring_journals_due = (
+        db.query(func.count(models.RecurringJournal.id))
+        .filter(
+            models.RecurringJournal.is_active.is_(True),
+            models.RecurringJournal.next_run_date <= local_today(),
+        )
+        .scalar() or 0
+    )
+    pending_journal_approvals = (
+        db.query(func.count(models.JournalEntry.id))
+        .filter(models.JournalEntry.status == "pending_approval")
         .scalar() or 0
     )
 
@@ -826,4 +1220,8 @@ def dashboard(
         safes_balance_total=_money(safes_total),
         banks_balance_total=_money(banks_total),
         cash_liquidity_total=_money(float(safes_total) + float(banks_total)),
+        lots_expiring_soon=lots_expiring_soon,
+        cheques_due_soon=cheques_due_soon,
+        recurring_journals_due=recurring_journals_due,
+        pending_journal_approvals=pending_journal_approvals,
     )

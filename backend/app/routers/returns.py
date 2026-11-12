@@ -36,6 +36,32 @@ CFG = {
 }
 
 
+def _post_cogs_reversal(db: Session, company_id: int, user: models.User, ret, cogs_total: Decimal, prefix: str) -> None:
+    """A sales return puts goods back in stock: relieve the COGS recorded at sale time
+    (Debit Inventory 1101, Credit COGS 5100). Runs inside the caller's try/except, and
+    stays silent when either ledger account is missing (same degrade rule as the
+    credit-note entries)."""
+    if cogs_total <= 0:
+        return
+    from ..accounting import AccountingEngine
+    inventory_acc = db.query(models.ChartAccount).filter(
+        models.ChartAccount.company_id == company_id, models.ChartAccount.code == "1101"
+    ).first()
+    cogs_acc = db.query(models.ChartAccount).filter(
+        models.ChartAccount.company_id == company_id, models.ChartAccount.code == "5100"
+    ).first()
+    if inventory_acc and cogs_acc:
+        AccountingEngine.create_entry(
+            db=db, company_id=company_id, user_id=user.id,
+            description=f"COGS Reversal {prefix}-{ret.id}",
+            items=[
+                {"account_id": inventory_acc.id, "debit": cogs_total, "credit": 0},
+                {"account_id": cogs_acc.id, "debit": 0, "credit": cogs_total},
+            ],
+            reference=f"{prefix}-{ret.id}",
+        )
+
+
 def _create(kind: str, payload: schemas.ReturnCreate, db: Session, user: models.User):
     if payload.order_id is None:
         return _create_standalone(kind, payload, db, user)
@@ -55,6 +81,7 @@ def _create(kind: str, payload: schemas.ReturnCreate, db: Session, user: models.
         for l in db.query(c["order_item"]).filter(c["order_item"].id.in_(list(wanted))).with_for_update().all()
     }
     total = Decimal("0")
+    cogs_total = Decimal("0")  # sales only: cost frozen on the returned order lines
     ret = c["ret"](
         order_id=order.id,
         warehouse_id=order.warehouse_id,
@@ -77,7 +104,9 @@ def _create(kind: str, payload: schemas.ReturnCreate, db: Session, user: models.
             raise HTTPException(status.HTTP_409_CONFLICT, f"Line {line_id}: only {left} unit(s) can still be returned")
         price = getattr(line, c["price"])
         ret.items.append(c["ret_item"](order_item_id=line.id, product_id=line.product_id, quantity=qty, unit_price=price))
-        total += price * qty
+        total += price * Decimal(str(qty))
+        if kind == "sales":
+            cogs_total += (line.unit_cost or Decimal("0")) * Decimal(str(qty))
     if payload.refund_amount > total:
         raise HTTPException(422, "refund_amount cannot exceed the return total")
     ret.total_amount = total
@@ -91,7 +120,7 @@ def _create(kind: str, payload: schemas.ReturnCreate, db: Session, user: models.
         per_product[it.product_id] = per_product.get(it.product_id, 0) + it.quantity
     for pid in sorted(per_product):
         product = _locked_product(db, pid)
-        change = c["sign"] * per_product[pid]
+        change = stock.q3(c["sign"] * per_product[pid])  # توحيد إلى Decimal (الكمية قد تأتي float من الـ API)
         if change < 0 and stock.available(db, pid, order.warehouse_id) + change < 0:
             db.rollback()
             raise HTTPException(
@@ -99,6 +128,8 @@ def _create(kind: str, payload: schemas.ReturnCreate, db: Session, user: models.
                 "Insufficient stock to return: " + stock.shortage_message(db, product, order.warehouse_id, -change),
             )
         stock.move_stock(db, product, order.warehouse_id, change, c["reason"], f"{c['prefix']}-{ret.id}")
+        if change < 0:
+            stock.consume_lots(db, product, order.warehouse_id, -change)  # FEFO على مرتجع الشراء
     # Auto-post a journal entry reversing the original transaction (credit note).
     company_id = db.info["company_id"]
     seed_default_coa(db, company_id)
@@ -120,6 +151,8 @@ def _create(kind: str, payload: schemas.ReturnCreate, db: Session, user: models.
                     ],
                     reference=f"{c['prefix']}-{ret.id}", date=ret.created_at.date() if hasattr(ret, "created_at") and ret.created_at else None,
                 )
+            # Goods are back in stock: relieve the COGS recorded on the original sale.
+            _post_cogs_reversal(db, company_id, user, ret, cogs_total, c["prefix"])
         else:
             ap_acc = db.query(models.ChartAccount).filter(models.ChartAccount.company_id == company_id, models.ChartAccount.code == "2100").first()
             inventory_acc = db.query(models.ChartAccount).filter(models.ChartAccount.company_id == company_id, models.ChartAccount.code == "1101").first()
@@ -165,6 +198,7 @@ def _create_standalone(kind: str, payload: schemas.ReturnCreate, db: Session, us
             raise HTTPException(422, f"Supplier {payload.supplier_id} does not exist")
 
     total = Decimal("0")
+    cogs_total = Decimal("0")  # sales only: current cost price of the returned products
     ret = c["ret"](
         order_id=None,
         warehouse_id=warehouse.id,
@@ -186,6 +220,8 @@ def _create_standalone(kind: str, payload: schemas.ReturnCreate, db: Session, us
         price = it.unit_price if it.unit_price is not None else getattr(product, c["price"])
         ret.items.append(c["ret_item"](order_item_id=None, product_id=product.id, quantity=it.quantity, unit_price=price))
         total += price * it.quantity
+        if kind == "sales":
+            cogs_total += (product.cost_price or Decimal("0")) * it.quantity
     if payload.refund_amount > total:
         raise HTTPException(422, "refund_amount cannot exceed the return total")
     ret.total_amount = total
@@ -199,7 +235,7 @@ def _create_standalone(kind: str, payload: schemas.ReturnCreate, db: Session, us
         per_product[it.product_id] = per_product.get(it.product_id, 0) + it.quantity
     for pid in sorted(per_product):
         product = _locked_product(db, pid)
-        change = c["sign"] * per_product[pid]
+        change = stock.q3(c["sign"] * per_product[pid])  # توحيد إلى Decimal (الكمية قد تأتي float من الـ API)
         if change < 0 and stock.available(db, pid, warehouse.id) + change < 0:
             db.rollback()
             raise HTTPException(
@@ -207,6 +243,8 @@ def _create_standalone(kind: str, payload: schemas.ReturnCreate, db: Session, us
                 "Insufficient stock to return: " + stock.shortage_message(db, product, warehouse.id, -change),
             )
         stock.move_stock(db, product, warehouse.id, change, c["reason"], f"{c['prefix']}-{ret.id}")
+        if change < 0:
+            stock.consume_lots(db, product, warehouse.id, -change)  # FEFO على مرتجع الشراء
 
     # Credit note journal entry — same rules as order-bound returns.
     company_id = db.info["company_id"]
@@ -228,6 +266,8 @@ def _create_standalone(kind: str, payload: schemas.ReturnCreate, db: Session, us
                     ],
                     reference=f"{c['prefix']}-{ret.id}", date=ret.created_at.date() if hasattr(ret, "created_at") and ret.created_at else None,
                 )
+            # Goods are back in stock: relieve the COGS recorded on the original sale.
+            _post_cogs_reversal(db, company_id, user, ret, cogs_total, c["prefix"])
         else:
             ap_acc = db.query(models.ChartAccount).filter(models.ChartAccount.company_id == company_id, models.ChartAccount.code == "2100").first()
             inventory_acc = db.query(models.ChartAccount).filter(models.ChartAccount.company_id == company_id, models.ChartAccount.code == "1101").first()

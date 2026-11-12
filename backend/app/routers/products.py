@@ -145,13 +145,16 @@ def list_products(
         query = query.filter(models.Product.quantity <= models.Product.reorder_level)
     rows = paginate(query, response, skip, limit, models.Product.id)
     if stock_warehouse_id is not None and rows:
-        have = dict(
-            db.query(models.ProductStock.product_id, models.ProductStock.quantity)
+        pairs = (
+            db.query(models.ProductStock.product_id, models.ProductStock.quantity, models.ProductStock.min_level)
             .filter(models.ProductStock.warehouse_id == stock_warehouse_id, models.ProductStock.product_id.in_([p.id for p in rows]))
             .all()
         )
+        have = {pid: q for pid, q, _mn in pairs}
+        mins = {pid: float(mn) for pid, _q, mn in pairs if mn is not None}
         for p in rows:
             p.warehouse_quantity = have.get(p.id, 0)
+            p.warehouse_min_level = mins.get(p.id)
     return rows
 
 
@@ -450,10 +453,63 @@ def adjust_stock(product_id: int, payload: schemas.StockAdjustment, db: Session 
     if warehouse_id is None or db.get(models.Warehouse, warehouse_id) is None:
         raise HTTPException(422, "Choose an existing warehouse for this adjustment")
     stock.move_stock(db, product, warehouse_id, payload.change, "adjustment", payload.reference)
-    audit(db, user, "adjust_stock", "product", product, f"{payload.change:+d} → {product.quantity}" + (f" ({payload.reference})" if payload.reference else ""))
+    audit(db, user, "adjust_stock", "product", product, f"{stock.q3(payload.change):+} → {product.quantity}" + (f" ({payload.reference})" if payload.reference else ""))  # q3 يوحّد النوع (d يفشل على float)
     db.commit()
     db.refresh(product)
     return product
+
+
+@router.post("/{product_id}/min-level", response_model=List[schemas.ProductStockOut])
+def set_min_level(
+    product_id: int,
+    payload: dict,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """ضبط حد الطلب الأدنى الخاص بمخزن معين (يتجاوز الحد العام للمنتج). null = إلغاء الخاص."""
+    product = (
+        db.query(models.Product)
+        .filter(models.Product.id == product_id, models.Product.company_id == db.info["company_id"])
+        .with_for_update()
+        .one_or_none()
+    )
+    if product is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Product {product_id} not found")
+    warehouse_id = payload.get("warehouse_id")
+    warehouse = (
+        db.query(models.Warehouse)
+        .filter(models.Warehouse.id == warehouse_id, models.Warehouse.company_id == db.info["company_id"])
+        .first()
+    ) if warehouse_id else None
+    if warehouse is None:
+        raise HTTPException(422, "اختر مخزنًا موجودًا في الشركة")
+    min_level = payload.get("min_level")
+    if min_level is not None:
+        from decimal import Decimal as _D
+        min_level = _D(str(min_level))
+        if min_level < 0:
+            raise HTTPException(422, "الحد الأدنى لا يكون سالبًا")
+    row = db.query(models.ProductStock).filter(
+        models.ProductStock.product_id == product_id, models.ProductStock.warehouse_id == warehouse.id
+    ).first()
+    if row is None:
+        row = models.ProductStock(product_id=product_id, warehouse_id=warehouse.id, quantity=0, min_level=min_level)
+        db.add(row)
+    else:
+        row.min_level = min_level
+    audit(db, user, "update", "product_min_level", product,
+          f"حد أدنى لـ«{warehouse.name}»: {'إلغاء الخاص' if min_level is None else min_level}")
+    db.commit()
+    rows = db.query(models.ProductStock).filter(models.ProductStock.product_id == product_id).all()
+    return [
+        schemas.ProductStockOut(
+            warehouse_id=r.warehouse_id,
+            warehouse_name=r.warehouse.name if r.warehouse else str(r.warehouse_id),
+            quantity=float(r.quantity),
+            min_level=float(r.min_level) if r.min_level is not None else None,
+        )
+        for r in rows
+    ]
 
 
 @router.get("/{product_id}/stock", response_model=List[schemas.ProductStockOut])
@@ -466,7 +522,7 @@ def product_stock(product_id: int, db: Session = Depends(get_db)):
         .order_by(models.ProductStock.warehouse_id)
         .all()
     )
-    return [schemas.ProductStockOut(warehouse_id=r.warehouse_id, warehouse_name=r.warehouse.name, quantity=r.quantity) for r in rows]  # type: ignore
+    return [schemas.ProductStockOut(warehouse_id=r.warehouse_id, warehouse_name=r.warehouse.name, quantity=r.quantity, min_level=float(r.min_level) if r.min_level is not None else None) for r in rows]  # type: ignore
 
 
 @router.get("/{product_id}/movements", response_model=List[schemas.StockMovementOut])

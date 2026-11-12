@@ -10,6 +10,7 @@ from collections import defaultdict, deque
 from sqlalchemy import func, or_
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from pydantic import BaseModel, Field
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -18,7 +19,8 @@ from .. import models, schemas
 from ..accounting import seed_default_coa, seed_default_cost_centers, seed_default_fiscal_year
 from ..audit import audit
 from ..database import get_db
-from ..deps import get_current_user, require_admin
+from ..deps import get_current_user, require_permission_or_role, require_admin
+from ..permissions import effective_permissions
 from ..security import DUMMY_HASH, create_access_token, hash_password, verify_password
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -175,12 +177,14 @@ def login(request: Request, form: OAuth2PasswordRequestForm = Depends(), db: Ses
         _failures.pop(key, None)
     audit(db, user, "login", "user", user.id, None)
     db.commit()
-    return schemas.Token(access_token=create_access_token(user.id))  # type: ignore
+    return schemas.Token(access_token=create_access_token(user.id, token_version=int(user.token_version or 1)))  # type: ignore
 
 
 @router.get("/me", response_model=schemas.UserOut)
-def me(user: models.User = Depends(get_current_user)):
-    return user
+def me(user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    out = schemas.UserOut.model_validate(user)
+    out.permissions = sorted(effective_permissions(db, user))
+    return out
 
 
 @router.get("/companies", response_model=List[schemas.CompanyOut])
@@ -189,6 +193,44 @@ def my_companies(user: models.User = Depends(get_current_user), db: Session = De
     memberships = db.query(models.UserCompanyMembership).filter(models.UserCompanyMembership.user_id == user.id).all()
     ids = [m.company_id for m in memberships]
     return db.query(models.Company).filter(models.Company.id.in_(ids), models.Company.is_active.is_(True)).all()
+
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+def logout(user: models.User = Depends(get_current_user)):
+    """تسجيل خروج من الجهاز الحالي (العميل يحذف التوكن) — الإبطال الفوري للكل عبر logout-all."""
+    return None
+
+
+@router.post("/logout-all", status_code=status.HTTP_204_NO_CONTENT)
+def logout_all(db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    """إبطال فوري لكل جلسات هذا المستخدم على كل الأجهزة (رفع إصدار الجلسة)."""
+    user.token_version = int(user.token_version or 1) + 1  # type: ignore
+    audit(db, user, "logout_all", "user", user, f"{user.username}: إبطال كل الجلسات")
+    db.commit()
+    return None
+
+
+class ChangePasswordIn(BaseModel):
+    old_password: str = Field(min_length=8, max_length=128)
+    new_password: str = Field(min_length=8, max_length=128)
+
+
+@router.post("/change-password", response_model=schemas.Token)
+def change_password(
+    payload: ChangePasswordIn,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """تغيير كلمة السر ذاتيًا: يبطل كل الجلسات السابقة ويعيد توكنًا جديدًا."""
+    if not verify_password(payload.old_password, user.hashed_password):  # type: ignore
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "كلمة السر الحالية غير صحيحة")
+    if payload.old_password == payload.new_password:
+        raise HTTPException(422, "كلمة السر الجديدة يجب أن تختلف عن الحالية")
+    user.hashed_password = hash_password(payload.new_password)  # type: ignore
+    user.token_version = int(user.token_version or 1) + 1  # type: ignore
+    audit(db, user, "update", "user", user, f"{user.username}: تغيير كلمة السر ذاتيًا (إبطال الجلسات)")
+    db.commit()
+    return schemas.Token(access_token=create_access_token(user.id, token_version=int(user.token_version)))
 
 
 @router.post("/switch-company", response_model=schemas.UserOut)
@@ -210,12 +252,14 @@ def switch_company(payload: schemas.SwitchCompany, db: Session = Depends(get_db)
     user.active_company_id = payload.company_id  # type: ignore
     db.commit()
     db.refresh(user)
-    return user
+    out = schemas.UserOut.model_validate(user)
+    out.permissions = sorted(effective_permissions(db, user, company_id=payload.company_id))
+    return out
 
 
 @router.post("/users", response_model=schemas.UserOut, status_code=status.HTTP_201_CREATED)
 def create_user(
-    payload: schemas.UserCreate, db: Session = Depends(get_db), admin: models.User = Depends(require_admin)
+    payload: schemas.UserCreate, db: Session = Depends(get_db), admin: models.User = Depends(require_permission_or_role("admin.user.create", "admin"))
 ):
     company_id = db.info["company_id"]
     if payload.role == "staff" and not payload.branch_ids and not payload.warehouse_ids:
@@ -246,7 +290,10 @@ def create_user(
 
 
 @router.get("/users", response_model=List[schemas.UserOut])
-def list_users(db: Session = Depends(get_db), _: models.User = Depends(require_admin)):
+def list_users(
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_permission_or_role("admin.user.view", "admin")),
+):
     users = (
         db.query(models.User)
         .join(models.UserCompanyMembership)
@@ -275,7 +322,7 @@ def user_activity(
     user_id: int,
     limit: int = 500,
     db: Session = Depends(get_db),
-    _: models.User = Depends(require_admin),
+    _: models.User = Depends(require_permission_or_role("admin.user.activity", "admin")),
 ):
     """مراقبة عمل مستخدم: كل ما فعله من أول تسجيل دخول حتى الآن (الأحدث أولاً)."""
     target = db.get(models.User, user_id)
@@ -305,7 +352,7 @@ def update_user(
     user_id: int,
     payload: schemas.UserUpdate,
     db: Session = Depends(get_db),
-    admin: models.User = Depends(require_admin),
+    admin: models.User = Depends(require_permission_or_role("admin.user.update", "admin")),
 ):
     membership = (
         db.query(models.UserCompanyMembership)
@@ -327,6 +374,8 @@ def update_user(
     password_changed = "password" in data
     if "password" in data:
         user.hashed_password = hash_password(data.pop("password"))  # type: ignore
+        # تغيير كلمة السر يبطل كل جلسات المستخدم السابقة فورًا
+        user.token_version = int(user.token_version or 1) + 1  # type: ignore
     if "role" in data:
         membership.role = data["role"]
     changed = [k for k in data] + (['password'] if password_changed else [])
@@ -342,7 +391,7 @@ def update_user(
 def delete_user(
     user_id: int,
     db: Session = Depends(get_db),
-    admin: models.User = Depends(require_admin),
+    admin: models.User = Depends(require_permission_or_role("admin.user.delete", "admin")),
 ):
     membership = (
         db.query(models.UserCompanyMembership)
