@@ -639,9 +639,13 @@ class Payment(TenantOwned, Base):
     notes = Column(Text, nullable=True)
     paid_on = Column(Date, nullable=False, server_default=func.current_date())
     # سند بعملة أجنبية: amount يبقى بالجنيه — العملة والمبلغ الأجنبي وسعر الصرف إثبات
+    # عملة السند
     currency_id = Column(Integer, ForeignKey("currencies.id", ondelete="SET NULL"), nullable=True)
     exchange_rate = Column(Numeric(14, 6), nullable=True)
     foreign_amount = Column(Numeric(14, 2), nullable=True)
+    # ضريبة الخصم والإضافة: جزء من السند محتجز توريدًا للمصلحة — النقدية الفعلية = amount − withholding_amount
+    withholding_amount = Column(Numeric(14, 2), nullable=False, default=0, server_default="0")
+    withholding_code_id = Column(Integer, ForeignKey("withholding_codes.id", ondelete="SET NULL"), nullable=True)
     status = Column(String(10), nullable=False, default="posted", server_default="posted", index=True)  # posted | voided
     created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
@@ -654,10 +658,54 @@ class Payment(TenantOwned, Base):
     bank = relationship("Bank")
     company = relationship("Company")
     category = relationship("PaymentCategory")
+    withholding_code = relationship("WithholdingCode")
 
     @property
     def category_name(self) -> str | None:
         return self.category.name if self.category else None
+
+
+class WithholdingCode(TenantOwned, Base):
+    """أكواد ضريبة الخصم والإضافة (المادة 62 من قانون 91/2005): نوع التوريد ونسبته.
+
+    تُبذر أنواع افتراضية (سلع 1% · خدمات 3% · مهن حرة 5% ...) وتُعدَّل بحرية لكل شركة.
+    """
+
+    __tablename__ = "withholding_codes"
+    __table_args__ = (UniqueConstraint("company_id", "name", name="uq_withholding_code_name"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(150), nullable=False)
+    rate = Column(Numeric(5, 2), nullable=False)  # نسبة مئوية على قيمة الفاتورة قبل VAT
+    is_active = Column(Boolean, nullable=False, default=True, server_default=text("true"))
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class TaxSetting(TenantOwned, Base):
+    """إعدادات ضريبية لكل شركة — kind='payroll' لضريبة كسب العمل (قابلة للتعديل)."""
+
+    __tablename__ = "tax_settings"
+    __table_args__ = (UniqueConstraint("company_id", "kind", name="uq_tax_setting_kind"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    kind = Column(String(20), nullable=False, default="payroll", server_default="payroll", index=True)
+    personal_exemption = Column(Numeric(14, 2), nullable=False, default=20000, server_default="20000")
+    wage_reduction_percent = Column(Numeric(5, 2), nullable=False, default=0, server_default="0")
+    social_insurance_percent = Column(Numeric(5, 2), nullable=False, default=11, server_default="11")
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class TaxBracket(TenantOwned, Base):
+    """شريحة ضريبية تصاعدية — kind='payroll': من min_amount (شامل) إلى max_amount (غير شامل، NULL = ما بعدها)."""
+
+    __tablename__ = "tax_brackets"
+
+    id = Column(Integer, primary_key=True, index=True)
+    kind = Column(String(20), nullable=False, default="payroll", server_default="payroll", index=True)
+    min_amount = Column(Numeric(14, 2), nullable=False, default=0, server_default="0")
+    max_amount = Column(Numeric(14, 2), nullable=True)  # NULL = مفتوحة حتى ما لا نهاية
+    rate = Column(Numeric(5, 2), nullable=False)
+    sort = Column(Integer, nullable=False, default=0, server_default="0")
 
 
 class PaymentCategory(TenantOwned, Base):

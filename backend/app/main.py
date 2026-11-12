@@ -15,7 +15,7 @@ from . import models  # noqa: F401  (importing registers the tables on Base.meta
 from .database import Base, engine, get_db
 from .deps import get_current_user
 from .permissions import permission_gate, seed_all
-from .routers import access, attachments, backups, currencies, price_lists, audit as audit_router, auth, bank_statements, eta as eta_router, cheques, coa, cost_centers, data_io, departments, fixed_assets, fiscal_years, general_ledger, hr, journal_entries, lots, manufacturing, pos, qc, recurring_journals, reports, reports_fin, returns, reps, shifts, stocktakes, transfers, masterdata, orders, payments, products, tenancy, safes_banks
+from .routers import access, attachments, backups, currencies, price_lists, audit as audit_router, auth, bank_statements, eta as eta_router, cheques, coa, cost_centers, data_io, departments, fixed_assets, fiscal_years, general_ledger, hr, journal_entries, lots, manufacturing, pos, qc, recurring_journals, reports, reports_fin, returns, reps, shifts, stocktakes, taxes, transfers, masterdata, orders, payments, products, tenancy, safes_banks
 
 
 @asynccontextmanager
@@ -106,6 +106,7 @@ app.include_router(recurring_journals.router, dependencies=_protected)
 app.include_router(attachments.router, dependencies=_protected)
 app.include_router(bank_statements.router, dependencies=_protected)
 app.include_router(eta_router.router, dependencies=_protected)
+app.include_router(taxes.router, dependencies=_protected)
 app.include_router(backups.router, dependencies=_protected)
 app.include_router(price_lists.router, dependencies=_protected)
 app.include_router(currencies.router, dependencies=_protected)

@@ -9,6 +9,7 @@ import Eta from "./pages/Eta";
 import PriceLists from "./pages/PriceLists";
 import LowStock from "./pages/LowStock";
 import { ReportsInventory, ReportsPayables, ReportsProfit, ReportsPurchases, ReportsReceivables, ReportsSales } from "./pages/Reports";
+import { Taxes } from "./pages/Taxes";
 import Lots from "./pages/Lots";
 import Quality from "./pages/Quality";
 import { DataIOCustomers, DataIOSuppliers, DataIOWarehouses } from "./pages/DataIO";
@@ -148,6 +149,7 @@ export default function App() {
         <Route path="reports/inventory" element={<Guard perm="reports.inventory.valuation"><ReportsInventory /></Guard>} />
         <Route path="reports/receivables" element={<Guard perm="reports.sales.receivables"><ReportsReceivables /></Guard>} />
         <Route path="reports/payables" element={<Guard perm="reports.purchasing.payables"><ReportsPayables /></Guard>} />
+        <Route path="taxes" element={<Guard perm="taxes.vat.view"><Taxes /></Guard>} />
         <Route path="audit" element={<Guard perm="admin.audit.view"><AuditLog /></Guard>} />
         <Route path="users" element={<Guard perm="admin.user.view"><Users /></Guard>} />
         <Route path="permissions" element={<Guard perm="admin.user.permissions_manage"><Permissions /></Guard>} />

@@ -1315,3 +1315,110 @@ export interface EtaIncoming {
   lines: { description: string; internalCode?: string; quantity: number; unitPrice?: number; salesTotal?: number }[];
   received_at: string | null;
 }
+
+// ==================== موديول الضرائب ====================
+export interface VatRateRow {
+  rate: string;
+  invoices: number;
+  taxable_base: string;
+  tax_amount: string;
+}
+
+export interface VatMonthRow {
+  month: string;
+  output_vat: string;
+  input_vat: string;
+  net: string;
+}
+
+export interface VatReturn {
+  date_from: string;
+  date_to: string;
+  output_vat: string;
+  input_vat: string;
+  net_payable: string;
+  sales_by_rate: VatRateRow[];
+  monthly: VatMonthRow[];
+  taxable_sales_total: string;
+}
+
+export interface WithholdingCode {
+  id: number;
+  name: string;
+  rate: string;
+  is_active: boolean;
+}
+
+export interface WithholdingRow {
+  id: number;
+  paid_on: string;
+  supplier_id: number | null;
+  supplier_name: string | null;
+  reference: string | null;
+  method: string;
+  amount: string;
+  withholding: string;
+  net_cash: string;
+  code_name: string;
+}
+
+export interface WithholdingReport {
+  date_from: string;
+  date_to: string;
+  rows: WithholdingRow[];
+  by_code: { code: string; total: string }[];
+  by_supplier: { supplier: string; total: string }[];
+  total_withheld: string;
+}
+
+export interface TaxBracket {
+  id: number;
+  min_amount: string;
+  max_amount: string | null;
+  rate: string;
+  sort: number;
+}
+
+export interface PayrollTaxSettings {
+  personal_exemption: string;
+  wage_reduction_percent: string;
+  social_insurance_percent: string;
+  brackets: TaxBracket[];
+}
+
+export interface PayrollTaxRow {
+  employee_id: number;
+  code: string;
+  name: string;
+  monthly_gross: string;
+  monthly_si: string;
+  annual_gross: string;
+  annual_si: string;
+  personal_exemption: string;
+  annual_taxable: string;
+  annual_tax: string;
+  monthly_tax: string;
+  actual_withheld: string;
+  difference: string;
+}
+
+export interface PayrollTaxReport {
+  run_id: number;
+  period: string;
+  status: string;
+  personal_exemption: string;
+  wage_reduction_percent: string;
+  rows: PayrollTaxRow[];
+  total_monthly_tax: string;
+  total_actual: string;
+  total_difference: string;
+}
+
+export interface PayrollRunLite {
+  id: number;
+  year: number;
+  month: number;
+  status: string;
+  employees_count: number;
+  total_net: string;
+}

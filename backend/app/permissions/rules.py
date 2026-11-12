@@ -584,6 +584,22 @@ ROUTE_RULES: List[RouteRule] = [
     _rule("PUT", "/production-orders/{order_id}/schedule", "manufacturing.order.schedule"),
     _rule("GET", "/production-orders/reports/work-centers", "manufacturing.order.report_work_centers"),
     _rule("GET", "/production-orders/{order_id}/lots", "manufacturing.order.trace"),
+    # ---------------------------------------------------------------- الضرائب
+    _rule("GET", "/taxes/vat-return", "taxes.vat.view"),
+    _rule("GET", "/taxes/vat-return/xlsx", "taxes.vat.export"),
+    _rule("GET", "/taxes/vat-return/pdf", "taxes.vat.export"),
+    _rule("GET", "/taxes/withholding", "taxes.withholding.view"),
+    _rule("GET", "/taxes/withholding/xlsx", "taxes.withholding.export"),
+    _rule("GET", "/taxes/withholding/pdf", "taxes.withholding.export"),
+    _rule("GET", "/taxes/withholding/codes", "taxes.withholding.view"),
+    _rule("POST", "/taxes/withholding/codes", "taxes.withholding.manage"),
+    _rule("PATCH", "/taxes/withholding/codes/{code_id}", "taxes.withholding.manage"),
+    _rule("DELETE", "/taxes/withholding/codes/{code_id}", "taxes.withholding.manage"),
+    _rule("GET", "/taxes/payroll-tax/settings", "taxes.payroll.view"),
+    _rule("PUT", "/taxes/payroll-tax/settings", "taxes.payroll.manage"),
+    _rule("GET", "/taxes/payroll-tax/{run_id}", "taxes.payroll.view"),
+    _rule("GET", "/taxes/payroll-tax/{run_id}/xlsx", "taxes.payroll.export"),
+    _rule("GET", "/taxes/payroll-tax/{run_id}/pdf", "taxes.payroll.export"),
 ]
 
 _RULES_BY_METHOD: Dict[str, List[RouteRule]] = {}

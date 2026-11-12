@@ -335,6 +335,7 @@ def seed_default_coa(db, company_id: int) -> int:
         ("2130", "ضريبة القيمة المضافة (VAT Payable)", "liability", "2100", False),
         ("1145", "ضريبة القيمة المضافة على المشتريات (VAT Input)", "asset", "1100", False),
         ("2140", "رواتب مستحقة (Salaries Payable)", "liability", "2100", False),
+        ("2135", "ضريبة الخصم والإضافة المستحقة (Withholding Tax Payable)", "liability", "2100", False),
         ("2200", "الخصوم طويلة الأجل", "liability", "2000", True),
         ("2210", "قروض (Loans Payable)", "liability", "2200", False),
         # --- Equity ---

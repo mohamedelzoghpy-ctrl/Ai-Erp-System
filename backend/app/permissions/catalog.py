@@ -528,6 +528,25 @@ CATALOG: Dict[str, dict] = {
             ]),
         },
     },
+    "taxes": {
+        "label": "الضرائب",
+        "resources": {
+            "vat": ("ضريبة القيمة المضافة", [
+                ("view", "عرض إقرار القيمة المضافة", False, False),
+                ("export", "تصدير إقرار القيمة المضافة", False, False),
+            ]),
+            "withholding": ("ضريبة الخصم والإضافة", [
+                ("view", "عرض تقرير الخصم والإضافة", False, False),
+                ("export", "تصدير تقرير الخصم والإضافة", False, False),
+                ("manage", "إدارة أكواد الخصم والإضافة", False, False),
+            ]),
+            "payroll": ("ضريبة كسب العمل", [
+                ("view", "عرض حساب ضريبة كسب العمل", False, False),
+                ("export", "تصدير ضريبة كسب العمل", False, False),
+                ("manage", "إدارة شرائح وإعدادات ضريبة كسب العمل", False, False),
+            ]),
+        },
+    },
     "reports": {
         "label": "التقارير",
         "resources": {
@@ -724,6 +743,7 @@ SYSTEM_SECTIONS: List[dict] = [
     {"code": "manufacturing", "name": "التصنيع", "modules": ["manufacturing"]},
     {"code": "hr", "name": "الموارد البشرية", "modules": ["hr"]},
     {"code": "general", "name": "الإدارة العامة", "modules": ["admin"]},
+    {"code": "taxes", "name": "الضرائب", "modules": ["taxes"]},
     {"code": "reports", "name": "التقارير", "modules": ["reports"]},
 ]
 

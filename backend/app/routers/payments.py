@@ -38,6 +38,7 @@ def _out(p: models.Payment) -> models.Payment:
     p.company_name = p.company.name if p.company else None  # type: ignore[attr-defined]
     p.safe_branch_name = (p.safe.branch.name if p.safe and p.safe.branch else None)  # type: ignore[attr-defined]
     p.currency_code = p.currency.code if getattr(p, "currency", None) else None  # type: ignore[attr-defined]
+    p.withholding_code_name = (p.withholding_code.name if getattr(p, "withholding_code", None) else None)  # type: ignore[attr-defined]
     return p
 
 
@@ -133,6 +134,26 @@ def create_payment(
     paid_on = payload.paid_on or _today()
     if paid_on > _today():
         raise HTTPException(422, "paid_on cannot be in the future")
+
+    # ---- ضريبة الخصم والإضافة: سندات الدفع للموردين فقط (بالجنيه) ----
+    withholding_amount = Decimal("0")
+    withholding_code_id = None
+    if not (payload.customer_id is not None) and payload.supplier_id is not None:
+        w = Decimal(str(payload.withholding_amount or 0)).quantize(Decimal("0.01"))
+        if w > 0:
+            if getattr(payload, "currency_id", None):
+                raise HTTPException(422, "ضريبة الخصم والإضافة متاحة لسندات الدفع بالجنيه فقط")
+            if w >= Decimal(str(payload.amount)):
+                raise HTTPException(422, "المحتجز للخصم والإضافة يجب أن يكون أقل من قيمة السند")
+            if payload.withholding_code_id is not None:
+                wcode = db.query(models.WithholdingCode).filter(
+                    models.WithholdingCode.id == payload.withholding_code_id,
+                    models.WithholdingCode.company_id == db.info["company_id"],
+                ).first()
+                if wcode is None or not wcode.is_active:
+                    raise HTTPException(422, "كود الخصم والإضافة غير موجود أو غير نشط")
+                withholding_code_id = wcode.id
+            withholding_amount = w
 
     from ..accounting import link_safe_coa, link_bank_coa, link_party_coa, seed_default_coa, ensure_company_coa
 
@@ -251,6 +272,8 @@ def create_payment(
         currency_id=(currency.id if currency else None),  # type: ignore
         exchange_rate=(rate if currency else None),  # type: ignore
         foreign_amount=foreign_amount,  # type: ignore
+        withholding_amount=(withholding_amount if not is_receipt else Decimal("0")),  # type: ignore
+        withholding_code_id=(withholding_code_id if not is_receipt else None),  # type: ignore
         created_by=user.id,  # type: ignore
     )
     db.add(p)
@@ -258,10 +281,25 @@ def create_payment(
 
     # Double Entry Logic
     amount = payload.amount
+    cash_out = amount - withholding_amount  # الخصم والإضافة: النقدية الفعلية = amount − المحتجز
     if is_receipt:  # Receipt: Debit Cash, Credit counter (customer / other income)
         items = [
             {"account_id": cash_acc_id, "debit": amount, "credit": 0},
             {"account_id": counter_acc_id, "debit": 0, "credit": amount},
+        ]
+    elif withholding_amount > 0:
+        # Payment with withholding: Debit supplier (full), Credit cash (net), Credit withholding payable
+        from ..accounting import seed_default_coa as _seed_coa
+        _seed_coa(db, company_id)
+        wh_acc = db.query(models.ChartAccount).filter(
+            models.ChartAccount.company_id == company_id, models.ChartAccount.code == "2135"
+        ).first()
+        if wh_acc is None or wh_acc.is_group:
+            raise HTTPException(409, "حساب ضريبة الخصم والإضافة (2135) غير موجود — حدّث شجرة الحسابات")
+        items = [
+            {"account_id": counter_acc_id, "debit": amount, "credit": 0},
+            {"account_id": cash_acc_id, "debit": 0, "credit": cash_out},
+            {"account_id": wh_acc.id, "debit": 0, "credit": withholding_amount},
         ]
     else:  # Payment: Debit counter (supplier / misc expense), Credit Cash
         items = [
@@ -321,7 +359,9 @@ def create_payment(
     # Keep legacy balance update for backward compatibility if needed,
     # though AccountingEngine now handles ChartAccount.balance
     # (بعملة أجنبية: النقدية الفعلية cash_base قد تختلف عن التسوية settle_base)
-    delta = (cash_base if currency is not None else payload.amount) if is_receipt else -(cash_base if currency is not None else payload.amount)
+    # (مع خصم وإضافة: النقدية الفعلية = amount − المحتجز)
+    effective_cash = cash_base if currency is not None else cash_out
+    delta = effective_cash if is_receipt else -effective_cash
     if payload.safe_id is not None:
         safe = db.get(models.Safe, payload.safe_id)
         if safe: safe.balance = (safe.balance or 0) + delta
@@ -455,24 +495,11 @@ def void_payment(payment_id: int, db: Session = Depends(get_db), user: models.Us
                 ~models.JournalEntry.reference.like("VOID-%"),
             ).first()
         if existing_je is not None:
-            if p.currency_id is not None:
-                # سند أجنبي: اقلب أسطر القيد الأصلي حرفيًا (نقدية + تسوية + فرق صرف)
-                items = [
-                    {"account_id": ji.account_id, "debit": ji.credit, "credit": ji.debit}
-                    for ji in existing_je.items
-                ]
-            else:
-                amount = p.amount
-                if p.kind == "receipt":  # reversal: Debit counter, Credit cash
-                    items = [
-                        {"account_id": counter_acc_id, "debit": amount, "credit": 0},
-                        {"account_id": cash_acc_id, "debit": 0, "credit": amount},
-                    ]
-                else:  # reversal: Debit cash, Credit counter
-                    items = [
-                        {"account_id": cash_acc_id, "debit": amount, "credit": 0},
-                        {"account_id": counter_acc_id, "debit": 0, "credit": amount},
-                    ]
+            # اقلب أسطر القيد الأصلي حرفيًا — يشمل سندات الخصم والإضافة (3 أسطر) والأجنبية موحّدًا
+            items = [
+                {"account_id": ji.account_id, "debit": ji.credit, "credit": ji.debit}
+                for ji in existing_je.items
+            ]
             AccountingEngine.create_entry(
                 db=db,
                 company_id=db.info["company_id"],
@@ -485,7 +512,11 @@ def void_payment(payment_id: int, db: Session = Depends(get_db), user: models.Us
 
     # Reverse legacy safe/bank balance.
     # (سند أجنبي: النقدية الفعلية = الأجنبي × سعره — قد تختلف عن amount التسوية)
-    p_cash = (Decimal(str(p.foreign_amount)) * Decimal(str(p.exchange_rate))).quantize(Decimal("0.01")) if p.currency_id is not None else p.amount
+    # (مع خصم وإضافة: النقدية الفعلية = amount − المحتجز)
+    if p.currency_id is not None:
+        p_cash = (Decimal(str(p.foreign_amount)) * Decimal(str(p.exchange_rate))).quantize(Decimal("0.01"))
+    else:
+        p_cash = Decimal(str(p.amount)) - Decimal(str(p.withholding_amount or 0))
     delta = p_cash if p.kind == "receipt" else -p_cash
     if p.safe_id is not None:
         safe = db.get(models.Safe, p.safe_id)

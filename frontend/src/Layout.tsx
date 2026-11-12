@@ -141,6 +141,11 @@ export default function Layout() {
     ],
   });
   navSections.push({
+    key: "taxes",
+    title: t("الضرائب"),
+    items: [{ to: "/taxes", label: t("مركز الضرائب"), perm: "taxes.vat.view" }],
+  });
+  navSections.push({
     key: "pricelists",
     title: t("قوائم الأسعار"),
     items: [

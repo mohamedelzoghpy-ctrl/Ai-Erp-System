@@ -717,6 +717,9 @@ class PaymentCreate(BaseModel):
     paid_on: Optional[date] = None  # defaults to today
     currency_id: Optional[int] = None  # عملة السند (اختياري — الافتراضي جنيه)
     foreign_amount: Optional[Decimal] = Field(default=None, gt=0)  # المبلغ بالعملة الأجنبية
+    # ضريبة الخصم والإضافة: سندات الدفع للموردين فقط — المحتجز يُورَّد للمصلحة والنقدية = amount − المحتجز
+    withholding_amount: Optional[Decimal] = Field(default=None, ge=0)
+    withholding_code_id: Optional[int] = None
 
     @model_validator(mode="after")
     def _party_shape(self):
@@ -748,6 +751,9 @@ class PaymentOut(ORMModel):
     currency_code: Optional[str] = None
     exchange_rate: Optional[Decimal] = None
     foreign_amount: Optional[Decimal] = None
+    withholding_amount: Decimal = Decimal("0")
+    withholding_code_id: Optional[int] = None
+    withholding_code_name: Optional[str] = None
     status: str
     created_at: datetime
 
@@ -2743,3 +2749,37 @@ class BankReconciliationSummary(BaseModel):
     matched_total: Decimal          # صافي السطور المطابقة
     unmatched_count: int
     difference: Decimal             # الكشف − الدفاتر
+
+
+# ---------- الضرائب: أكواد الخصم والإضافة + ضريبة كسب العمل ----------
+class WithholdingCodeCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=150)
+    rate: Decimal = Field(ge=0, le=100, max_digits=5, decimal_places=2)
+    is_active: Optional[bool] = None
+
+
+class WithholdingCodeUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=150)
+    rate: Optional[Decimal] = Field(default=None, ge=0, le=100, max_digits=5, decimal_places=2)
+    is_active: Optional[bool] = None
+
+
+class WithholdingCodeOut(ORMModel):
+    id: int
+    name: str
+    rate: Decimal
+    is_active: bool
+
+
+class TaxBracketIn(BaseModel):
+    min_amount: Decimal = Field(ge=0, max_digits=14, decimal_places=2)
+    max_amount: Optional[Decimal] = Field(default=None, ge=0, max_digits=14, decimal_places=2)
+    rate: Decimal = Field(ge=0, le=100, max_digits=5, decimal_places=2)
+    sort: int = 0
+
+
+class PayrollTaxSettingsUpdate(BaseModel):
+    personal_exemption: Optional[Decimal] = Field(default=None, ge=0, max_digits=14, decimal_places=2)
+    wage_reduction_percent: Optional[Decimal] = Field(default=None, ge=0, le=100, max_digits=5, decimal_places=2)
+    social_insurance_percent: Optional[Decimal] = Field(default=None, ge=0, le=100, max_digits=5, decimal_places=2)
+    brackets: Optional[List[TaxBracketIn]] = None
