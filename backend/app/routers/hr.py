@@ -1015,6 +1015,8 @@ def create_attendance(payload: schemas.HrAttendanceCreate, db: Session = Depends
         check_out=payload.check_out,
         late_minutes=late,
         overtime_minutes=overtime,
+        overtime_type=payload.overtime_type or "day",
+        overtime_approved=payload.overtime_approved,
         notes=payload.notes,
         created_by=user.id,
     )
@@ -1042,6 +1044,10 @@ def update_attendance(attendance_id: int, payload: schemas.HrAttendanceUpdate, d
     row.check_in = data.get("check_in") or row.check_in  # type: ignore[assignment]
     row.check_out = data.get("check_out") or row.check_out  # type: ignore[assignment]
     row.notes = data.get("notes", row.notes)
+    if "overtime_type" in data:
+        row.overtime_type = data["overtime_type"]  # type: ignore[assignment]
+    if "overtime_approved" in data:
+        row.overtime_approved = data["overtime_approved"]  # type: ignore[assignment]
     late, overtime = _attendance_metrics_for(db, db.info["company_id"], row.employee_id, row.status, row.check_in, row.check_out)  # type: ignore[arg-type]
     row.late_minutes = late  # type: ignore[assignment]
     row.overtime_minutes = overtime  # type: ignore[assignment]
@@ -1595,6 +1601,45 @@ def _generate_payslip(
             notes=f"{adv.amount} على {adv.installments_count} قسطاً",
         ))
         slip.total_deductions = Decimal(slip.total_deductions) + due
+
+    # ساعات العمل الإضافي المعتمدة خلال فترة هذا المسير
+    overtime_records = (
+        db.query(models.HrAttendance)
+        .filter(
+            models.HrAttendance.company_id == company_id,
+            models.HrAttendance.employee_id == emp.id,
+            models.HrAttendance.work_date >= m_from,
+            models.HrAttendance.work_date <= m_to,
+            models.HrAttendance.overtime_minutes > 0,
+            models.HrAttendance.overtime_approved.is_(True),
+        )
+        .all()
+    )
+    if overtime_records:
+        # حساب أجر الساعة القياسي: الراتب الأساسي / (أيام الشهر × 8 ساعات)
+        hourly_rate = (daily_rate / Decimal("8")).quantize(Decimal("0.01"))
+        total_ot_pay = Decimal("0")
+        total_ot_mins = 0
+        multipliers = {
+            "day": Decimal("1.35"),      # إضافي نهاري (ساعة + 35%)
+            "night": Decimal("1.70"),    # إضافي ليلي (ساعة + 70%)
+            "holiday": Decimal("2.00"),  # إضافي عطلات ومناسبات (مثلي الأجر)
+        }
+        for rec in overtime_records:
+            ot_mins = rec.overtime_minutes or 0
+            total_ot_mins += ot_mins
+            ot_hours = Decimal(str(ot_mins)) / Decimal("60")
+            mult = multipliers.get(rec.overtime_type or "day", Decimal("1.35"))
+            total_ot_pay += (ot_hours * hourly_rate * mult)
+
+        total_ot_pay = total_ot_pay.quantize(Decimal("0.01"))
+        if total_ot_pay > 0:
+            ot_hours_display = round(total_ot_mins / 60, 1)
+            db.add(models.HrPayslipLine(
+                company_id=company_id, payslip_id=slip.id, category="earning",
+                name=f"ساعات عمل إضافية ({ot_hours_display} س)", amount=total_ot_pay,
+            ))
+            earnings += total_ot_pay
 
     deductions = Decimal(slip.total_deductions)
     if absence_deduction > 0:

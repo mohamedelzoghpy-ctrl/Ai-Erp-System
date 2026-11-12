@@ -1898,6 +1898,8 @@ class HrAttendance(TenantOwned, Base):
     check_out = Column(String(5), nullable=True)
     late_minutes = Column(Integer, nullable=False, default=0, server_default="0")
     overtime_minutes = Column(Integer, nullable=False, default=0, server_default="0")
+    overtime_type = Column(String(10), nullable=False, default="day", server_default="day")  # day (نهاري 1.35x) | night (ليلي 1.70x) | holiday (عطلة 2.0x)
+    overtime_approved = Column(Boolean, nullable=False, default=True, server_default="true")
     source = Column(String(10), nullable=False, default="manual", server_default="manual", index=True)  # manual | device | api
     notes = Column(Text, nullable=True)
     created_by = Column(Integer, ForeignKey("users.id"), nullable=True)

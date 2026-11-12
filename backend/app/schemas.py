@@ -2067,6 +2067,8 @@ class HrAttendanceCreate(BaseModel):
     status: Literal["present", "late", "absent", "excused"] = "present"
     check_in: Optional[str] = _TIME_FIELD
     check_out: Optional[str] = _TIME_FIELD
+    overtime_type: Optional[Literal["day", "night", "holiday"]] = "day"
+    overtime_approved: bool = True
     notes: Optional[str] = None
 
 
@@ -2074,6 +2076,8 @@ class HrAttendanceUpdate(BaseModel):
     status: Optional[Literal["present", "late", "absent", "excused"]] = None
     check_in: Optional[str] = _TIME_FIELD
     check_out: Optional[str] = _TIME_FIELD
+    overtime_type: Optional[Literal["day", "night", "holiday"]] = None
+    overtime_approved: Optional[bool] = None
     notes: Optional[str] = None
 
 
@@ -2089,6 +2093,8 @@ class HrAttendanceOut(ORMModel):
     check_out: Optional[str] = None
     late_minutes: int
     overtime_minutes: int
+    overtime_type: Optional[str] = "day"
+    overtime_approved: bool = True
     source: str
     notes: Optional[str] = None
     created_at: datetime
