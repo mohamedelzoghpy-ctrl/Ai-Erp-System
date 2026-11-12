@@ -689,6 +689,188 @@ def payroll_tax_pdf(
     )
 
 
+# ============================================ 3ب) الإقرار السنوي الموحد للمرتبات — نموذج خ السنوي
+def _payroll_annual(db: Session, company_id: int, year: int) -> dict:
+    """إقرار سنوي موحّد (نموذج خ السنوي): تجميع مسيرات السنة كلها لكل موظف.
+
+    الفرق عن تقرير المسير الشهري: الوعاء السنوي هنا **فعلي** (مجموع 12 شهر)
+    وليس تقديريًا (شهري × 12) — فالترقيات والبدائل المتغيرة خلال السنة
+    تُحتسب على حقيقتها، مع مقارنة الضريبة السنوية بما اقتُطع فعليًا شهريًا."""
+    s = _payroll_settings(db, company_id)
+    brackets = _brackets(db, company_id)
+    runs = (
+        db.query(models.HrPayrollRun)
+        .filter(models.HrPayrollRun.company_id == company_id, models.HrPayrollRun.year == year)
+        .order_by(models.HrPayrollRun.month)
+        .all()
+    )
+    run_ids = [r.id for r in runs]
+    slips = (
+        db.query(models.HrPayslip, models.HrEmployee, models.HrPayrollRun.month)
+        .join(models.HrEmployee, models.HrEmployee.id == models.HrPayslip.employee_id)
+        .join(models.HrPayrollRun, models.HrPayrollRun.id == models.HrPayslip.run_id)
+        .filter(models.HrPayslip.run_id.in_(run_ids))
+        .all()
+    ) if run_ids else []
+    slip_ids = [slip.id for slip, _e, _m in slips]
+    si_by_slip: dict = {}
+    tax_by_slip: dict = {}
+    if slip_ids:
+        lines = db.query(models.HrPayslipLine).filter(models.HrPayslipLine.payslip_id.in_(slip_ids)).all()
+        for line in lines:
+            name = line.name or ""
+            if line.category != "deduction":
+                continue
+            if "تأمينات" in name:
+                si_by_slip[line.payslip_id] = si_by_slip.get(line.payslip_id, Decimal("0")) + Decimal(str(line.amount or 0))
+            elif "ضريبة" in name:
+                tax_by_slip[line.payslip_id] = tax_by_slip.get(line.payslip_id, Decimal("0")) + Decimal(str(line.amount or 0))
+
+    months: List[dict] = []
+    per_emp: dict = {}
+    for r in runs:
+        m_slips = [(slip, emp) for slip, emp, m in slips if m == r.month]
+        m_gross = m_si = m_tax = Decimal("0")
+        for slip, emp in m_slips:
+            gross = Decimal(str(slip.base_salary or 0)) + Decimal(str(slip.total_earnings or 0))
+            si = si_by_slip.get(slip.id, Decimal("0"))
+            if si == 0 and Decimal(str(s.social_insurance_percent)) > 0:
+                si = (gross * Decimal(str(s.social_insurance_percent)) / Decimal("100")).quantize(TWO)
+            actual = tax_by_slip.get(slip.id, Decimal("0"))
+            m_gross += gross
+            m_si += si
+            m_tax += actual
+            acc = per_emp.setdefault(emp.id, {
+                "employee_id": emp.id, "code": emp.code, "name": emp.full_name,
+                "gross": Decimal("0"), "si": Decimal("0"), "actual": Decimal("0"), "months": 0,
+            })
+            acc["gross"] += gross
+            acc["si"] += si
+            acc["actual"] += actual
+            acc["months"] += 1
+        months.append({
+            "month": r.month, "period": f"{year}-{r.month:02d}", "status": r.status,
+            "employees": len(m_slips),
+            "gross": _q(m_gross), "si": _q(m_si), "actual_withheld": _q(m_tax),
+        })
+    rows = []
+    for acc in per_emp.values():
+        taxable = acc["gross"] - acc["si"] - Decimal(str(s.personal_exemption))
+        taxable = max(taxable, Decimal("0")).quantize(TWO)
+        annual_tax = progressive_tax(taxable, brackets)
+        if Decimal(str(s.wage_reduction_percent)) > 0:
+            annual_tax = (annual_tax * (Decimal("100") - Decimal(str(s.wage_reduction_percent))) / Decimal("100")).quantize(TWO)
+        rows.append({
+            "employee_id": acc["employee_id"], "code": acc["code"], "name": acc["name"],
+            "months": acc["months"],
+            "annual_gross": _q(acc["gross"]), "annual_si": _q(acc["si"]),
+            "personal_exemption": _q(s.personal_exemption),
+            "annual_taxable": taxable, "annual_tax": annual_tax,
+            "actual_withheld": _q(acc["actual"]),
+            "difference": _q(acc["actual"] - annual_tax),
+        })
+    rows.sort(key=lambda x: str(x["code"]))
+    total_tax = sum((r["annual_tax"] for r in rows), Decimal("0"))
+    total_actual = sum((r["actual_withheld"] for r in rows), Decimal("0"))
+    return {
+        "year": year, "months_count": len(runs),
+        "posted_months": sum(1 for r in runs if r.status == "posted"),
+        "personal_exemption": _q(s.personal_exemption),
+        "wage_reduction_percent": _q(s.wage_reduction_percent),
+        "months": months, "rows": rows,
+        "total_annual_gross": _q(sum((r["annual_gross"] for r in rows), Decimal("0"))),
+        "total_annual_taxable": _q(sum((r["annual_taxable"] for r in rows), Decimal("0"))),
+        "total_annual_tax": total_tax,
+        "total_actual": total_actual,
+        "total_difference": _q(total_actual - total_tax),
+    }
+
+
+def _payroll_annual_tables(r: dict) -> list:
+    rows = r["rows"]
+    tables = [(
+        f"الإقرار السنوي الموحد للمرتبات {r['year']} — نموذج خ السنوي",
+        ["الكود", "الاسم", "الشهور", "الإجمالي السنوي", "التأمينات السنوية", "الاعفاء الشخصي",
+         "الوعاء السنوي", "الضريبة السنوية", "المقطوع فعليًا", "الفرق"],
+        [
+            [
+                ("text", row["code"]), ("text", row["name"]), ("text", str(row["months"])),
+                ("money", row["annual_gross"]), ("money", row["annual_si"]),
+                ("money", row["personal_exemption"]), ("money", row["annual_taxable"]),
+                ("money", row["annual_tax"]), ("money", row["actual_withheld"]), ("money", row["difference"]),
+            ]
+            for row in rows
+        ] or [[("text", "لا يوجد موظفون في السنة"), ("text", "")] + [("money", 0)] * 8],
+    ), (
+        "تفصيل الشهور",
+        ["الشهر", "الحالة", "الموظفون", "الإجمالي", "التأمينات", "المقطوع فعليًا"],
+        [
+            [
+                ("text", m["period"]),
+                ("text", "مُرحَّل" if m["status"] == "posted" else "مسودة"),
+                ("text", str(m["employees"])),
+                ("money", m["gross"]), ("money", m["si"]), ("money", m["actual_withheld"]),
+            ]
+            for m in r["months"]
+        ] or [[("text", "لا مسيرات في السنة"), ("text", ""), ("text", "")] + [("money", 0)] * 3],
+    ), (
+        "الإجماليات",
+        ["البند", "القيمة"],
+        [
+            [("text", "عدد الشهور المعالجة (منها مُرحّلة)"), ("text", f"{r['months_count']} ({r['posted_months']} مُرحّلة)")],
+            [("text", "الاعفاء الشخصي السنوي"), ("money", r["personal_exemption"])],
+            [("text", f"تخفيض قيمة الضريبة ({r['wage_reduction_percent']}%)"), ("text", "مطبق" if r["wage_reduction_percent"] else "غير مطبق")],
+            [("text", "إجمالي الدخل السنوي"), ("money", r["total_annual_gross"])],
+            [("text", "إجمالي الوعاء السنوي"), ("money", r["total_annual_taxable"])],
+            [("text", "إجمالي الضريبة السنوية المستحقة"), ("money", r["total_annual_tax"])],
+            [("text", "إجمالي المقطوع فعليًا خلال السنة"), ("money", r["total_actual"])],
+            [("text", "فرق التسوية السنوي (يُسوّى من راتب ديسمبر أو نموذج تعديل)"), ("money", r["total_difference"])],
+        ],
+    )]
+    return tables
+
+
+@router.get("/payroll-tax/annual/{year}")
+def payroll_tax_annual_report(
+    year: int,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """الإقرار السنوي الموحد للمرتبات: وعاء فعلي لكل موظف عبر كل مسيرات السنة."""
+    company_id = _company_id(user)
+    return _payroll_annual(db, company_id, year)
+
+
+@router.get("/payroll-tax/annual/{year}/xlsx")
+def payroll_tax_annual_xlsx(
+    year: int,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    company_id = _company_id(user)
+    r = _payroll_annual(db, company_id, year)
+    return FastResponse(
+        content=build_tables_xlsx("الإقرار السنوي الموحد للمرتبات", f"السنة {r['year']} — نموذج خ السنوي", _payroll_annual_tables(r)),
+        media_type=XLSX_MIME,
+        headers={"Content-Disposition": f'attachment; filename="payroll-tax-annual-{r["year"]}.xlsx"'},
+    )
+
+
+@router.get("/payroll-tax/annual/{year}/pdf")
+def payroll_tax_annual_pdf(
+    year: int,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    company_id = _company_id(user)
+    r = _payroll_annual(db, company_id, year)
+    return FastResponse(
+        content=build_tables_pdf("الإقرار السنوي الموحد للمرتبات", f"السنة {r['year']} — نموذج خ السنوي", _payroll_annual_tables(r)),
+        media_type=PDF_MIME,
+        headers={"Content-Disposition": f'attachment; filename="payroll-tax-annual-{r["year"]}.pdf"'},
+    )
+
+
 # ==================================================== 4) النماذج الرسمية لمصلحة الضرائب
 QUARTER_MONTHS = {1: (1, 3), 2: (4, 6), 3: (7, 9), 4: (10, 12)}
 

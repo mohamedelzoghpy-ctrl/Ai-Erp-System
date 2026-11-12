@@ -302,6 +302,13 @@ function PayrollTab() {
     });
   const dl = useAction();
   const fq = runId ? `/${runId}` : "";
+  // الإقرار السنوي الموحد (نموذج خ السنوي) — وعاء فعلي = مجموع شهور السنة
+  const [annualYear, setAnnualYear] = useState<string>(String(new Date().getFullYear()));
+  const annual = useFetch<any>(
+    () => (annualYear ? api.get<any>(`/taxes/payroll-tax/annual/${annualYear}`) : Promise.resolve(null)),
+    `ptax-annual${annualYear}`,
+  );
+  const dlAnn = useAction();
   return (
     <>
       <div className="card card-pad">
@@ -342,6 +349,51 @@ function PayrollTab() {
           />
         </>
       )}
+      {/* ==================== الإقرار السنوي الموحد — نموذج خ السنوي ==================== */}
+      <div className="card card-pad" style={{ marginTop: 14 }}>
+        <div className="row" style={{ justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+          <h3 style={{ margin: 0 }}>{t("الإقرار السنوي الموحد للمرتبات (نموذج خ السنوي)")}</h3>
+          <div className="row" style={{ gap: 8 }}>
+            <input dir="ltr" type="number" value={annualYear} onChange={(e) => setAnnualYear(e.target.value)} style={{ width: 100 }} placeholder={t("السنة")} />
+            <ExportButton busy={dlAnn.busy} onClick={() => void dlAnn.run(() => api.download(`/taxes/payroll-tax/annual/${annualYear}/xlsx`, `payroll-tax-annual-${annualYear}.xlsx`))}>{t("Excel")}</ExportButton>
+            <ExportButton busy={dlAnn.busy} onClick={() => void dlAnn.run(() => api.download(`/taxes/payroll-tax/annual/${annualYear}/pdf`, `payroll-tax-annual-${annualYear}.pdf`))}>{t("PDF")}</ExportButton>
+          </div>
+        </div>
+        <p className="muted" style={{ fontSize: 13, marginTop: 8 }}>
+          {t("وعاء سنوي فعلي لكل موظف (مجموع شهور السنة، وليس شهري ×12 التقديري) مع مقارنة المقطوع فعليًا — فرق التسوية يُسوّى من راتب ديسمبر أو نموذج تعديل")}
+        </p>
+        <Alert>{annual.error || dlAnn.error}</Alert>
+        {annual.loading && <Loading />}
+        {annual.data && (
+          <>
+            <div className="grid kpis" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 12, margin: "12px 0" }}>
+              <Kpi label={t("الدخل السنوي")} value={money(annual.data.total_annual_gross)} />
+              <Kpi label={t("الوعاء السنوي")} value={money(annual.data.total_annual_taxable)} />
+              <Kpi label={t("الضريبة السنوية المستحقة")} value={money(annual.data.total_annual_tax)} />
+              <Kpi label={t("المقطوع فعليًا")} value={money(annual.data.total_actual)} />
+              <Kpi label={t("فرق التسوية السنوي")} value={money(annual.data.total_difference)} tone={Number(annual.data.total_difference) < 0 ? "warn" : undefined} />
+            </div>
+            <Table
+              title={`${t("الإقرار السنوي")} ${annual.data.year} · ${annual.data.months_count} ${t("شهر")}${annual.data.posted_months < annual.data.months_count ? ` (${annual.data.posted_months} ${t("مُرحَّل")})` : ""}`}
+              headers={[t("الكود"), t("الاسم"), t("الشهور"), t("الإجمالي السنوي"), t("التأمينات"), t("الوعاء السنوي"), t("الضريبة السنوية"), t("المقطوع فعليًا"), t("الفرق")]}
+              rows={annual.data.rows.map((row: any) => [
+                row.code, row.name, row.months, money(row.annual_gross), money(row.annual_si),
+                money(row.annual_taxable), money(row.annual_tax), money(row.actual_withheld), money(row.difference),
+              ])}
+            />
+            {annual.data.months?.length > 0 && (
+              <Table
+                title={t("تفصيل الشهور")}
+                headers={[t("الشهر"), t("الحالة"), t("الموظفون"), t("الإجمالي"), t("التأمينات"), t("المقطوع فعليًا")]}
+                rows={annual.data.months.map((m: any) => [
+                  m.period, m.status === "posted" ? t("مُرحَّل") : t("مسودة"), m.employees,
+                  money(m.gross), money(m.si), money(m.actual_withheld),
+                ])}
+              />
+            )}
+          </>
+        )}
+      </div>
       {manage && (
         <div className="card card-pad" style={{ marginTop: 14 }}>
           <div className="row" style={{ justifyContent: "space-between" }}>

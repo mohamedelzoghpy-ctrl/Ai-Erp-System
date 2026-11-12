@@ -272,3 +272,66 @@ def test_payroll_tax_progressive_calculation_and_settings():
     finally:
         app.dependency_overrides.pop(get_db, None)
         engine.dispose()
+
+
+def test_payroll_tax_annual_consolidated_return():
+    """الإقرار السنوي الموحد (نموذج خ السنوي): وعاء فعلي = مجموع شهور السنة
+    (وليس شهري ×12) — تجميع الموظف عبر الشهور + تفصيل الشهور + التسوية."""
+    c, engine, _ = _client()
+    try:
+        ok(c.get("/taxes/payroll-tax/settings"))  # تبذير الافتراضيات
+        emp = ok(c.post("/hr/employees", json={"full_name": "موظف سنوي", "basic_salary": "20000"}), 201)
+        ok(c.post("/hr/salary-components", json={
+            "employee_id": emp["id"], "name": "تأمينات اجتماعية", "category": "deduction",
+            "amount_mode": "percent_of_base", "percent_value": "11",
+        }), 201)
+        emp2 = ok(c.post("/hr/employees", json={"full_name": "موظف جزئي", "basic_salary": "10000"}), 201)
+        ok(c.post("/hr/salary-components", json={
+            "employee_id": emp2["id"], "name": "تأمينات اجتماعية", "category": "deduction",
+            "amount_mode": "percent_of_base", "percent_value": "11",
+        }), 201)
+        r1 = ok(c.post("/hr/payroll-runs", json={"year": 2026, "month": 1}), 201)
+        r2 = ok(c.post("/hr/payroll-runs", json={"year": 2026, "month": 2}), 201)
+        ok(c.post(f"/hr/payroll-runs/{r2['id']}/post", json={}))
+
+        ann = ok(c.get("/taxes/payroll-tax/annual/2026"))
+        assert ann["year"] == 2026 and ann["months_count"] == 2 and ann["posted_months"] == 1
+        # تجميع عبر الشهور: 2×20,000 − تأمينات 2×2,200 − اعفاء 20,000 = 15,600
+        row = next(x for x in ann["rows"] if x["employee_id"] == emp["id"])
+        assert row["months"] == 2
+        assert Decimal(str(row["annual_gross"])) == Decimal("40000.00")
+        assert Decimal(str(row["annual_si"])) == Decimal("4400.00")
+        assert Decimal(str(row["annual_taxable"])) == Decimal("15600.00")
+        # شرائح الافتراض (أول 40,000 بلا ضريبة) → صفر، والفرق = −مقطوع (صفر)
+        assert Decimal(str(row["annual_tax"])) == Decimal("0.00")
+        assert Decimal(str(row["difference"])) == Decimal(str(row["actual_withheld"])) - Decimal(str(row["annual_tax"]))
+        # موظف الترتيب الثاني ظهر في الشهرين أيضًا (المسير يحسب كل الموظفين) — وعاؤه 20,000−2,200−20,000 < 0
+        row2 = next(x for x in ann["rows"] if x["employee_id"] == emp2["id"])
+        assert row2["months"] == 2
+        assert Decimal(str(row2["annual_taxable"])) == Decimal("0.00")
+        assert len(ann["months"]) == 2
+        m2 = next(m for m in ann["months"] if m["month"] == 2)
+        assert m2["status"] == "posted" and m2["employees"] == 2
+        # تعاكس التقدير: تقرير الشهر يقدّر ×12 بينما السنوي فعلي
+        monthly = ok(c.get(f"/taxes/payroll-tax/{r1['id']}"))
+        assert Decimal(str(monthly["rows"][0]["annual_gross"])) == Decimal("240000.00")
+        # شرائح مخصصة: 0% حتى 10,000 ثم 10% → وعاء 15,600 → ضريبة 560
+        ok(c.put("/taxes/payroll-tax/settings", json={"brackets": [
+            {"min_amount": "0", "max_amount": "10000", "rate": "0", "sort": 0},
+            {"min_amount": "10000", "max_amount": None, "rate": "10", "sort": 1},
+        ]}), 200)
+        ann2 = ok(c.get("/taxes/payroll-tax/annual/2026"))
+        row3 = next(x for x in ann2["rows"] if x["employee_id"] == emp["id"])
+        assert Decimal(str(row3["annual_tax"])) == Decimal("560.00")
+        assert Decimal(str(ann2["total_annual_tax"])) == Decimal("560.00")
+        assert Decimal(str(ann2["total_annual_taxable"])) == Decimal("15600.00")
+        # سنة بلا مسيرات → إقرار شاغر 200
+        empty = ok(c.get("/taxes/payroll-tax/annual/2030"))
+        assert empty["months_count"] == 0 and empty["rows"] == [] and Decimal(str(empty["total_annual_tax"])) == 0
+        # التصديرات ثنائية (لا تُقرأ json)
+        for path in ["/taxes/payroll-tax/annual/2026/xlsx", "/taxes/payroll-tax/annual/2026/pdf"]:
+            r = c.get(path)
+            assert r.status_code == 200 and len(r.content) > 500, path
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+        engine.dispose()
