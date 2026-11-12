@@ -337,6 +337,48 @@ def build_receipt_document(
     return document
 
 
+# ---------------------------------------------------------------- الأرشفة الإلكترونية
+def build_archive_xml(
+    *,
+    rin: str,
+    taxpayer_name: str,
+    activity_code: str,
+    documents: List[Dict[str, Any]],
+) -> str:
+    """تقرير أرشفة بصيغة XML (e-Archiving) — مستند أو أكثر من مصادر الشركة.
+
+    documents: [{document_type, internal_id, eta_uuid, date_time_issued, total_amount, submission_uuid}]
+    البنية تتبع هيكل تقرير الأرشفة (Header + Documents) — تُثبَّت التسميات النهائية عند تسجيل الخدمة."""
+    from xml.sax.saxutils import escape
+    from datetime import datetime as _dt, timezone as _tz
+
+    def tag(name: str, value) -> str:
+        return f"<{name}>{escape(str(value if value is not None else ''))}</{name}>"
+
+    now = _dt.now(_tz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    parts = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        "<ArchiveReport>",
+        tag("Version", "2.0"),
+        tag("dateTimeIssued", now),
+        tag("TaxpayerRIN", rin),
+        tag("TaxpayerName", taxpayer_name),
+        tag("TaxpayerActivityCode", activity_code),
+        "<Documents>",
+    ]
+    for d in documents:
+        parts.append("<Document>")
+        parts.append(tag("Type", d.get("document_type", "")))
+        parts.append(tag("UUID", d.get("eta_uuid", "")))
+        parts.append(tag("internalID", d.get("internal_id", "")))
+        parts.append(tag("dateTimeIssued", d.get("date_time_issued") or now))
+        parts.append(tag("totalAmount", d.get("total_amount") or 0))
+        parts.append(tag("submissionUUID", d.get("submission_uuid") or ""))
+        parts.append("</Document>")
+    parts += ["</Documents>", "</ArchiveReport>"]
+    return "\n".join(parts)
+
+
 # ---------------------------------------------------------------- المستندات الواردة (مشتريات)
 def fetch_new_purchase_documents(env: str, client_id: str = "", client_secret: str = "") -> List[Dict[str, Any]]:
     """جلب فواتير المشتريات الواردة من المنظومة (موردين أرسلوا إلكترونيًا).

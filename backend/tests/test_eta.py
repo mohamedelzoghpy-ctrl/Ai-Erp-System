@@ -420,3 +420,44 @@ def test_receipt_bulk_queue_and_qr(api):
     assert qr.content[:8] == b"\x89PNG\r\n\x1a\n" and len(qr.content) > 300
     # QR لإرسال غير موجود → 404
     assert c.get("/eta/submissions/999999/qr.png").status_code == 404
+
+
+# ================================================== 17) الأرشفة الإلكترونية
+def test_eta_archiving_flow(api):
+    """أرشفة: مقبولة صادرًا + واردة → XML سليم · idempotent · تنزيل XML · العزل."""
+    c = api
+    _configure_mock(c)
+    order = _confirmed_order(c)
+    ok(c.post(f"/eta/submit/{order['id']}"), 200)
+    ok(c.post("/eta/incoming/sync"), 200)  # عينتا mock واردتان
+    # أرشفة أولى: فاتورة صادرة + واردتان
+    r = ok(c.post("/eta/archive/run"), 200)
+    assert r["archived"] == 3, r
+    assert r["pending"] == 0  # mock → مؤرشف فورًا
+    # idempotent: المؤرشف لا يتكرر
+    r2 = ok(c.post("/eta/archive/run"))
+    assert r2["archived"] == 0
+    # السجل: صادر واحد (I) + واردان
+    rows = ok(c.get("/eta/archive"))
+    assert len(rows) == 3
+    srcs = {(x["source"], x["document_type"]) for x in rows}
+    assert ("submission", "I") in srcs and ("incoming", "I") in srcs
+    assert all(x["status"] == "archived" for x in rows)
+    # تنزيل XML سليم: ترويسة + بيانات الممول والمستند
+    sub_row = next(x for x in rows if x["source"] == "submission")
+    x = c.get(f"/eta/archive/{sub_row['id']}/xml")
+    assert x.status_code == 200
+    body = x.content.decode("utf-8")
+    assert body.startswith("<?xml") and "<ArchiveReport>" in body
+    assert "<TaxpayerRIN>300000000000003</TaxpayerRIN>" in body
+    assert f"<internalID>SO-{order['id']}</internalID>" in body
+    assert 'Content-Disposition' in x.headers and "eta-archive-" in x.headers["Content-Disposition"]
+    # فلترة بالمصدر
+    only_in = ok(c.get("/eta/archive?source=incoming"))
+    assert len(only_in) == 2 and all(x["source"] == "incoming" for x in only_in)
+    # غير موجود → 404
+    assert c.get("/eta/archive/999999/xml").status_code == 404
+    # أمر مؤكد غير مُرسل للمنظومة → لا يُؤرشف (مستند غير مقبول)
+    other = _confirmed_order(c)
+    r3 = ok(c.post("/eta/archive/run"))
+    assert r3["archived"] == 0, "غير المقبول لا يُؤرشف"

@@ -5,7 +5,7 @@ import type { EtaSubmission } from "../types";
 import { money } from "../format";
 import { Alert, Empty, Field, Loading, PageHeader } from "../ui";
 
-type Tab = "queue" | "statuses" | "incoming" | "settings";
+type Tab = "queue" | "statuses" | "archive" | "incoming" | "settings";
 
 function StatusBadge({ status }: { status: string }) {
   return (
@@ -26,6 +26,7 @@ export default function Eta() {
   const subs = useFetch(() => api.get<EtaSubmission[]>("/eta/submissions?limit=100"), "eta-subs");
   const queue = useFetch(() => api.get<{ pending: any[]; sent: any[] }>("/eta/queue"), "eta-queue");
   const receipts = useFetch(() => api.get<{ pending: any[]; sent: any[] }>("/eta/queue?type=R"), "eta-receipts");
+  const archive = useFetch(() => api.get<any[]>("/eta/archive?limit=200"), "eta-archive");
   const incoming = useFetch(() => api.get<any[]>("/eta/incoming"), "eta-incoming");
   const warehouses = useFetch(() => api.get<{ id: number; name: string }[]>("/warehouses?limit=200"), "eta-whs");
   const { busy, error, run } = useAction();
@@ -34,7 +35,7 @@ export default function Eta() {
   const [selected, setSelected] = useState<Record<number, boolean>>({});
   const [incomingWh, setIncomingWh] = useState("");
 
-  const reloadOps = () => { queue.reload(); receipts.reload(); subs.reload(); incoming.reload(); };
+  const reloadOps = () => { queue.reload(); receipts.reload(); archive.reload(); subs.reload(); incoming.reload(); };
   const submitSelected = async () => {
     const ids = Object.entries(selected).filter(([, v]) => v).map(([k]) => Number(k));
     if (!ids.length) { alert("حدّد فاتورة واحدة على الأقل"); return; }
@@ -86,6 +87,21 @@ export default function Eta() {
     a.href = url; a.download = `receipt-qr-${submissionId}.png`; a.click();
     setTimeout(() => URL.revokeObjectURL(url), 5000);
   };
+  const archiveRun = async () => {
+    if (!confirm("أرشفة كل المستندات الجاهزة (المقبولة صادرًا + الواردة)؟")) return;
+    void run(async () => {
+      const r: any = await api.post("/eta/archive/run", {});
+      alert(r?.detail ? (r.detail as string) : `أُرشف ${r?.archived ?? 0} · قيد الانتظار ${r?.pending ?? 0}`);
+      reloadOps();
+    });
+  };
+  const downloadArchiveXml = async (id: number) => {
+    const blob = await fetchBlob(`/eta/archive/${id}/xml`);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `eta-archive-${id}.xml`; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  };
   const refreshOne = (id: number) => {
     void run(async () => { await api.post(`/eta/refresh/${id}`, {}); reloadOps(); });
   };
@@ -115,6 +131,7 @@ export default function Eta() {
         {([
           ["queue", "📤 فواتير البيع"],
           ["statuses", "🔄 الحالات والسجل"],
+          ["archive", "🗄️ الأرشيف"],
           ["incoming", "📥 مشتريات واردة"],
           ["settings", "⚙️ الإعداد"],
         ] as [Tab, string][]).map(([key, label]) => (
@@ -266,7 +283,46 @@ export default function Eta() {
         </div>
       )}
 
-      {/* ============================ 3) مشتريات واردة ============================ */}
+      {/* ============================ 3) الأرشيف ============================ */}
+      {tab === "archive" && (
+        <div className="card card-pad">
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+            <h3 style={{ margin: 0 }}>🗄️ سجل الأرشفة الإلكترونية (e-Archiving)</h3>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              <button className="btn btn-sm btn-primary" disabled={busy} onClick={archiveRun}>🗄️ أرشفة كل الجاهز</button>
+            </div>
+          </div>
+          <p style={{ fontSize: 13, color: "var(--muted,#64748b)", margin: "0 0 10px" }}>
+            أرشفة المستندات المقبولة (فواتير · إشعارات · إيصالات) وفواتير المشتريات الواردة بصيغة XML —
+            في بيئة التجربة تُؤرشف فورًا، وعند تسجيل خدمة الأرشفة تُرسل تلقائيًا للمنظومة.
+          </p>
+          <Alert>{archive.error}</Alert>
+          {archive.loading ? <Loading /> : (archive.data ?? []).length ? (
+            <div className="table-wrap">
+              <table>
+                <thead><tr><th>#</th><th>المصدر</th><th>النوع</th><th>المستند</th><th className="num">الإجمالي</th><th>الحالة</th><th>تاريخ الأرشفة</th><th></th></tr></thead>
+                <tbody>
+                  {(archive.data ?? []).map((a) => (
+                    <tr key={a.id}>
+                      <td>{a.id}</td>
+                      <td>{a.source === "incoming" ? "📥 وارد" : "📤 صادر"}</td>
+                      <td>{a.document_type === "R" ? "إيصال R" : a.document_type === "C" ? "إشعار C" : "فاتورة I"}</td>
+                      <td dir="ltr">{a.internal_id}</td>
+                      <td className="num">{money(a.total_amount)}</td>
+                      <td><StatusBadge status={a.status} /></td>
+                      <td dir="ltr">{a.archived_at?.slice(0, 16).replace("T", " ") ?? "—"}</td>
+                      <td><button className="btn btn-sm" title="تنزيل XML المستند المؤرشف"
+                        onClick={() => void run(() => downloadArchiveXml(a.id))}>⬇ XML</button></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : <Empty>لا مستندات مؤرشفة بعد — اضغط «أرشفة كل الجاهز»</Empty>}
+        </div>
+      )}
+
+      {/* ============================ 4) مشتريات واردة ============================ */}
       {tab === "incoming" && (
         <div className="card card-pad">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
@@ -324,7 +380,7 @@ export default function Eta() {
         </div>
       )}
 
-      {/* ============================ 4) الإعداد ============================ */}
+      {/* ============================ 5) الإعداد ============================ */}
       {tab === "settings" && (
         <EtaSettings
           cfg={cfg} busy={busy} run={run} saved={saved} setSaved={setSaved} csr={csr} setCsr={setCsr}

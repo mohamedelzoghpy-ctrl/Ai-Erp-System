@@ -1473,6 +1473,34 @@ class EtaSubmission(TenantOwned, Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
+class EtaArchive(TenantOwned, Base):
+    """أرشفة إلكترونية للمستندات (e-Archiving): سجل لكل مستند أُرشف بصيغة XML.
+
+    المصادر: إرسال صادر (فاتورة I / إشعار C / إيصال R) أو فاتورة مشتريات واردة —
+    الـ payload يحفظ المستند الكامل والـ xml بصيغة تقرير الأرشفة للمنظومة.
+    في mock تُؤرشف فورًا؛ في sandbox/prod تبقى pending لحين تسجيل خدمة الأرشفة."""
+    __tablename__ = "eta_archives"
+    __table_args__ = (
+        UniqueConstraint("company_id", "eta_uuid", name="uq_eta_archive_uuid"),
+        Index("ix_eta_archive_status", "company_id", "status"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    source = Column(String(10), nullable=False)  # submission | incoming
+    submission_id = Column(Integer, ForeignKey("eta_submissions.id", ondelete="SET NULL"), nullable=True, index=True)
+    incoming_id = Column(Integer, ForeignKey("eta_incoming_documents.id", ondelete="SET NULL"), nullable=True, index=True)
+    document_type = Column(String(2), nullable=False)  # I | C | R
+    internal_id = Column(String(60), nullable=False)
+    eta_uuid = Column(String(80), nullable=False)
+    total_amount = Column(Numeric(14, 2), nullable=False, default=0, server_default="0")
+    payload = Column(JSON, nullable=True)
+    xml = Column(Text, nullable=True)
+    status = Column(String(20), nullable=False, default="archived", server_default="archived", index=True)  # archived | pending | failed
+    note = Column(Text, nullable=True)
+    archived_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    archived_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+
 class RecurringJournal(TenantOwned, Base):
     """قالب قيد متكرر (إيجار/رواتب): يُرحّل عند استحقاقه عبر POST /run."""
     __tablename__ = "recurring_journals"

@@ -267,6 +267,10 @@ CATALOG: Dict[str, dict] = {
                 ("view", "عرض حالات الإرسال", False, False),
                 ("submit", "إرسال فاتورة وتحديث حالتها", False, False),
             ]),
+            "archive": ("الأرشفة الإلكترونية", [
+                ("view", "عرض سجل الأرشفة وتنزيل XML", False, False),
+                ("run", "أرشفة المستندات الجاهزة", False, False),
+            ]),
         },
     },
     "manufacturing": {

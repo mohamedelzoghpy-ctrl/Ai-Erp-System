@@ -1048,3 +1048,152 @@ def refresh_status(
     audit(db, user, "update", "eta_submission", sub.id, f"تحديث حالة {sub.internal_id} → {sub.status}")
     db.commit()
     return _out(sub)
+
+
+# ---------------------------------------------------------------- الأرشفة الإلكترونية
+def _archive_source_docs(db: Session, company: models.Company) -> list:
+    """المستندات الجاهزة للأرشفة: إرسالات مقبولة + فواتير واردة، غير المؤرشفة سابقًا."""
+    archived_submission_ids = {
+        row.submission_id for row in db.query(models.EtaArchive.submission_id).filter(
+            models.EtaArchive.company_id == company.id,
+            models.EtaArchive.source == "submission",
+            models.EtaArchive.submission_id.isnot(None),
+        ).all()
+    }
+    archived_incoming_ids = {
+        row.incoming_id for row in db.query(models.EtaArchive.incoming_id).filter(
+            models.EtaArchive.company_id == company.id,
+            models.EtaArchive.source == "incoming",
+            models.EtaArchive.incoming_id.isnot(None),
+        ).all()
+    }
+    docs = []
+    for sub in db.query(models.EtaSubmission).filter(
+        models.EtaSubmission.company_id == company.id,
+        models.EtaSubmission.status == "valid",
+    ).order_by(models.EtaSubmission.id).all():
+        if sub.id in archived_submission_ids:
+            continue
+        payload = sub.payload or {}
+        docs.append({
+            "source": "submission", "submission": sub,
+            "document_type": sub.document_type, "internal_id": sub.internal_id,
+            "eta_uuid": sub.eta_uuid or sub.internal_id,
+            "date_time_issued": payload.get("dateTimeIssued"),
+            "total_amount": payload.get("totalAmount") or 0,
+            "submission_uuid": sub.submission_uuid,
+            "payload": payload,
+        })
+    for inc in db.query(models.EtaIncomingDocument).filter(
+        models.EtaIncomingDocument.company_id == company.id,
+    ).order_by(models.EtaIncomingDocument.id).all():
+        if inc.id in archived_incoming_ids:
+            continue
+        payload = inc.payload or {}
+        docs.append({
+            "source": "incoming", "incoming": inc,
+            "document_type": "I", "internal_id": inc.internal_id or inc.eta_uuid,
+            "eta_uuid": inc.eta_uuid,
+            "date_time_issued": payload.get("dateTimeIssued"),
+            "total_amount": inc.total_amount,
+            "submission_uuid": None,
+            "payload": payload,
+        })
+    return docs
+
+
+def _archive_run(db: Session, company: models.Company, user: models.User, limit: int) -> dict:
+    """أرشفة دفعة: XML لكل مستند — mock: مؤرشف فورًا · غيره: pending لحين تسجيل الخدمة."""
+    docs = _archive_source_docs(db, company)[:limit]
+    if not docs:
+        return {"archived": 0, "pending": 0, "detail": "لا مستندات جديدة للأرشفة"}
+    archived = pending = 0
+    now = datetime.now(timezone.utc)
+    for d in docs:
+        xml = eta.build_archive_xml(
+            rin=company.eta_tin or "", taxpayer_name=company.name,
+            activity_code=company.eta_activity_code or "4690",
+            documents=[d],
+        )
+        if company.eta_env == "mock":
+            status, note = "archived", None
+            archived += 1
+        else:
+            status, note = "pending", "بانتظار تسجيل خدمة الأرشفة لدى المنظومة — الـ XML جاهز"
+            pending += 1
+        db.add(models.EtaArchive(
+            company_id=company.id,
+            source=d["source"],
+            submission_id=(d["submission"].id if d["source"] == "submission" else None),
+            incoming_id=(d["incoming"].id if d["source"] == "incoming" else None),
+            document_type=d["document_type"], internal_id=d["internal_id"], eta_uuid=d["eta_uuid"],
+            total_amount=Decimal(str(d["total_amount"] or 0)),
+            payload=d["payload"], xml=xml, status=status, note=note,
+            archived_by=user.id, archived_at=now,
+        ))
+    audit(db, user, "archive", "eta_archive", None, f"أرشفة: {archived} مؤرشف · {pending} قيد الانتظار")
+    db.commit()
+    return {"archived": archived, "pending": pending}
+
+
+@router.post("/archive/run")
+def archive_run(
+    limit: int = Query(100, ge=1, le=500),
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """أرشفة كل المستندات الجاهزة (مقبولة صادرًا + واردة) — idempotent: المؤرشف لا يتكرر."""
+    company = _company(db)
+    _require_ready(company, need_secret=False)
+    return _archive_run(db, company, user, limit)
+
+
+@router.get("/archive")
+def list_archive(
+    response: Response,
+    status_filter: Optional[str] = Query(None, alias="status", pattern="^(archived|pending|failed)$"),
+    source: Optional[str] = Query(None, pattern="^(submission|incoming)$"),
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+):
+    """سجل الأرشفة: كل مستند مؤرشف بمرجعه وحالته."""
+    q = db.query(models.EtaArchive).filter(models.EtaArchive.company_id == db.info["company_id"])
+    if status_filter:
+        q = q.filter(models.EtaArchive.status == status_filter)
+    if source:
+        q = q.filter(models.EtaArchive.source == source)
+    rows = paginate(q, response, skip, limit, models.EtaArchive.id.desc())
+    return [
+        {
+            "id": r.id, "source": r.source, "document_type": r.document_type,
+            "internal_id": r.internal_id, "eta_uuid": r.eta_uuid,
+            "total_amount": r.total_amount, "status": r.status, "note": r.note,
+            "submission_id": r.submission_id, "incoming_id": r.incoming_id,
+            "archived_at": r.archived_at.isoformat() if r.archived_at else None,
+        }
+        for r in rows
+    ]
+
+
+@router.get("/archive/{archive_id}/xml")
+def archive_xml(
+    archive_id: int,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+):
+    """تنزيل XML المستند المؤرشف (لرفعه يدويًا أو للمراجعة)."""
+    row = db.query(models.EtaArchive).filter(
+        models.EtaArchive.id == archive_id,
+        models.EtaArchive.company_id == db.info["company_id"],
+    ).first()
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "سجل الأرشفة غير موجود")
+    if not row.xml:
+        raise HTTPException(status.HTTP_409_CONFLICT, "لا يوجد XML لهذا السجل")
+    return Response(
+        content=row.xml.encode("utf-8"),
+        media_type="application/xml",
+        headers={"Content-Disposition": f'attachment; filename="eta-archive-{row.id}.xml"'},
+    )
