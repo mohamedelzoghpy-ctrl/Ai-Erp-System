@@ -1457,6 +1457,7 @@ class EtaSubmission(TenantOwned, Base):
     order_id = Column(Integer, ForeignKey("sales_orders.id", ondelete="CASCADE"), nullable=True, index=True)
     return_id = Column(Integer, ForeignKey("sales_returns.id", ondelete="CASCADE"), nullable=True, index=True)
     document_type = Column(String(2), nullable=False, default="I")  # I فاتورة / C إشعار دائن
+    device_id = Column(Integer, ForeignKey("eta_devices.id", ondelete="SET NULL"), nullable=True, index=True)  # جهاز توقيع الإيصال
     internal_id = Column(String(60), nullable=False)
     submission_uuid = Column(String(80), nullable=True)
     eta_uuid = Column(String(80), nullable=True)
@@ -1470,6 +1471,28 @@ class EtaSubmission(TenantOwned, Base):
     submitted_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     submitted_at = Column(DateTime(timezone=True), nullable=True)
     status_checked_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class EtaDevice(TenantOwned, Base):
+    """جهاز SDK مسجل لإيصالات المنظومة: زوج مفاتيح الجهاز يوقّع الإيصالات (R) عند الإنتاج.
+
+    التسجيل الحقيقي: توليد CSR للجهاز ثم رفعه في بوابة المنظومة — بعد إشعار
+    المنظومة يتتفعل الجهاز من هنا. في mock يتتفعل فورًا للتجربة."""
+    __tablename__ = "eta_devices"
+    __table_args__ = (UniqueConstraint("company_id", "serial", name="uq_eta_device_serial"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(120), nullable=False)
+    serial = Column(String(80), nullable=False, index=True)
+    branch_id = Column(Integer, ForeignKey("branches.id", ondelete="SET NULL"), nullable=True)
+    status = Column(String(20), nullable=False, default="pending", server_default="pending", index=True)  # pending | active | revoked
+    private_key = Column(Text, nullable=True)   # PEM (للجهاز) — لا يُرجع نصًا كاملًا أبدًا
+    public_key = Column(Text, nullable=True)
+    csr = Column(Text, nullable=True)
+    activated_at = Column(DateTime(timezone=True), nullable=True)
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
+    registered_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 

@@ -798,14 +798,28 @@ def _build_payload_for_order(db: Session, company: models.Company, order: models
 
 
 def _submit_documents(db: Session, company: models.Company, user: models.User, documents: List[dict], *, order_ids: List[Optional[int]], return_ids: List[Optional[int]]):
-    """إرسال دفعة موحّد: قيد إرسال لكل مستند (يشاركان submissionUUID)، وأخطاء النقل تسجل invalid."""
+    """إرسال دفعة موحّد: قيد إرسال لكل مستند (يشاركان submissionUUID)، وأخطاء النقل تسجل invalid.
+
+    الإيصالات (R) تُوقّع بمفتاح جهاز SDK النشط إن وُجد (مواصفة إيصالات المنظومة) —
+    وإلا بمفتاح الشركة (في mock للتجربة)."""
     if len(documents) > 100:
         raise HTTPException(422, "أقصى حجم للدفعة 100 مستند")
+    active_device = db.query(models.EtaDevice).filter(
+        models.EtaDevice.company_id == company.id,
+        models.EtaDevice.status == "active",
+        models.EtaDevice.private_key.isnot(None),
+    ).order_by(models.EtaDevice.id).first() if any(d["documentType"] == "R" for d in documents) else None
     signed: List[dict] = []
     signatures: List[str] = []
+    device_ids: List[Optional[int]] = []
     for document in documents:
-        sig = eta.sign_document(document, company.eta_private_key.encode())
+        if document["documentType"] == "R" and active_device is not None:
+            key_pem, device_id = active_device.private_key.encode(), active_device.id  # type: ignore[union-attr]
+        else:
+            key_pem, device_id = company.eta_private_key.encode(), None  # type: ignore[union-attr]
+        sig = eta.sign_document(document, key_pem)
         signatures.append(sig)
+        device_ids.append(device_id)
         signed.append({**document, "signatures": [{"signatureType": "I", "value": sig}]})
 
     client = _client_for(company)
@@ -814,10 +828,10 @@ def _submit_documents(db: Session, company: models.Company, user: models.User, d
     except eta.EtaNotConfigured as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     except Exception as exc:
-        for doc, oid, rid in zip(documents, order_ids, return_ids):
+        for doc, oid, rid, sig, did in zip(documents, order_ids, return_ids, signatures, device_ids):
             db.add(models.EtaSubmission(
                 company_id=company.id, order_id=oid, return_id=rid, document_type=doc["documentType"],
-                internal_id=doc["internalID"], status="invalid", signature=signatures[0],
+                device_id=did, internal_id=doc["internalID"], status="invalid", signature=signatures[0],
                 payload=doc, errors={"transport": str(exc)},
                 submitted_by=user.id, submitted_at=datetime.now(timezone.utc),
             ))
@@ -827,13 +841,13 @@ def _submit_documents(db: Session, company: models.Company, user: models.User, d
     accepted_by_internal = {a.get("internalId"): a for a in (result.get("acceptedDocuments") or [])}
     rejected_by_internal = {r.get("internalId"): r for r in (result.get("rejectedDocuments") or [])}
     outs = []
-    for doc, sig, oid, rid in zip(documents, signatures, order_ids, return_ids):
+    for doc, sig, oid, rid, did in zip(documents, signatures, order_ids, return_ids, device_ids):
         internal = doc["internalID"]
         acc = accepted_by_internal.get(internal) or {}
         rej = rejected_by_internal.get(internal)
         sub = models.EtaSubmission(
             company_id=company.id, order_id=oid, return_id=rid, document_type=doc["documentType"],
-            internal_id=internal,
+            device_id=did, internal_id=internal,
             submission_uuid=result.get("submissionUUID"),
             eta_uuid=acc.get("uuid"),
             eta_long_id=acc.get("longId"),
@@ -990,6 +1004,7 @@ def _out(sub: models.EtaSubmission) -> dict:
         "id": sub.id,
         "order_id": sub.order_id,
         "document_type": sub.document_type,
+        "device_id": sub.device_id,
         "internal_id": sub.internal_id,
         "submission_uuid": sub.submission_uuid,
         "eta_uuid": sub.eta_uuid,
@@ -1197,3 +1212,126 @@ def archive_xml(
         media_type="application/xml",
         headers={"Content-Disposition": f'attachment; filename="eta-archive-{row.id}.xml"'},
     )
+
+
+# ---------------------------------------------------------------- أجهزة SDK المسجلة للإيصالات
+class EtaDeviceIn(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    serial: str = Field(min_length=1, max_length=80)
+
+
+def _get_device(db: Session, company: models.Company, device_id: int) -> models.EtaDevice:
+    dev = db.query(models.EtaDevice).filter(
+        models.EtaDevice.id == device_id, models.EtaDevice.company_id == company.id
+    ).first()
+    if dev is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "الجهاز غير موجود")
+    return dev
+
+
+def _device_out(d: models.EtaDevice) -> dict:
+    return {
+        "id": d.id, "name": d.name, "serial": d.serial, "status": d.status,
+        "has_keys": bool(d.private_key),
+        "csr": d.csr,
+        "activated_at": d.activated_at.isoformat() if d.activated_at else None,
+        "revoked_at": d.revoked_at.isoformat() if d.revoked_at else None,
+        "created_at": d.created_at.isoformat() if d.created_at else None,
+    }
+
+
+@router.get("/devices")
+def list_devices(
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+):
+    """أجهزة SDK المسجلة لإيصالات المنظومة — المفاتيح لا تُرجع نصًا كاملًا أبدًا."""
+    company = _company(db)
+    rows = db.query(models.EtaDevice).filter(
+        models.EtaDevice.company_id == company.id
+    ).order_by(models.EtaDevice.id.desc()).all()
+    return [_device_out(d) for d in rows]
+
+
+@router.post("/devices", status_code=status.HTTP_201_CREATED)
+def create_device(
+    payload: EtaDeviceIn,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """تسجيل جهاز إيصالات: زوج مفاتيح + CSR للجهاز — CSR يُرفع في بوابة المنظومة،
+    وبعد إشعار المنظومة يتتفعل من نقطة التفعيل."""
+    company = _company(db)
+    _require_ready(company, need_secret=False)
+    serial = payload.serial.strip()
+    if db.query(models.EtaDevice).filter(
+        models.EtaDevice.company_id == company.id, models.EtaDevice.serial == serial
+    ).first():
+        raise HTTPException(status.HTTP_409_CONFLICT, "جهاز بنفس الرقم التسلسلي مسجل بالفعل")
+    keys = eta.generate_keypair_and_csr(company.eta_tin or serial, company.name)
+    dev = models.EtaDevice(
+        company_id=company.id, name=payload.name.strip(), serial=serial,
+        private_key=keys["private_key"], public_key=keys["public_key"], csr=keys["csr"],
+        registered_by=user.id,
+    )
+    db.add(dev)
+    audit(db, user, "create", "eta_device", None, f"جهاز {serial} — CSR للتسجيل في البوابة")
+    db.commit()
+    db.refresh(dev)
+    return _device_out(dev)
+
+
+@router.post("/devices/{device_id}/activate")
+def activate_device(
+    device_id: int,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """تفعيل جهاز بعد رفع CSR في بوابة المنظومة — بعدها إيصالات هذا الجهاز تُوقّع بمفاتيحه."""
+    company = _company(db)
+    dev = _get_device(db, company, device_id)
+    if dev.status == "active":
+        raise HTTPException(status.HTTP_409_CONFLICT, "الجهاز مفعّل بالفعل")
+    if dev.status == "revoked":
+        raise HTTPException(status.HTTP_409_CONFLICT, "الجهاز ملغى ولا يُفعَّل — سجّل جهازًا جديدًا")
+    if not dev.private_key:
+        raise HTTPException(status.HTTP_409_CONFLICT, "لا مفاتيح للجهاز — أعد تسجيله")
+    dev.status = "active"  # type: ignore
+    dev.activated_at = datetime.now(timezone.utc)  # type: ignore
+    audit(db, user, "update", "eta_device", dev.id, f"تفعيل جهاز {dev.serial} لتوقيع الإيصالات")
+    db.commit()
+    return _device_out(dev)
+
+
+@router.post("/devices/{device_id}/revoke")
+def revoke_device(
+    device_id: int,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """إلغاء جهاز (فقد/تغيير كاشير/إعادة تسجيل) — الإيصالات تعود لمفتاح الشركة."""
+    company = _company(db)
+    dev = _get_device(db, company, device_id)
+    if dev.status == "revoked":
+        raise HTTPException(status.HTTP_409_CONFLICT, "الجهاز ملغى بالفعل")
+    dev.status = "revoked"  # type: ignore
+    dev.revoked_at = datetime.now(timezone.utc)  # type: ignore
+    audit(db, user, "update", "eta_device", dev.id, f"إلغاء جهاز {dev.serial}")
+    db.commit()
+    return _device_out(dev)
+
+
+@router.delete("/devices/{device_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_device(
+    device_id: int,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """حذف جهاز — مفعّل فقط بعد إلغائه حفاظًا على سجل التوقيعات."""
+    company = _company(db)
+    dev = _get_device(db, company, device_id)
+    if dev.status == "active":
+        raise HTTPException(status.HTTP_409_CONFLICT, "الجهاز مفعّل — ألغِه أولًا ثم احذفه")
+    db.delete(dev)
+    audit(db, user, "delete", "eta_device", dev.id, f"حذف جهاز {dev.serial}")
+    db.commit()

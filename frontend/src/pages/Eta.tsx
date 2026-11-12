@@ -382,9 +382,12 @@ export default function Eta() {
 
       {/* ============================ 5) الإعداد ============================ */}
       {tab === "settings" && (
-        <EtaSettings
-          cfg={cfg} busy={busy} run={run} saved={saved} setSaved={setSaved} csr={csr} setCsr={setCsr}
-        />
+        <>
+          <EtaSettings
+            cfg={cfg} busy={busy} run={run} saved={saved} setSaved={setSaved} csr={csr} setCsr={setCsr}
+          />
+          <EtaDevices busy={busy} run={run} />
+        </>
       )}
     </>
   );
@@ -501,6 +504,82 @@ function EtaSettings({ cfg, busy, run, saved, setSaved, csr, setCsr }: {
       {csr && (
         <div style={{ marginTop: 12 }}>
           <b>ملف الـ CSR (انسخه واحفظه للرفع في البوابة):</b>
+          <textarea readOnly rows={6} dir="ltr" style={{ width: "100%", fontFamily: "monospace", fontSize: 11, marginTop: 6 }} value={csr} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** أجهزة SDK المسجلة لتوقيع الإيصالات (R) — تسجيل بـ CSR · تفعيل بعد رفعه في البوابة · إلغاء. */
+function EtaDevices({ busy, run }: { busy: boolean; run: (fn: () => Promise<void>) => void }) {
+  const devices = useFetch(() => api.get<any[]>("/eta/devices"), "eta-devices");
+  const [nd, setNd] = useState({ name: "", serial: "" });
+  const [csr, setCsr] = useState<string | null>(null);
+
+  const add = () =>
+    void run(async () => {
+      const r: any = await api.post("/eta/devices", nd);
+      setNd({ name: "", serial: "" });
+      setCsr(r?.csr ?? null);
+      alert("سُجّل الجهاز — انسخ الـ CSR وارفعه في بوابة المنظومة ثم فعّل الجهاز هنا");
+      devices.reload();
+    });
+  const act = (id: number, path: "activate" | "revoke") =>
+    void run(async () => {
+      await api.post(`/eta/devices/${id}/${path}`, {});
+      alert(path === "activate" ? "تُفعّل الجهاز — إيصالات الكاشير ستُوقّع بمفاتيحه" : "أُلغي الجهاز — الإيصالات تعود لمفتاح الشركة");
+      devices.reload();
+    });
+  const del = (id: number) =>
+    void run(async () => {
+      await api.del(`/eta/devices/${id}`);
+      devices.reload();
+    });
+  const statusLabel = (s: string) =>
+    s === "active" ? "مفعّل ✓" : s === "pending" ? "بانتظار التسجيل" : "ملغى";
+
+  return (
+    <div className="card card-pad" style={{ marginTop: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+        <h3 style={{ margin: 0 }}>🖥️ أجهزة توقيع الإيصالات (SDK المسجل)</h3>
+      </div>
+      <p style={{ fontSize: 13, color: "var(--muted,#64748b)", margin: "0 0 10px" }}>
+        إيصالات نقاط البيع (R) تُوقّع بمفتاح الجهاز النشط حسب مواصفة المنظومة —
+        سجّل الجهاز (يولّد CSR)، ارفع الـ CSR في بوابة المنظومة، ثم فعّله هنا.
+      </p>
+      <Alert>{devices.error}</Alert>
+      {devices.loading ? <Loading /> : (devices.data ?? []).length ? (
+        <div className="table-wrap">
+          <table>
+            <thead><tr><th>#</th><th>الاسم</th><th>الرقم التسلسلي</th><th>الحالة</th><th>CSR</th><th></th></tr></thead>
+            <tbody>
+              {(devices.data ?? []).map((d) => (
+                <tr key={d.id}>
+                  <td>{d.id}</td>
+                  <td>{d.name}</td>
+                  <td dir="ltr">{d.serial}</td>
+                  <td><StatusBadge status={d.status === "active" ? "valid" : d.status === "pending" ? "submitted" : "invalid"} /> <span style={{ fontSize: 12 }}>{statusLabel(d.status)}</span></td>
+                  <td>{d.csr ? <button className="btn btn-sm" onClick={() => { setCsr(d.csr); }}>👁 CSR</button> : "—"}</td>
+                  <td>
+                    {d.status === "pending" && <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => act(d.id, "activate")}>تفعيل</button>}
+                    {d.status === "active" && <button className="btn btn-sm" disabled={busy} onClick={() => act(d.id, "revoke")}>إلغاء</button>}
+                    {d.status !== "active" && <button className="btn btn-sm" disabled={busy} onClick={() => del(d.id)}>حذف</button>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : <Empty>لا أجهزة مسجلة — سجّل جهاز الكاشير لتوقيع الإيصالات</Empty>}
+      <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+        <input placeholder="اسم الجهاز (كاشير 1)" value={nd.name} onChange={(e) => setNd({ ...nd, name: e.target.value })} style={{ flex: 1, minWidth: 160 }} />
+        <input dir="ltr" placeholder="الرقم التسلسلي DEV-001" value={nd.serial} onChange={(e) => setNd({ ...nd, serial: e.target.value })} style={{ width: 200 }} />
+        <button className="btn btn-primary" disabled={busy || !nd.name.trim() || !nd.serial.trim()} onClick={add}>+ تسجيل جهاز</button>
+      </div>
+      {csr && (
+        <div style={{ marginTop: 12 }}>
+          <b>ملف CSR الجهاز (ارفعه في بوابة المنظومة):</b>
           <textarea readOnly rows={6} dir="ltr" style={{ width: "100%", fontFamily: "monospace", fontSize: 11, marginTop: 6 }} value={csr} />
         </div>
       )}

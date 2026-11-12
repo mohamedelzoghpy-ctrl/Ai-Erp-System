@@ -271,6 +271,10 @@ CATALOG: Dict[str, dict] = {
                 ("view", "عرض سجل الأرشفة وتنزيل XML", False, False),
                 ("run", "أرشفة المستندات الجاهزة", False, False),
             ]),
+            "device": ("أجهزة توقيع الإيصالات", [
+                ("view", "عرض الأجهزة وCSR", False, False),
+                ("manage", "تسجيل وتفعيل وإلغاء الأجهزة", False, False),
+            ]),
         },
     },
     "manufacturing": {

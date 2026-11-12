@@ -461,3 +461,78 @@ def test_eta_archiving_flow(api):
     other = _confirmed_order(c)
     r3 = ok(c.post("/eta/archive/run"))
     assert r3["archived"] == 0, "غير المقبول لا يُؤرشف"
+
+
+# ================================================== 18) أجهزة SDK لتوقيع الإيصالات
+def test_eta_devices_lifecycle_and_receipt_signing():
+    """جهاز SDK: تسجيل بـ CSR · تفعيل · إيصالات تُوقّع بمفتاح الجهاز · إلغاء يعود للمفتاح العام."""
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(bind=engine)
+    factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+    def override_get_db():
+        db = factory()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = override_get_db
+    c = TestClient(app)
+    assert c.post("/auth/setup", json={"username": "boss", "password": "long-password"}).status_code == 201
+    token = c.post("/auth/login", data={"username": "boss", "password": "long-password"}).json()["access_token"]
+    c.headers["Authorization"] = f"Bearer {token}"
+
+    def ok(r, code=200):
+        assert r.status_code == code, r.text
+        return r.json()
+
+    try:
+        _configure_mock(c)
+        # تسجيل جهاز: CSR للتسجيل في البوابة + مفاتيح لا تُرجع نصًا كاملًا
+        dev = ok(c.post("/eta/devices", json={"name": "كاشير 1", "serial": "DEV-001"}), 201)
+        assert dev["status"] == "pending" and dev["csr"].startswith("-----BEGIN CERTIFICATE REQUEST-----")
+        assert dev["has_keys"] is True and "private_key" not in dev
+        # تكرار التسلسل → 409
+        assert c.post("/eta/devices", json={"name": "مكرر", "serial": "DEV-001"}).status_code == 409
+        # تفعيل (بعد رفع CSR في البوابة)
+        dev = ok(c.post(f"/eta/devices/{dev['id']}/activate"))
+        assert dev["status"] == "active" and dev["activated_at"]
+        # إيصال يُوقّع بمفتاح الجهاز: submissions يحمل device_id + التوقيع يتحقق بمفتاح الجهاز العام
+        order = _confirmed_order(c)
+        sub = ok(c.post(f"/eta/submit-receipt/{order['id']}"), 200)
+        assert sub["document_type"] == "R" and sub["device_id"] == dev["id"]
+        db = factory()
+        row = db.get(__import__("app.models", fromlist=["EtaSubmission"]).EtaSubmission, sub["id"])
+        payload_no_sig = row.payload  # الـ payload يُحفظ بلا توقيع — التوقيع في العمود الخاص
+        sig = row.signature
+        device = db.get(__import__("app.models", fromlist=["EtaDevice"]).EtaDevice, dev["id"])
+        from app.eta import verify_signature
+        assert verify_signature(payload_no_sig, sig, device.public_key.encode()) is True
+        # فاتورة I تبقى بتوقيع الشركة (لا device_id)
+        cust = ok(c.post("/customers", json={"name": "B2B", "tax_registration_number": "310000000000004"}), 201)
+        wh = ok(c.get("/warehouses"))[0]
+        so = ok(c.post("/sales-orders", json={
+            "customer_id": cust["id"], "warehouse_id": wh["id"], "tax_rate": "14",
+            "items": [{"product_id": 1, "quantity": 1}],
+        }), 201)
+        b2b_order = ok(c.post(f"/sales-orders/{so['id']}/confirm"), 200)
+        sub_i = ok(c.post(f"/eta/submit/{b2b_order['id']}"), 200)
+        assert sub_i["device_id"] is None
+        db.close()
+        # إلغاء الجهاز → إيصال جديد يعود لمفتاح الشركة (device_id فارغ)
+        ok(c.post(f"/eta/devices/{dev['id']}/revoke"))
+        order2 = _confirmed_order(c)
+        sub2 = ok(c.post(f"/eta/submit-receipt/{order2['id']}"), 200)
+        assert sub2["device_id"] is None
+        # حذف جهاز مفعّل → 409 · بعد الإلغاء → 204
+        dev2 = ok(c.post("/eta/devices", json={"name": "كاشير 2", "serial": "DEV-002"}), 201)
+        ok(c.post(f"/eta/devices/{dev2['id']}/activate"))
+        assert c.delete(f"/eta/devices/{dev2['id']}").status_code == 409
+        ok(c.post(f"/eta/devices/{dev2['id']}/revoke"))
+        assert c.delete(f"/eta/devices/{dev2['id']}").status_code == 204
+        # تفعيل ملغى → 409
+        assert c.post(f"/eta/devices/{dev['id']}/activate").status_code == 409
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+        engine.dispose()
