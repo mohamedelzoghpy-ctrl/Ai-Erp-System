@@ -328,9 +328,22 @@ def test_excel_fallback_roundtrip(api):
     order = _confirmed_order(c)
     _configure_mock(c)
     wh, _ = make_warehouses(c)
-    # 1) تصدير القالب — يحمل بنود الفاتورة المعلقة
+    # 1) تصدير القالب — يحمل بنود الفاتورة المعلقة بترتيب حقول المنظومة
     exp = c.post("/eta/export-template", json={})
     assert exp.status_code == 200 and exp.content[:2] == b"PK"
+    from io import BytesIO
+    from openpyxl import load_workbook
+    wb = load_workbook(BytesIO(exp.content))
+    assert "Invoices" in wb.sheetnames and "InvoiceLines" in wb.sheetnames
+    inv_rows = list(wb["Invoices"].iter_rows(values_only=True))
+    headers = [str(h) for h in inv_rows[3]]  # صف 1-2 عنوان/وصف · صف 4 الرؤوس · البيانات من صف 5
+    assert "documentType" in headers and "receiverID" in headers and "totalAmount" in headers
+    data = [dict(zip(headers, r)) for r in inv_rows[4:]]
+    row = next(x for x in data if x["internalID"] == f"SO-{order['id']}")
+    assert row["documentType"] == "I" and row["totalAmount"] == 228  # 200 + 14% ضريبة
+    assert row["receiverType"] == "P"  # عميل بلا رقم ضريبي
+    lines_rows = list(wb["InvoiceLines"].iter_rows(values_only=True))
+    assert any(f"SO-{order['id']}" == str(r[0]) for r in lines_rows[4:])
     # 2) الطابور فيه الفاتورة → وسمها كمرفوعة خارجيًا
     q = ok(c.get("/eta/queue"))
     assert o_in(q["pending"], order["id"])

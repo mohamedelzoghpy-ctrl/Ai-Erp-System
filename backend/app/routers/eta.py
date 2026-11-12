@@ -475,8 +475,9 @@ def export_manual_template(
     db: Session = Depends(get_db),
     user: models.User = Depends(get_current_user),
 ):
-    """تصدير الفواتير المحددة (أو كل المعلقة) بصيغة جدول مسطح قابل للرفع اليدوي
-    من بوابة المنظومة عند تعطل التكامل — ملف احتياطي لا يعطل مسار الـ API."""
+    """بيانات الفواتير المعلقة بترتيب حقول مخطط المنظومة (نفس أسماء أعمدة القالب
+    الرسمي للبوابة) — للنسخ واللصق في القالب الرسمي المنزّل من invoicing.eta.gov.eg
+    عند تعطل التكامل. البوابة نفسها توقّع الرفع اليدوي عبر عميل التوقيع الرسمي."""
     from fastapi.responses import Response as _R
     from ..exports import build_tables_xlsx, XLSX_MIME
     company = _company(db)
@@ -494,43 +495,78 @@ def export_manual_template(
         .order_by(models.SalesOrder.id)
         .all()
     )
-    rows_out = []
+    invoice_rows, line_rows = [], []
     for o in orders:
         if o.id in submitted_ids:
             continue
         if wanted and o.id not in wanted:
             continue
+        customer = o.customer
+        tin = (customer.tax_registration_number if customer else None) or ""
+        subtotal = Decimal(str(o.subtotal or 0)) or (
+            Decimal(str(o.total_amount or 0)) - Decimal(str(o.tax_amount or 0))
+        )
+        invoice_rows.append([
+            ("text", "I"),                                    # documentType
+            ("text", "1.0"),                                  # documentTypeVersion
+            ("text", (o.updated_at or o.created_at).strftime("%Y-%m-%dT%H:%M:%SZ") if (o.updated_at or o.created_at) else ""),  # dateTimeIssued
+            ("text", company.eta_activity_code or "4690"),    # taxpayerActivityCode
+            ("text", f"SO-{o.id}"),                           # internalID
+            ("text", o.currency_code or "EGP"),               # currency
+            ("money", o.foreign_total or o.total_amount),     # exchangeRate marker (الإجمالي بالعملة الأجنبية إن وجد)
+            ("text", "B" if tin else "P"),                    # receiver.type
+            ("text", tin),                                    # receiver.id (الرقم الضريبي)
+            ("text", o.party_name or (customer.name if customer else "")),  # receiver.name
+            ("text", (customer.address if customer else None) or ""),       # receiver.address.street
+            ("money", subtotal),                              # totalSalesAmount
+            ("money", o.tax_amount),                          # taxTotals (T1)
+            ("money", o.total_amount),                        # totalAmount
+        ])
         for it in o.items:
-            rows_out.append([
-                ("text", f"SO-{o.id}"),
-                ("text", o.party_name or ""),
-                ("text", ""),
-                ("text", o.currency_code or "EGP"),
-                ("money", o.total_amount),
-                ("text", it.product.sku if it.product else str(it.product_id)),
-                ("text", it.product_name or ""),
-                ("money", float(it.quantity)),
-                ("money", float(it.unit_price or 0)),
-                ("money", float(it.quantity * (it.unit_price or 0))),
+            line_total = Decimal(str(it.quantity)) * Decimal(str(it.unit_price or 0))
+            line_rows.append([
+                ("text", f"SO-{o.id}"),                       # internalID (مرتبط بالفاتورة)
+                ("text", it.product_name or (it.product.name if it.product else "")),  # description
+                ("text", "EGS"),                              # itemType
+                ("text", it.product.sku if it.product else str(it.product_id)),  # itemCode
+                ("text", it.product.sku if it.product else str(it.product_id)),  # internalCode
+                ("text", "EA"),                               # unitType
+                ("money", float(it.quantity)),                # quantity
+                ("money", float(it.unit_price or 0)),         # unitValue.amountEGP
+                ("money", line_total),                        # salesTotal
+                ("money", line_total),                        # total
+                ("money", o.tax_rate),                        # taxTotals.rate
+                ("money", line_total * Decimal(str(o.tax_rate or 0)) / Decimal("100")),  # taxTotals.amount
             ])
     tables = [(
-        "فواتير للبيع (صف لكل بند)",
-        ["رقم الفاتورة الداخلي", "اسم العميل", "الرقم الضريبي للعميل (اختياري)", "العملة",
-         "الإجمالي بالجنيه", "كود الصنف", "وصف الصنف", "الكمية", "سعر الوحدة", "إجمالي السطر"],
-        rows_out,
+        "Invoices",
+        ["documentType", "documentTypeVersion", "dateTimeIssued", "taxpayerActivityCode",
+         "internalID", "currency", "exchangeRate", "receiverType", "receiverID",
+         "receiverName", "receiverAddressStreet", "totalSalesAmount", "taxTotalsAmount", "totalAmount"],
+        invoice_rows,
     ), (
-        "تعليمات",
+        "InvoiceLines",
+        ["internalID", "description", "itemType", "itemCode", "internalCode", "unitType",
+         "quantity", "unitValueAmountEGP", "salesTotal", "total", "taxRate", "taxAmount"],
+        line_rows,
+    ), (
+        "تعليمات الرفع اليدوي",
         ["البند", "التفصيل"],
         [
-            [("text", "الاستخدام"), ("text", "ملف احتياطي عند تعطل التكامل: ارفعه من بوابة المنظومة يدويًا")],
-            [("text", "بعد الرفع اليدوي"), ("text", "ارجع هنا وحدد نفس الفواتير ثم اضغط «تحديد كمرفوعة خارجيًا» لمنع التكرار")],
-            [("text", "التوقيع"), ("text", "رفع البوابة اليدوي لا يحمل توقيع C14B — البقاء على مسار الـ API هو الأصل")],
+            [("text", "طبيعة الملف"), ("text", "بيانات الفواتير المعلقة بترتيب حقول مخطط المنظومة — للنسخ في القالب الرسمي، وليس القالب الرسمي ذاته")],
+            [("text", "الخطوة 1"), ("text", "نزّل القالب الرسمي من بوابة الفاتورة الإلكترونية invoicing.eta.gov.eg (قسم رفع الفواتير يدويًا)")],
+            [("text", "الخطوة 2"), ("text", "انسخ صفوف ورقة Invoices و InvoiceLines إلى أوراق القالب الرسمي بالترتيب نفسه")],
+            [("text", "الخطوة 3"), ("text", "ارفع القالب من البوابة — عميل التوقيع الرسمي للبوابة يوقّع الفواتير بالتوكن")],
+            [("text", "الخطوة 4"), ("text", "ارجع هنا وحدد نفس الفواتير ثم اضغط «مرفوعة خارجيًا» لمنع التكرار عبر الـ API")],
+            [("text", "مهم: عملاء B2B"), ("text", "receiverType=B يتطلب الرقم الضريبي (receiverID) — العملاء بلا رقم ضريبي يُرفعون كـ receiverType=P")],
+            [("text", "مهم: الإصدارات"), ("text", "راجع أسماء الأعمدة في نسخة القالب الرسمية الحالية عند التسجيل — المنظومة تحدّث النسخ أحيانًا")],
+            [("text", "الأصل القانوني"), ("text", "الرفع اليدوي مسار طوارئ فقط — مسار الـ API بتوقيع C14B هو الأصل المُعتمد")],
         ],
     )]
-    content = build_tables_xlsx("قالب رفع يدوي — منظومة الفاتورة الإلكترونية",
-                                f"{company.name} · {len(rows_out)} بند", tables)
+    content = build_tables_xlsx("بيانات الرفع اليدوي — بترتيب حقول منظومة الفاتورة الإلكترونية",
+                                f"{company.name} · {len(invoice_rows)} فاتورة · {len(line_rows)} بند", tables)
     return _R(content=content, media_type=XLSX_MIME,
-              headers={"Content-Disposition": 'attachment; filename="eta-manual-template.xlsx"'})
+              headers={"Content-Disposition": 'attachment; filename="eta-manual-upload-data.xlsx"'})
 
 
 @router.post("/mark-external")

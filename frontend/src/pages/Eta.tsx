@@ -153,14 +153,14 @@ export default function Eta() {
                   إرسال المحدد ({Object.values(selected).filter(Boolean).length})
                 </button>
                 <button className="btn btn-sm" disabled={busy} onClick={submitPendingAll}>⚡ إرسال الكل (دفعة)</button>
-                <button className="btn btn-sm" title="تصدير الفواتير المعلقة بصيغة قالب الرفع اليدوي من بوابة المنظومة"
+                <button className="btn btn-sm" title="بيانات الفواتير المعلقة بترتيب حقول منظومة الضرائب — انسخها إلى القالب الرسمي المنزّل من بوابة invoicing.eta.gov.eg ثم ارفعها من هناك"
                   onClick={() => void run(async () => {
                     const blob = await fetchBlob("/eta/export-template", { method: "POST", body: JSON.stringify({ order_ids: [] }) });
                     const url = URL.createObjectURL(blob);
                     const a = document.createElement("a");
-                    a.href = url; a.download = "eta-manual-template.xlsx"; a.click();
+                    a.href = url; a.download = "eta-manual-upload-data.xlsx"; a.click();
                     setTimeout(() => URL.revokeObjectURL(url), 5000);
-                  })}>⬇️ قالب الرفع اليدوي</button>
+                  })}>⬇️ بيانات الرفع اليدوي</button>
                 <button className="btn btn-sm" title="بعد رفعها يدويًا من البوابة — امنع تكرار إرسالها عبر الـ API"
                   onClick={async () => {
                     const ids = Object.entries(selected).filter(([, v]) => v).map(([k]) => Number(k));
