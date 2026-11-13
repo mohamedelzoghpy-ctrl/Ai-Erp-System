@@ -2,7 +2,7 @@ import { useState } from "react";
 import { api } from "../api";
 import { money, num } from "../format";
 import { useAction, useFetch, type Fetched } from "../hooks";
-import type { ManufacturingReportOut, WipOrder, WorkCenterPerfOut } from "../types";
+import type { ManufacturingReportOut, WipOrder, WorkCenterPerfOut, SubReportRow } from "../types";
 import { Alert, Empty, Loading, PageHeader } from "../ui";
 import { useI18n } from "../i18n";
 
@@ -189,6 +189,38 @@ function MrpPanel({ warehouses }: { warehouses: Fetched<{ id: number; name: stri
   );
 }
 
+function SubcontractCustodyCard() {
+  const { t } = useI18n();
+  const rows = useFetch(() => api.get<SubReportRow[]>("/production-orders/reports/subcontract-custody"), "sub-report");
+  const data = (rows.data ?? []).filter((r) => Number(r.outstanding) > 0);
+  return (
+    <div className="card card-pad" style={{ marginBottom: 16 }}>
+      <h3 style={{ margin: "0 0 8px", fontSize: 15 }}>🏭 {t("عهدة التصنيع الخارجي — ما لدى المُصنّعين الآن")}</h3>
+      <Alert>{rows.error}</Alert>
+      {rows.loading && !rows.data ? <Loading /> : data.length > 0 ? (
+        <div className="table-wrap">
+          <table>
+            <thead><tr><th>{t("المُصنّع")}</th><th>{t("أمر التصنيع")}</th><th>{t("الخامة")}</th><th className="num">{t("سُلّم")}</th><th className="num">{t("أُرجع")}</th><th className="num">{t("لدى المُصنّع")}</th><th className="num">{t("عمر العهدة")}</th></tr></thead>
+            <tbody>
+              {data.map((r, i) => (
+                <tr key={i} style={r.days_out > 14 ? { background: "var(--danger-bg, #fee4e2)" } : undefined}>
+                  <td>{r.subcontractor_name ?? "—"}</td>
+                  <td dir="ltr">{r.order_code}</td>
+                  <td>{r.product_name ?? "—"}</td>
+                  <td className="num">{num(r.qty_sent)}</td>
+                  <td className="num">{num(r.qty_returned)}</td>
+                  <td className="num" style={{ fontWeight: 800 }}>{num(r.outstanding)}</td>
+                  <td className="num">{r.days_out} {t("يوم")}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : <Empty>{t("لا عهدة قائمة لدى مُصنّعين خارجيين.")}</Empty>}
+    </div>
+  );
+}
+
 export default function ProductionReports() {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
@@ -300,6 +332,7 @@ export default function ProductionReports() {
       </div>
 
       <MrpPanel warehouses={warehouses} />
+      <SubcontractCustodyCard />
 
       {!valid || report.loading ? (
         <Loading />

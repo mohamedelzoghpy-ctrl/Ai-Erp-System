@@ -1243,6 +1243,32 @@ export interface ForwardTraceOut {
   orders: { order_id: number; order_code: string; order_status: string; product_name?: string | null; consumed_qty: string | number; batches: { batch_no: string; qty: string | number; qc_status: string; finished_lot_qty: string | number }[] }[];
 }
 
+export interface SubReportRow {
+  subcontractor_id?: number | null;
+  subcontractor_name?: string | null;
+  order_id: number;
+  order_code: string;
+  product_id: number;
+  product_name?: string | null;
+  qty_sent: string | number;
+  qty_returned: string | number;
+  outstanding: string | number;
+  days_out: number;
+}
+
+export interface SubCustodyRow {
+  id: number;
+  order_id: number;
+  subcontractor_id?: number | null;
+  product_id: number;
+  product_name?: string | null;
+  unit?: string | null;
+  qty_sent: string | number;
+  qty_returned: string | number;
+  outstanding: string | number;
+  notes?: string | null;
+}
+
 export interface MaterialsAvailabilityItem {
   component_id: number;
   component_name?: string | null;

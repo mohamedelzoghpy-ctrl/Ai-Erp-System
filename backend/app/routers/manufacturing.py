@@ -1081,6 +1081,137 @@ def _issue_requirements(db: Session, po: models.ProductionOrder, requirements, w
     return total_cost
 
 
+# ---------------- عهدة التصنيع لدى الغير ----------------
+def _consumed_qty_by_component(db: Session, po: models.ProductionOrder) -> dict:
+    """الكمية المصروفة فعليًا لكل مكوّن في الأمر — من حركات الصرف (بلوطات أو بدون)."""
+    totals: dict = {}
+    for m in db.query(models.StockMovement).filter(
+        models.StockMovement.reason == "production_issue",
+        models.StockMovement.reference == po.code,
+        models.StockMovement.change < 0,
+    ).all():
+        totals[m.product_id] = totals.get(m.product_id, Decimal("0")) + dec(-m.change)
+    return totals
+
+
+@production_orders.post("/{order_id}/subcontract/send", response_model=List[schemas.SubcontractCustodyOut])
+def subcontract_send(
+    order_id: int,
+    payload: schemas.SubcontractSendIn,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(require_manager),
+):
+    """تسليم خامات الأمر فيزيائيًا للمُصنّع الخارجي (عهدة): يتطلب صرفًا سابقًا (أمر قيد التنفيذ)
+    وتسليمًا لا يتجاوز ما صُرف لكل مكوّن. تتبع موقع — المحاسبة عبر WIP وقت الصرف."""
+    po = _locked_po_or_404(db, order_id)
+    company_id = db.info["company_id"]
+    if po.subcontractor_id is None:
+        raise HTTPException(422, "أمر التصنيع بلا مُصنّع خارجي — عيّن المُصنّع أولاً")
+    if po.status != "in_progress":
+        raise HTTPException(422, "التسليم للمُصنّع يتطلب صرف خامات الأمر أولاً (أمر قيد التنفيذ)")
+    consumed = _consumed_qty_by_component(db, po)
+    out_rows: List[models.SubcontractCustody] = []
+    for line in payload.lines:
+        product = db.get(models.Product, line.product_id)
+        if product is None or product.company_id != company_id:
+            raise HTTPException(422, f"المكوّن {line.product_id} غير موجود")
+        qty = q3(line.qty)
+        already = (
+            db.query(models.SubcontractCustody)
+            .filter(models.SubcontractCustody.order_id == po.id, models.SubcontractCustody.product_id == product.id)
+            .first()
+        )
+        sent_so_far = dec(already.qty_sent) - dec(already.qty_returned) if already else Decimal("0")
+        available = consumed.get(product.id, Decimal("0")) - sent_so_far
+        if qty > available:
+            raise HTTPException(422, f"الكمية تتجاوز المصروف غير المُسلَّم من {product.name} (المتاح {q3(available)})")
+        if already is None:
+            already = models.SubcontractCustody(
+                company_id=company_id, order_id=po.id, subcontractor_id=po.subcontractor_id,
+                product_id=product.id, qty_sent=Decimal("0"), qty_returned=Decimal("0"),
+                notes=payload.notes, created_by=user.id,
+            )
+            db.add(already)
+            db.flush()
+        already.qty_sent = dec(already.qty_sent) + qty
+        already.notes = payload.notes or already.notes
+        out_rows.append(already)
+    audit(db, user, "update", "subcontract_custody", po,
+          f"تسليم عهدة للمُصنّع #{po.subcontractor_id}: " + "، ".join(f"{db.get(models.Product, l.product_id).name} {q3(l.qty)}" for l in payload.lines))
+    db.commit()
+    for row in out_rows:
+        db.refresh(row)
+        row.product_name = row.product.name if row.product else None
+        row.unit = row.product.unit if row.product else None
+    return [schemas.SubcontractCustodyOut(
+        id=r.id, order_id=r.order_id, subcontractor_id=r.subcontractor_id, product_id=r.product_id,
+        product_name=r.product_name, unit=r.unit, qty_sent=dec(r.qty_sent), qty_returned=dec(r.qty_returned),
+        outstanding=dec(r.qty_sent) - dec(r.qty_returned), notes=r.notes,
+    ) for r in out_rows]
+
+
+@production_orders.post("/{order_id}/subcontract/return", response_model=List[schemas.SubcontractCustodyOut])
+def subcontract_return(
+    order_id: int,
+    payload: schemas.SubcontractSendIn,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(require_manager),
+):
+    """استرداد خامات غير مستخدمة من عهدة المُصنّع إلى مخزن الخامات."""
+    po = _locked_po_or_404(db, order_id)
+    company_id = db.info["company_id"]
+    if po.subcontractor_id is None:
+        raise HTTPException(422, "أمر التصنيع بلا مُصنّع خارجي")
+    out_rows: List[models.SubcontractCustody] = []
+    for line in payload.lines:
+        product = db.get(models.Product, line.product_id)
+        if product is None or product.company_id != company_id:
+            raise HTTPException(422, f"المكوّن {line.product_id} غير موجود")
+        row = (
+            db.query(models.SubcontractCustody)
+            .filter(models.SubcontractCustody.order_id == po.id, models.SubcontractCustody.product_id == product.id)
+            .first()
+        )
+        if row is None:
+            raise HTTPException(422, f"لا عهدة مسجلة على {product.name}")
+        qty = q3(line.qty)
+        outstanding = dec(row.qty_sent) - dec(row.qty_returned)
+        if qty > outstanding:
+            raise HTTPException(422, f"الاسترداد يتجاوز العهدة القائمة على {product.name} (القائمة {q3(outstanding)})")
+        row.qty_returned = dec(row.qty_returned) + qty
+        out_rows.append(row)
+    audit(db, user, "update", "subcontract_custody", po,
+          f"استرداد عهدة من المُصنّع #{po.subcontractor_id}: " + "، ".join(f"{db.get(models.Product, l.product_id).name} {q3(l.qty)}" for l in payload.lines))
+    db.commit()
+    for row in out_rows:
+        db.refresh(row)
+        row.product_name = row.product.name if row.product else None
+        row.unit = row.product.unit if row.product else None
+    return [schemas.SubcontractCustodyOut(
+        id=r.id, order_id=r.order_id, subcontractor_id=r.subcontractor_id, product_id=r.product_id,
+        product_name=r.product_name, unit=r.unit, qty_sent=dec(r.qty_sent), qty_returned=dec(r.qty_returned),
+        outstanding=dec(r.qty_sent) - dec(r.qty_returned), notes=r.notes,
+    ) for r in out_rows]
+
+
+@production_orders.get("/{order_id}/subcontract/custody", response_model=List[schemas.SubcontractCustodyOut])
+def subcontract_custody_for_order(order_id: int, db: Session = Depends(get_db), _: models.User = Depends(get_current_user)):
+    """عهدة أمر التصنيع الحالية لدى المُصنّع."""
+    po = db.get(models.ProductionOrder, order_id)
+    if po is None or po.company_id != db.info["company_id"]:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "أمر التصنيع غير موجود")
+    rows = db.query(models.SubcontractCustody).filter(models.SubcontractCustody.order_id == po.id).all()
+    result = []
+    for r in rows:
+        result.append(schemas.SubcontractCustodyOut(
+            id=r.id, order_id=r.order_id, subcontractor_id=r.subcontractor_id, product_id=r.product_id,
+            product_name=r.product.name if r.product else None, unit=r.product.unit if r.product else None,
+            qty_sent=dec(r.qty_sent), qty_returned=dec(r.qty_returned),
+            outstanding=dec(r.qty_sent) - dec(r.qty_returned), notes=r.notes,
+        ))
+    return result
+
+
 @production_orders.post("/{order_id}/issue", response_model=schemas.ProductionOrderOut)
 def issue_production_order(
     order_id: int,
@@ -1824,6 +1955,42 @@ def trace_forward_lot(lot_id: int, db: Session = Depends(get_db), _: models.User
         product_name=product.name if product else None,
         orders=out_orders,
     )
+
+
+@production_orders.get("/reports/subcontract-custody", response_model=List[schemas.SubcontractReportRow])
+def subcontract_custody_report(
+    outstanding_only: bool = Query(True, description="العهدة القائمة فقط افتراضياً"),
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+):
+    """تقرير عهدة التصنيع الخارجي: ما لدى كل مُصنّع الآن عبر الأوامر، مع عمر العهدة."""
+    company_id = db.info["company_id"]
+    rows = (
+        db.query(models.SubcontractCustody, models.ProductionOrder)
+        .join(models.ProductionOrder, models.SubcontractCustody.order_id == models.ProductionOrder.id)
+        .filter(models.SubcontractCustody.company_id == company_id)
+        .order_by(models.SubcontractCustody.updated_at.desc())
+        .all()
+    )
+    out = []
+    now = datetime.now(timezone.utc)
+    for c, po in rows:
+        outstanding = dec(c.qty_sent) - dec(c.qty_returned)
+        if outstanding_only and outstanding <= 0:
+            continue
+        stamp = c.updated_at or c.created_at
+        if stamp is not None and stamp.tzinfo is None:
+            stamp = stamp.replace(tzinfo=timezone.utc)  # SQLite يعيد naive
+        days = max(0, (now - stamp).days) if stamp else 0
+        out.append(schemas.SubcontractReportRow(
+            subcontractor_id=c.subcontractor_id,
+            subcontractor_name=c.subcontractor.name if c.subcontractor else None,
+            order_id=po.id, order_code=po.code,
+            product_id=c.product_id, product_name=c.product.name if c.product else None,
+            qty_sent=dec(c.qty_sent), qty_returned=dec(c.qty_returned), outstanding=outstanding,
+            days_out=days,
+        ))
+    return out
 
 
 @production_orders.get("/reports/work-centers", response_model=schemas.WorkCenterPerfOut)

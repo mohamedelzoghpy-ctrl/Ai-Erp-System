@@ -1346,6 +1346,43 @@ class BatchTraceOut(BaseModel):
     children: List[BatchTraceChild] = []                # دفعات الأوامر الفرعية المرتبطة
 
 
+# ---------- عهدة التصنيع لدى الغير ----------
+class SubcontractLineIn(BaseModel):
+    product_id: int
+    qty: float = Field(gt=0)
+
+
+class SubcontractSendIn(BaseModel):
+    lines: List[SubcontractLineIn] = Field(min_length=1)
+    notes: Optional[str] = Field(default=None, max_length=200)
+
+
+class SubcontractCustodyOut(BaseModel):
+    id: int
+    order_id: int
+    subcontractor_id: Optional[int] = None
+    product_id: int
+    product_name: Optional[str] = None
+    unit: Optional[str] = None
+    qty_sent: Decimal
+    qty_returned: Decimal
+    outstanding: Decimal           # ما لا يزال لدى المُصنّع
+    notes: Optional[str] = None
+
+
+class SubcontractReportRow(BaseModel):
+    subcontractor_id: Optional[int] = None
+    subcontractor_name: Optional[str] = None
+    order_id: int
+    order_code: str
+    product_id: int
+    product_name: Optional[str] = None
+    qty_sent: Decimal
+    qty_returned: Decimal
+    outstanding: Decimal
+    days_out: int                  # منذ آخر حركة
+
+
 # ---------- تتبع أمامي: لوط خام ← الدفعات النهائية (سحب استدعاء) ----------
 class ForwardTraceBatch(BaseModel):
     batch_no: str

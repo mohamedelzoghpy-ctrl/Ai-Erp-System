@@ -399,6 +399,7 @@ ROUTE_RULES: List[RouteRule] = [
     _rule("GET", "/production-orders/mrp/suggestions", "manufacturing.order.mrp_suggestions"),
     _rule("GET", "/production-orders/reports/summary", "manufacturing.order.report_summary"),
     _rule("GET", "/production-orders/reports/wip", "manufacturing.order.report_wip"),
+    _rule("GET", "/production-orders/reports/subcontract-custody", "manufacturing.order.report_summary"),
     _rule("GET", "/production-orders/{order_id}", "manufacturing.order.view"),
     _rule("DELETE", "/production-orders/{order_id}", "manufacturing.order.delete"),
     _rule("POST", "/production-orders/{order_id}/batches/{batch_id}/qc", "manufacturing.order.qc"),
@@ -415,6 +416,9 @@ ROUTE_RULES: List[RouteRule] = [
     _rule("GET", "/production-orders/{order_id}/print-card", "manufacturing.order.print_card"),
     _rule("POST", "/production-orders/{order_id}/produce", "manufacturing.order.produce"),
     _rule("POST", "/production-orders/{order_id}/scrape", "manufacturing.order.scrape"),
+    _rule("POST", "/production-orders/{order_id}/subcontract/send", "manufacturing.order.issue"),
+    _rule("POST", "/production-orders/{order_id}/subcontract/return", "manufacturing.order.issue"),
+    _rule("GET", "/production-orders/{order_id}/subcontract/custody", "manufacturing.order.view"),
     # ---------- الأصناف ----------
     _rule("GET", "/products", "inventory.product.view"),
     _rule("POST", "/products", "inventory.product.create"),

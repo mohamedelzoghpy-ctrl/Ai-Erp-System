@@ -5,7 +5,7 @@ import { money, num } from "../format";
 import { useAction, useFetch } from "../hooks";
 import { useI18n } from "../i18n";
 import { PRODUCTION_STATUS_LABEL } from "../types";
-import type {Bom, MaterialsAvailability, ProductionLine, ProductionOrder, ProductionOrderStatus, QcMeasurementsOut, QcTemplate, Warehouse, ForwardTraceOut } from "../types";
+import type {Bom, MaterialsAvailability, ProductionLine, ProductionOrder, ProductionOrderStatus, QcMeasurementsOut, QcTemplate, Warehouse, ForwardTraceOut, SubCustodyRow } from "../types";
 import { ActiveBadge, Alert, Empty, Field, Loading, Modal, PageHeader } from "../ui";
 import type { FormEvent } from "react";
 
@@ -318,6 +318,73 @@ function BatchQcMeasure({ productId, batchId, batchNo, onClose }: { productId: n
   );
 }
 
+/** عهدة التصنيع الخارجي: ما سُلّم للمُصنّع وما أُرجع — إرسال/استرداد خامات مصروفة. */
+function SubcontractPanel({ orderId, onChanged }: { orderId: number; onChanged: () => void }) {
+  const { t } = useI18n();
+  const custody = useFetch(() => api.get<SubCustodyRow[]>(`/production-orders/${orderId}/subcontract/custody`), `sub-custody-${orderId}`);
+  const mats = useFetch(() => api.get<{ lines: { component_id: number; component_name?: string | null; required: string }[] }>(`/production-orders/${orderId}/materials-availability`), `sub-mats-${orderId}`);
+  const { run, busy, error } = useAction();
+  const [mode, setMode] = useState<"send" | "return">("send");
+  const [productId, setProductId] = useState<number | "">("");
+  const [qty, setQty] = useState("");
+
+  const options = (mats.data?.lines ?? []).map((m) => ({ id: m.component_id, name: m.component_name ?? `#${m.component_id}`, issued: m.required }));
+
+  const submit = () => {
+    if (productId === "" || !qty || Number(qty) <= 0) return;
+    void run(async () => {
+      await api.post(`/production-orders/${orderId}/subcontract/${mode}`, {
+        lines: [{ product_id: productId, qty: Number(qty) }],
+      });
+      setQty("");
+      custody.reload();
+      onChanged();
+    });
+  };
+
+  return (
+    <div className="card card-pad" style={{ marginTop: 14 }}>
+      <h4 style={{ margin: "0 0 8px" }}>🏭 {t("عهدة التصنيع الخارجي")}</h4>
+      <Alert>{error}</Alert>
+      {custody.data && custody.data.length > 0 ? (
+        <div className="table-wrap" style={{ marginBottom: 10 }}>
+          <table>
+            <thead><tr><th>{t("الخامة")}</th><th className="num">{t("سُلّم")}</th><th className="num">{t("أُرجع")}</th><th className="num">{t("لدى المُصنّع")}</th></tr></thead>
+            <tbody>
+              {custody.data.map((r) => (
+                <tr key={r.id}>
+                  <td>{r.product_name}</td>
+                  <td className="num">{num(r.qty_sent)}</td>
+                  <td className="num">{num(r.qty_returned)}</td>
+                  <td className="num" style={{ fontWeight: Number(r.outstanding) > 0 ? 800 : 400 }}>{num(r.outstanding)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <small className="hint" style={{ display: "block", marginBottom: 10 }}>{t("لا عهدة مسجلة — سجّل ما سلّمته للمُصنّع بعد صرف الخامات")}</small>
+      )}
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "flex-end" }}>
+        <select value={mode} onChange={(e) => setMode(e.target.value as "send" | "return")} style={{ width: 150 }}>
+          <option value="send">{t("تسليم للمُصنّع")}</option>
+          <option value="return">{t("استرداد عهدة")}</option>
+        </select>
+        <select value={productId} onChange={(e) => setProductId(e.target.value === "" ? "" : Number(e.target.value))} style={{ minWidth: 180 }}>
+          <option value="">{t("اختر خامة مصروفة…")}</option>
+          {options.map((p) => (
+            <option key={p.id} value={p.id}>{p.name}</option>
+          ))}
+        </select>
+        <input dir="ltr" style={{ width: 100 }} inputMode="decimal" placeholder={t("الكمية")} value={qty} onChange={(e) => setQty(e.target.value.replace(/[^0-9.]/g, ""))} />
+        <button className="btn btn-primary btn-sm" disabled={busy || productId === "" || !qty} onClick={submit}>
+          {busy ? t("…") : t("تسجيل")}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function ProductionDetailsModal({ orderId, onClose, onChanged }: { orderId: number; onClose: () => void; onChanged: () => void }) {
   const { t } = useI18n();
   const order = useFetch(() => api.get<ProductionOrder>(`/production-orders/${orderId}`), `po-details-${orderId}`);
@@ -387,6 +454,9 @@ function ProductionDetailsModal({ orderId, onClose, onChanged }: { orderId: numb
           <p className="muted" style={{ marginTop: 0, fontSize: 13 }}>
             {t("المنتج: ")}<b>{o.product_name}</b>{t(" · المخطط: ")}<b>{num(o.qty_planned)}</b>{t(" · المنتج: ")}<b>{num(o.qty_produced)}</b>{t(" · الحالة: ")}<b>{PRODUCTION_STATUS_LABEL[o.status]}</b>
           </p>
+          {o && o.subcontractor_id && (
+            <SubcontractPanel orderId={orderId} onChanged={() => { order.reload(); onChanged(); }} />
+          )}
           <h4 style={{ margin: "12px 0 6px" }}>📦 {t("اللوطات المستهلكة (التتبع العكسي)")}</h4>
           <LotTrace orderId={orderId} />
           <h4 style={{ margin: "12px 0 6px" }}>{t("الخامات المصروفة")}</h4>

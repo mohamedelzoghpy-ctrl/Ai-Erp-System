@@ -2676,6 +2676,32 @@ class UserPermissionOverride(TenantOwned, Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
+class SubcontractCustody(TenantOwned, Base):
+    """عهدة خامات لدى مُصنّع خارجي: ما سُلّم له فيزيائيًا وما أُرجع — تتبع فوق مسار WIP القائم.
+
+    الصرف المحاسبي يبقى عبر issue (Dr WIP/Cr مخزون) — العهدة سجل موقع فيزيائي فقط."""
+
+    __tablename__ = "subcontract_custodies"
+    __table_args__ = (UniqueConstraint("order_id", "product_id", name="uq_subcontract_custody"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    order_id = Column(Integer, ForeignKey("production_orders.id", ondelete="CASCADE"), nullable=False, index=True)
+    subcontractor_id = Column(Integer, ForeignKey("suppliers.id", ondelete="SET NULL"), nullable=True, index=True)
+    product_id = Column(Integer, ForeignKey("products.id", ondelete="CASCADE"), nullable=False, index=True)
+    qty_sent = Column(Numeric(12, 3), nullable=False, default=0, server_default="0")
+    qty_returned = Column(Numeric(12, 3), nullable=False, default=0, server_default="0")
+    notes = Column(String(200), nullable=True)
+    created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    order = relationship("ProductionOrder")
+    product = relationship("Product")
+    subcontractor = relationship("Supplier")
+
+
 class CrmLead(TenantOwned, Base):
     """عميل محتمل (Lead) — خط البيع قبل التحويل لعميل فعلي في العملاء.
 
