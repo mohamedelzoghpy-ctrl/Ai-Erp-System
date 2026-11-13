@@ -47,6 +47,8 @@ type CrmFunnelOut = {
 };
 type CrmSourceRow = { source: string; count: number; won_count: number; lost_count: number; open_count: number; won_value: string; win_rate_pct?: number | null };
 type CrmTaskOut = { id: number; lead_id: number; lead_name?: string | null; lead_code?: string | null; body: string; due_at?: string | null; done_at?: string | null; created_at: string };
+type CrmRepPerfRow = { rep_id?: number | null; rep_name?: string | null; open_leads: number; open_pipeline_value: string; won_count: number; won_value: string; lost_count: number; win_rate_pct?: number | null };
+type CrmStaleRow = { id: number; code: string; name: string; company_name?: string | null; phone?: string | null; status: string; expected_value: string; assigned_rep_id?: number | null; rep_name?: string | null; last_activity_at: string; stale_days: number };
 
 /** تحويل ISO إلى صيغة datetime-local للإدخال. */
 const dtLocal = (iso?: string | null) => iso ? new Date(iso).toLocaleString("sv-SE").replace(" ", "T").slice(0, 16) : "";
@@ -117,6 +119,8 @@ export default function Crm() {
   const warehouseList = useFetch(() => api.get<{ id: number; name: string }[]>("/warehouses"), "crm-warehouses");
   const funnel = useFetch(() => api.get<CrmFunnelOut>("/crm/reports/funnel"), "crm-funnel");
   const sources = useFetch(() => api.get<CrmSourceRow[]>("/crm/reports/sources"), "crm-sources");
+  const repPerf = useFetch(() => api.get<CrmRepPerfRow[]>("/crm/reports/reps-performance"), "crm-rep-perf");
+  const stale = useFetch(() => api.get<CrmStaleRow[]>("/crm/reports/stale?days=14"), "crm-stale");
 
   const emptyForm = { name: "", company_name: "", phone: "", email: "", address: "", source: "walk_in", status: "new", expected_value: "", assigned_rep_id: "", next_follow_up_at: "", lost_reason: "", notes: "" };
   const [f, setF] = useState(emptyForm);
@@ -560,6 +564,53 @@ export default function Crm() {
               </tbody>
             </table>
           </div>
+
+          <h3 style={{ margin: "18px 0 8px", fontSize: 15 }}>🏆 {t("أداء المندوبين في CRM")}</h3>
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>{t("المندوب")}</th><th className="num">{t("Pipeline المفتوح")}</th><th className="num">{t("خطوط مفتوحة")}</th><th className="num">{t("فاز")}</th><th className="num">{t("قيمة الفوز")}</th><th className="num">{t("فقد")}</th><th className="num">{t("معدل الفوز")}</th></tr></thead>
+              <tbody>
+                {(repPerf.data ?? []).map((r, i) => (
+                  <tr key={i}>
+                    <td>{r.rep_name ?? t("بلا إسناد")}{i === 0 && Number(r.won_value ?? 0) > 0 ? " 🥇" : ""}</td>
+                    <td className="num">{money(r.open_pipeline_value)}</td>
+                    <td className="num">{r.open_leads}</td>
+                    <td className="num" style={{ color: "#15803d", fontWeight: 700 }}>{r.won_count}</td>
+                    <td className="num">{money(r.won_value)}</td>
+                    <td className="num" style={{ color: "#b42318" }}>{r.lost_count}</td>
+                    <td className="num">{r.win_rate_pct != null ? `${r.win_rate_pct}%` : "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <h3 style={{ margin: "18px 0 8px", fontSize: 15 }}>⏳ {t("قادة راكدون — بلا حركة 14 يومًا")}</h3>
+          {(stale.data ?? []).length > 0 ? (
+            <div className="table-wrap">
+              <table>
+                <thead><tr><th>{t("القائد")}</th><th>{t("النشاط")}</th><th>{t("المندوب")}</th><th className="num">{t("القيمة")}</th><th className="num">{t("آخر حركة")}</th><th className="num">{t("أيام الركود")}</th><th /></tr></thead>
+                <tbody>
+                  {(stale.data ?? []).map((r) => (
+                    <tr key={r.id}>
+                      <td>{r.name} <small className="muted" dir="ltr">{r.code}</small></td>
+                      <td>{t((STAGE_LABELS as any)[r.status] ?? r.status)}</td>
+                      <td>{r.rep_name ?? "—"}</td>
+                      <td className="num">{money(r.expected_value)}</td>
+                      <td>{dtLocal(r.last_activity_at)}</td>
+                      <td className="num" style={{ fontWeight: r.stale_days > 30 ? 800 : 400, color: r.stale_days > 30 ? "#b42318" : "#9a6700" }}>{r.stale_days}</td>
+                      <td className="actions">
+                        <button className="btn btn-sm" onClick={() => {
+                          const lead = (board.data ?? []).find((x) => x.id === r.id) ?? { id: r.id };
+                          setActLead(lead as Lead);
+                        }}>📞 {t("تحريك")}</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : <Empty>{t("لا قادة راكدين — الفريق متحرك 👏")}</Empty>}
         </div>
       )}
       <Pager list={leads} style={view !== "table" ? { display: "none" } : undefined} />

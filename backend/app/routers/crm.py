@@ -2,9 +2,10 @@
 from decimal import Decimal
 from typing import List, Optional
 
-from datetime import datetime, timedelta as _td, timezone
+from datetime import datetime, timedelta, timedelta as _td, timezone
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
@@ -72,6 +73,82 @@ def list_leads(
     total = q.count()
     response.headers["X-Total-Count"] = str(total)
     return q.offset(skip).limit(min(limit, 200)).all()
+
+
+@router.get("/reports/reps-performance", response_model=List[schemas.CrmRepPerformanceRow])
+def crm_reps_performance(db: Session = Depends(get_db)):
+    """لوحة أداء المندوبين في CRM: Pipeline المفتوح، الفوز بالقيمة والعدد، معدل التحويل."""
+    company_id = db.info["company_id"]
+    leads = db.query(models.CrmLead).filter(models.CrmLead.company_id == company_id).all()
+    reps = {r.id: r.name for r in db.query(models.SalesRep).filter(models.SalesRep.company_id == company_id).all()}
+    by_rep: dict = {}
+    for l in leads:
+        rid = l.assigned_rep_id
+        b = by_rep.setdefault(rid, {"open": 0, "open_value": Decimal("0"), "won": 0, "won_value": Decimal("0"), "lost": 0})
+        val = Decimal(str(l.expected_value or 0))
+        if l.status in ("won", "lost"):
+            if l.status == "won":
+                b["won"] += 1
+                b["won_value"] += val
+            else:
+                b["lost"] += 1
+        else:
+            b["open"] += 1
+            b["open_value"] += val
+    out = []
+    for rid, b in by_rep.items():
+        decided = b["won"] + b["lost"]
+        out.append(schemas.CrmRepPerformanceRow(
+            rep_id=rid,
+            rep_name=reps.get(rid) or (f"#{rid}" if rid else None),
+            open_leads=b["open"], open_pipeline_value=b["open_value"],
+            won_count=b["won"], won_value=b["won_value"], lost_count=b["lost"],
+            win_rate_pct=round(100.0 * b["won"] / decided, 1) if decided else None,
+        ))
+    out.sort(key=lambda r: -r.won_value)
+    return out
+
+
+@router.get("/reports/stale", response_model=List[schemas.CrmStaleLeadRow])
+def crm_stale_leads(
+    days: int = Query(14, ge=1, le=180, description="الحد بالأيام بلا حركة"),
+    db: Session = Depends(get_db),
+):
+    """إنذار القادة الراكدين: مفتوحون وبلا أي نشاط حديث — محتاجون تحريكًا."""
+    company_id = db.info["company_id"]
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    leads = db.query(models.CrmLead).filter(
+        models.CrmLead.company_id == company_id,
+        models.CrmLead.status.notin_(("won", "lost")),
+    ).all()
+    last_activity = {}
+    for aid, lid in db.query(func.max(models.CrmActivity.id), models.CrmActivity.lead_id).filter(
+        models.CrmActivity.company_id == company_id
+    ).group_by(models.CrmActivity.lead_id).all():
+        last_activity[lid] = aid
+    acts = {a.id: a for a in db.query(models.CrmActivity).filter(models.CrmActivity.id.in_(set(last_activity.values()) or {0})).all()}
+    reps = {r.id: r.name for r in db.query(models.SalesRep).filter(models.SalesRep.company_id == company_id).all()}
+    out = []
+    now = datetime.now(timezone.utc)
+    for l in leads:
+        last = acts.get(last_activity.get(l.id))
+        stamp = last.created_at if last else l.created_at
+        if stamp is not None and stamp.tzinfo is None:
+            stamp = stamp.replace(tzinfo=timezone.utc)
+        if stamp is None:
+            continue
+        stale_days = (now - stamp).days
+        if stale_days >= days:
+            out.append(schemas.CrmStaleLeadRow(
+                id=l.id, code=l.code, name=l.name,
+                company_name=l.company_name, phone=l.phone,
+                status=l.status, expected_value=Decimal(str(l.expected_value or 0)),
+                assigned_rep_id=l.assigned_rep_id,
+                rep_name=reps.get(l.assigned_rep_id),
+                last_activity_at=stamp, stale_days=stale_days,
+            ))
+    out.sort(key=lambda r: -r.stale_days)
+    return out
 
 
 @router.get("/leads/check-duplicate", response_model=schemas.DuplicateCheckOut)

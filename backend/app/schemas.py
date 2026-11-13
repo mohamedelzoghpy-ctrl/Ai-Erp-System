@@ -1386,6 +1386,32 @@ class LeadQuotationIn(BaseModel):
     notes: Optional[str] = Field(default=None, max_length=300)
 
 
+# ---------- CRM م5: أداء المندوبين + القادة الراكدون ----------
+class CrmRepPerformanceRow(BaseModel):
+    rep_id: Optional[int] = None
+    rep_name: Optional[str] = None
+    open_leads: int
+    open_pipeline_value: Decimal
+    won_count: int
+    won_value: Decimal
+    lost_count: int
+    win_rate_pct: Optional[float] = None
+
+
+class CrmStaleLeadRow(BaseModel):
+    id: int
+    code: str
+    name: str
+    company_name: Optional[str] = None
+    phone: Optional[str] = None
+    status: str
+    expected_value: Decimal
+    assigned_rep_id: Optional[int] = None
+    rep_name: Optional[str] = None
+    last_activity_at: datetime
+    stale_days: int
+
+
 class DuplicateMatchOut(BaseModel):
     kind: str                      # lead | customer
     id: int

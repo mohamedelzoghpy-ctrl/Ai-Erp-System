@@ -675,6 +675,8 @@ ROUTE_RULES: List[RouteRule] = [
     _rule("GET", "/crm/tasks", "crm.lead.view"),
     _rule("GET", "/crm/reports/funnel", "crm.lead.view"),
     _rule("GET", "/crm/reports/sources", "crm.lead.view"),
+    _rule("GET", "/crm/reports/reps-performance", "crm.lead.view"),
+    _rule("GET", "/crm/reports/stale", "crm.lead.view"),
     _rule("GET", "/crm/leads/{obj_id}/activities", "crm.lead.view"),
     _rule("POST", "/crm/leads/{obj_id}/activities", "crm.lead.activity"),
     # مدير الموبايل — ملخص إداري داخل تطبيق المندوبين (بيانات على مستوى الشركة = صلاحية التقارير)
