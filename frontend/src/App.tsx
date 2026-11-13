@@ -17,6 +17,7 @@ import Boms from "./pages/Boms";
 import ProductionOrders from "./pages/ProductionOrders";
 import ProductionReports from "./pages/ProductionReports";
 import ProductionFloor from "./pages/ProductionFloor";
+import WorkCenters from "./pages/WorkCenters";
 import { Customers, Suppliers, Warehouses } from "./pages/MasterData";
 import { HrAttendancePage, HrEmployees, HrEmployeeProfile, HrLeaves, HrPayrollPage, HrSelfService, HrSettings, HrTalentPage } from "./pages/HR";
 import { PurchaseOrders, SalesOrders } from "./pages/Orders";
@@ -125,6 +126,7 @@ export default function App() {
         <Route path="boms" element={<Guard perm="manufacturing.bom.view"><Boms /></Guard>} />
         <Route path="production-orders" element={<Guard perm="manufacturing.order.view"><ProductionOrders /></Guard>} />
         <Route path="production-reports" element={<Guard perm="manufacturing.order.report_summary"><ProductionReports /></Guard>} />
+        <Route path="work-centers" element={<Guard perm="manufacturing.work_center.view"><WorkCenters /></Guard>} />
         <Route path="production-floor" element={<Guard perm="manufacturing.order.produce"><ProductionFloor /></Guard>} />
         <Route path="sales-reps" element={<Guard perm="sales.rep.view"><SalesReps /></Guard>} />
         <Route path="hr" element={<Guard perm="hr.employee.view"><Navigate to="/hr/employees" replace /></Guard>} />

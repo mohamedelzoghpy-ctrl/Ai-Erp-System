@@ -15,9 +15,13 @@ backups/
 # frontend build output
 frontend/dist/
 frontend/tsconfig.tsbuildinfo
+node_modules/  # أي حزمة اعتماديات (frontend/mobile)
 frontend/node_modules/
 
 # coverage / tooling caches
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Expo mobile build cache
+.expo/

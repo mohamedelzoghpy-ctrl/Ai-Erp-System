@@ -30,8 +30,8 @@ def api():
 
     app.dependency_overrides[get_db] = override_get_db
     client = TestClient(app)
-    assert client.post("/auth/setup", json={"username": "boss", "password": "long-password"}).status_code == 201
-    token = client.post("/auth/login", data={"username": "boss", "password": "long-password"}).json()["access_token"]
+    assert client.post("/auth/setup", json={"username": "boss", "password": "long-password-123"}).status_code == 201
+    token = client.post("/auth/login", data={"username": "boss", "password": "long-password-123"}).json()["access_token"]
     client.headers["Authorization"] = f"Bearer {token}"
     yield client
     app.dependency_overrides.pop(get_db, None)
@@ -42,11 +42,11 @@ def _second_company(api) -> TestClient:
     r = api.post("/platform/companies", json={
         "name": "شركة تانية",
         "admin_username": "boss2",
-        "admin_password": "long-password",
+        "admin_password": "long-password-123",
     })
     assert r.status_code == 201, r.text
     client2 = TestClient(app)
-    tok = client2.post("/auth/login", data={"username": "boss2", "password": "long-password"}).json()["access_token"]
+    tok = client2.post("/auth/login", data={"username": "boss2", "password": "long-password-123"}).json()["access_token"]
     client2.headers["Authorization"] = f"Bearer {tok}"
     # تأكيد تفعيل الشركة الثانية (الدخول يختار أول عضوية تلقائيًا)
     me = client2.get("/auth/me").json()

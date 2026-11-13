@@ -14,6 +14,30 @@ services:
       timeout: 5s
       retries: 10
 
+  # نسخة احتياطية يومية مجدولة إلى ./backups (المجلد الدائم على المضيف) — تُحذف الأقدم من 14 يومًا
+  db-backup:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - ./backups:/backups
+    entrypoint:
+      - sh
+      - -c
+      - |
+        echo "[db-backup] daily pg_dump → /backups (retention 14 days)"
+        while true; do
+          pg_dump -h db -U erp -d erp_db | gzip > "/backups/auto-erp_db-$$(date +%Y%m%d-%H%M%S).sql.gz" \
+            && echo "[$$(date)] backup OK" \
+            || echo "[$$(date)] backup FAILED"
+          find /backups -name 'auto-erp_db-*.sql.gz' -mtime +14 -delete 2>/dev/null
+          sleep 86400
+        done
+
   backend:
     build: ./backend
     restart: unless-stopped
@@ -31,6 +55,10 @@ services:
       COMPANY_ADDRESS: ${COMPANY_ADDRESS:-}
       CURRENCY_LABEL: ${CURRENCY_LABEL:-ج.م}
       EXPORT_TIMEZONE: ${EXPORT_TIMEZONE:-Africa/Cairo}
+      # النسخ الاحتياطية: داخل الحاوية وعلى القرص المضيف (./backups) — لا تضيع عند إعادة الإنشاء
+      BACKUP_DIR: /srv/backups
+    volumes:
+      - ./backups:/srv/backups
     ports:
       - "127.0.0.1:8000:8000"
 

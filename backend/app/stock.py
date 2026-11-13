@@ -90,6 +90,55 @@ def move_stock(db: Session, product: models.Product, warehouse_id: int, change: 
     db.add(models.StockMovement(product_id=product.id, warehouse_id=warehouse_id, company_id=company_id, change=change, reason=reason, reference=reference))  # type: ignore
 
 
+def assert_no_pending_qc_lots(db: Session, company_id: int, product: "models.Product", warehouse_id: int, qty: Union[int, float, Decimal]) -> None:
+    """بوابة فحص الجودة (QC_GATE): تمنع صرف كمية يغطيها لوط دفعة إنتاج ما زالت
+    بانتظار الفحص (qc_status=pending). الدفعات المرفوضة مشطوب مخزونها أصلًا،
+    واللوطات بلا دفعة (شراء/افتتاحي) تمرّ بحرية."""
+    import os
+    if os.getenv("QC_GATE", "0").lower() not in ("1", "true", "yes"):
+        return
+    if company_id is None:
+        return
+    lots = (
+        db.query(models.StockLot)
+        .filter(
+            models.StockLot.company_id == company_id,
+            models.StockLot.product_id == product.id,
+            models.StockLot.warehouse_id == warehouse_id,
+            models.StockLot.qty_remaining > 0,
+        )
+        .order_by(
+            models.StockLot.expiry_date.is_(None).asc(),
+            models.StockLot.expiry_date.asc().nulls_last(),
+            models.StockLot.id.asc(),
+        )
+        .all()
+    )
+    remaining = q3(qty)
+    needed_codes: list = []
+    for lot in lots:
+        if remaining <= 0:
+            break
+        take = min(Decimal(str(lot.qty_remaining)), remaining)
+        needed_codes.append(lot.lot_code)
+        remaining -= take
+    if remaining > 0 or not needed_codes:
+        return  # اللوطات لا تغطي الكمية — move_stock سيتولى المنع
+    pending = (
+        db.query(models.ProductionBatch.batch_no)
+        .filter(
+            models.ProductionBatch.company_id == company_id,
+            models.ProductionBatch.batch_no.in_(needed_codes),
+            models.ProductionBatch.qc_status == "pending",
+        )
+        .all()
+    )
+    if pending:
+        codes = ", ".join(p[0] for p in pending)
+        from fastapi import HTTPException
+        raise HTTPException(status.HTTP_409_CONFLICT, f"دفاتر بانتظار فحص الجودة لا يمكن بيعها: {codes} — أكمل فحص QC أولًا")
+
+
 def consume_lots(db: Session, product: models.Product, warehouse_id: int, qty: Union[int, float, Decimal]) -> Decimal:
     """خصم اللوطات عند الخروج من المخزون بنظام FEFO (الأقرب انتهاءً أولًا ثم الأقدم).
 

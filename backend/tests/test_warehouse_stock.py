@@ -25,8 +25,8 @@ def api():
 
     app.dependency_overrides[get_db] = override_get_db
     client = TestClient(app)
-    assert client.post("/auth/setup", json={"username": "boss", "password": "long-password"}).status_code == 201
-    token = client.post("/auth/login", data={"username": "boss", "password": "long-password"}).json()["access_token"]
+    assert client.post("/auth/setup", json={"username": "boss", "password": "long-password-123"}).status_code == 201
+    token = client.post("/auth/login", data={"username": "boss", "password": "long-password-123"}).json()["access_token"]
     client.headers["Authorization"] = f"Bearer {token}"
     yield client
     app.dependency_overrides.pop(get_db, None)
@@ -265,10 +265,10 @@ def test_staff_only_see_and_move_stock_of_their_own_warehouses(api):
     ok(api.post(f"/stock-transfers/{_ts['id']}/approve"))
     me = ok(api.get("/auth/me"))
     branch = ok(api.get("/warehouses"))[0]["branch_id"]
-    ok(api.post("/company/employees", json={"username": "clerk", "password": "clerk-password", "role": "staff", "warehouse_ids": [w2["id"]]}), 201)
+    ok(api.post("/company/employees", json={"username": "clerk", "password": "clerk-password-123", "role": "staff", "warehouse_ids": [w2["id"]]}), 201)
     clerk_id = ok(api.get("/auth/users"))[0]["id"] if ok(api.get("/auth/users"))[0]["username"] == "clerk" else [u for u in ok(api.get("/auth/users")) if u["username"] == "clerk"][0]["id"]
     give_section(api, clerk_id, ["inventory.product.view", "inventory.product.stock", "inventory.transfer.view", "inventory.transfer.create"])
-    tok = ok(api.post("/auth/login", data={"username": "clerk", "password": "clerk-password"}))["access_token"]
+    tok = ok(api.post("/auth/login", data={"username": "clerk", "password": "clerk-password-123"}))["access_token"]
     staff = TestClient(app, headers={"Authorization": f"Bearer {tok}"})
     assert by_wh(staff, p["id"]) == {w2["id"]: 4}  # the Main warehouse row is not theirs to see
     assert len(ok(staff.get("/stock-transfers"))) == 1  # but the transfer into their warehouse is

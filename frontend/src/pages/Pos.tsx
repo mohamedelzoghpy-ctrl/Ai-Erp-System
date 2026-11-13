@@ -6,6 +6,7 @@ import { dateTime, METHOD_LABEL, methodLabel, money, num } from "../format";
 import { useAction, useFetch, usePagedList } from "../hooks";
 import type { Order, Party, PaymentMethod, Product, SalesRep, Warehouse } from "../types";
 import { Alert, Empty, Field, Loading, Lookup, Modal, PageHeader, Pager, PaymentBadge } from "../ui";
+import { printThermal, type ThermalLine } from "../escpos";
 
 interface CartLine {
   product: Product;
@@ -34,6 +35,10 @@ function remembered(): string {
   } catch {
     return "";
   }
+}
+
+function quantityInCart(cart: CartLine[], productId: number): number {
+  return cart.find((l) => l.product.id === productId)?.quantity ?? 0;
 }
 
 export default function Pos() {
@@ -87,13 +92,83 @@ export default function Pos() {
   const search = useAction();
   const sale = useAction();
   const dl = useAction();
+  const thermal = useAction();
   const box = useRef<HTMLInputElement>(null);
+
+  // ==== شبكة المنتجات اللمسية: أصناف المخزن المختار — بحث فوري محلي + ترقيم ====
+  const [grid, setGrid] = useState<Product[]>([]);
+  const [gridFilter, setGridFilter] = useState("");
+  const [gridPage, setGridPage] = useState(0);
+  const GRID_PAGE_SIZE = 24;
+  useEffect(() => {
+    if (!warehouse) { setGrid([]); return; }
+    let alive = true;
+    api.get<Product[]>(`/products?is_active=true&limit=500&stock_warehouse_id=${warehouse}`)
+      .then((r) => { if (alive) setGrid(r); })
+      .catch(() => { if (alive) setGrid([]); });
+    return () => { alive = false; };
+  }, [warehouse]);
+  const gridFiltered = grid.filter((p) => {
+    const f = gridFilter.trim().toLowerCase();
+    return !f || p.name.toLowerCase().includes(f) || p.sku.toLowerCase().includes(f);
+  });
+  const gridPages = Math.max(1, Math.ceil(gridFiltered.length / GRID_PAGE_SIZE));
+  const gridPageSafe = Math.min(gridPage, gridPages - 1);
+  const gridSlice = gridFiltered.slice(gridPageSafe * GRID_PAGE_SIZE, (gridPageSafe + 1) * GRID_PAGE_SIZE);
 
   // A single active warehouse is picked automatically.
   useEffect(() => {
     const list = warehouses.data;
     if (list && !list.some((w) => String(w.id) === warehouse)) setWarehouse(list.length === 1 ? String(list[0].id) : "");
   }, [warehouses.data, warehouse]);
+
+  // ==== باركود مستمر + اختصارات لوحة مفاتيح (F2 بحث · F4 حفظ · F8 تفريغ) ====
+  const submitRef = useRef<() => void>(() => {});
+  const canPayRef = useRef(false);
+  const scanBuf = useRef({ text: "", last: 0 });
+  useEffect(() => {
+    if (screen !== "new") return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "F2") {
+        e.preventDefault();
+        box.current?.focus();
+        return;
+      }
+      if (e.key === "F4") {
+        e.preventDefault();
+        if (canPayRef.current) submitRef.current();
+        return;
+      }
+      if (e.key === "F8") {
+        e.preventDefault();
+        setCart([]);
+        return;
+      }
+      if (e.key.length === 1 && /[a-zA-Z0-9\-_.]/.test(e.key)) {
+        const now = Date.now();
+        const buf = scanBuf.current;
+        // فجوة أطول من 120ms = كتابة يدوية — نصفّر المخزن؛ السكانير يكتب بأقل من ذلك
+        if (now - buf.last > 120) buf.text = "";
+        buf.last = now;
+        buf.text += e.key;
+      } else if (e.key === "Enter") {
+        const code = scanBuf.current.text.trim();
+        scanBuf.current.text = "";
+        // بصمة الباركود: ≥6 محارف كُتبت بسرعة — تطابق SKU تام → إضافة مباشرة
+        if (code.length >= 6) {
+          void search.run(async () => {
+            const r = await api.get<Product[]>(`/products?search=${encodeURIComponent(code)}&is_active=true&limit=5${warehouse ? `&stock_warehouse_id=${warehouse}` : ""}`);
+            const exact = r.find((p) => p.sku.toLowerCase() === code.toLowerCase());
+            if (exact) add(exact);
+          });
+        }
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+    // add/search تُغلق على الحالة الحية عبر refs المذكورة أعلاه — المستمع يُسجل مرة لكل شاشة
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [screen, warehouse]);
 
   /** What is on the shelf in the selected warehouse (the API only sends it when asked for one warehouse). */
   const avail = (p: Product) => p.warehouse_quantity ?? p.quantity;
@@ -125,6 +200,7 @@ export default function Pos() {
   const receivedForQuotation = quotationReceived === "" ? 0 : Number(quotationReceived);
   const validQuotationReceived = Number.isFinite(receivedForQuotation) && receivedForQuotation >= 0 && receivedForQuotation <= grandDue + 1e-9;
   const canPay = !!warehouse && validLines && validDiscount && overStock.length === 0 && underPriced.length === 0 && (documentType === "quotation" ? validQuotationReceived : paid >= 0 && paid <= grandDue + 1e-9);
+  canPayRef.current = canPay;
   let undistributedDiscountCents = discountCents;
   const discountedItems = cart.flatMap((line) => {
     const unitCents = Math.round((Number(line.price) || 0) * 100);
@@ -200,6 +276,7 @@ export default function Pos() {
       invoices.reload();
     });
   };
+  submitRef.current = submitDocument;
 
   const reset = () => {
     setCart([]);
@@ -332,7 +409,7 @@ export default function Pos() {
               ref={box}
               autoFocus
               style={{ flex: 1, minWidth: 180 }}
-              placeholder={t("امسح الباركود أو اكتب الكود/الاسم ثم Enter")}
+              placeholder={t("امسح الباركود أو اكتب الكود/الاسم ثم Enter — F2 للتركيز")}
               aria-label={t("بحث عن منتج")}
               value={q}
               onChange={(e) => setQ(e.target.value)}
@@ -419,6 +496,50 @@ export default function Pos() {
           )}
         </div>
 
+        {/* ==== شبكة المنتجات اللمسية: لمسة = إضافة للسلة ==== */}
+        <div className="card card-pad pos-grid-card">
+          <div className="page-actions" style={{ marginBottom: 8 }}>
+            <input
+              style={{ flex: 1, minWidth: 160 }}
+              placeholder={t("تصفية الشبكة (اسم/كود)…")}
+              aria-label={t("تصفية شبكة المنتجات")}
+              value={gridFilter}
+              onChange={(e) => { setGridFilter(e.target.value); setGridPage(0); }}
+            />
+            <span className="muted" style={{ fontSize: 12 }}>{num(gridFiltered.length)} {t("صنف")}</span>
+          </div>
+          {grid.length === 0 ? (
+            <p className="muted">{t("اختر المخزن لعرض أصنافه هنا — واللمس يضيف للسلة")}</p>
+          ) : gridSlice.length === 0 ? (
+            <p className="muted">{t("لا نتائج في هذه الصفحة")}</p>
+          ) : (
+            <>
+              <div className="pos-grid">
+                {gridSlice.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    className={`pos-tile ${quantityInCart(cart, p.id) > 0 ? "pos-tile-in-cart" : ""}`}
+                    onClick={() => add(p)}
+                    title={`${p.name} — ${money(p.sale_price)}`}
+                  >
+                    <span className="pos-tile-name">{p.name}</span>
+                    <span className="pos-tile-price">{money(p.sale_price)}</span>
+                    <span className={`pos-tile-stock ${avail(p) <= 0 ? "low" : ""}`}>{t("المتاح ")}{num(avail(p))}</span>
+                  </button>
+                ))}
+              </div>
+              {gridPages > 1 && (
+                <div className="page-actions" style={{ justifyContent: "center", marginTop: 8 }}>
+                  <button type="button" className="btn btn-sm" disabled={gridPageSafe === 0} onClick={() => setGridPage(gridPageSafe - 1)}>‹ {t("السابق")}</button>
+                  <span className="muted" style={{ fontSize: 12 }}>{gridPageSafe + 1} / {gridPages}</span>
+                  <button type="button" className="btn btn-sm" disabled={gridPageSafe >= gridPages - 1} onClick={() => setGridPage(gridPageSafe + 1)}>{t("التالي")} ›</button>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
       </div>
 
       <section className={`card card-pad pos-summary-card pos-summary-${documentType}`} aria-label={documentType === "quotation" ? t("إجمالي وخصم بيان الأسعار") : t("إجمالي وخصم الفاتورة")}>
@@ -491,6 +612,33 @@ export default function Pos() {
           </Field> : <Field label={customer ? t("pos.amountPaid") : t("pos.amountReceived")} hint={customer ? `${t("pos.balanceDue")}: ${money(Math.max(grandDue - paid, 0))}` : change !== null ? (change >= 0 ? `${t("pos.change")}: ${money(change)}` : `${t("pos.short")} ${money(-change)}`) : t("اختياري، لحساب الباقي")}>
             <input dir="ltr" type="number" min="0" max={customer ? netDue : undefined} step="0.01" value={customer ? paidInput : tendered} placeholder={customer ? String(grandDue) : undefined} onChange={(e) => customer ? setPaidInput(e.target.value) : setTendered(e.target.value)} />
           </Field>}
+
+          {/* ==== numpad لمسي: يعدّل حقل المبلغ حسب الحالة + فئات سريعة ==== */}
+          {documentType === "invoice" && (
+            <div className="pos-numpad" role="group" aria-label={t("لوحة الأرقام اللمسية")}>
+              {["1", "2", "3", "4", "5", "6", "7", "8", "9", ".", "0", "⌫"].map((k) => (
+                <button
+                  key={k}
+                  type="button"
+                  className="pos-numpad-key"
+                  onClick={() => {
+                    const target = customer ? paidInput : tendered;
+                    const setTarget = customer ? setPaidInput : setTendered;
+                    if (k === "⌫") setTarget(target.slice(0, -1));
+                    else if (k === "." && target.includes(".")) return;
+                    else setTarget(target + k);
+                  }}
+                >
+                  {k}
+                </button>
+              ))}
+              <button type="button" className="pos-numpad-key pos-numpad-clear" onClick={() => (customer ? setPaidInput("") : setTendered(""))}>{t("مسح")}</button>
+              <button type="button" className="pos-numpad-key pos-numpad-exact" onClick={() => (customer ? setPaidInput(netDue.toFixed(2)) : setTendered(grandDue.toFixed(2)))}>{t("المطلوب")}</button>
+              {[50, 100, 200, 500].map((v) => (
+                <button key={v} type="button" className="pos-numpad-key pos-numpad-cash" onClick={() => { const cur = customer ? paidInput : tendered; (customer ? setPaidInput : setTendered)(String((Number(cur) || 0) + v)); }}>{v}</button>
+              ))}
+            </div>
+          )}
         </div>
         <div className={`pos-summary-actions pos-summary-actions-${documentType}`}>
           <button className="btn btn-primary pos-summary-primary" disabled={!canPay || (documentType === "quotation" && (!customer || !safeId)) || sale.busy || (documentType === "invoice" && change !== null && change < 0)} onClick={submitDocument}>
@@ -535,7 +683,36 @@ export default function Pos() {
             <button className="btn" disabled={dl.busy} onClick={() => void dl.run(() => api.download(`/sales-orders/${receipt.order_id}/receipt`, `receipt-SO-${receipt.order_id}.pdf`))}>
               {t("pos.receipt80")}
             </button>
+            {/* طباعة حرارية مباشرة عبر WebUSB — العربية ترسم على canvas ثم raster */}
+            <button
+              className="btn"
+              disabled={thermal.busy}
+              title={t("طابعة حرارية USB — Chrome/Edge فقط")}
+              onClick={() => void thermal.run(async () => {
+                const lines: ThermalLine[] = [
+                  { center: "MOZAD ERP", big: true },
+                  { center: documentType === "quotation" ? t("بيان أسعار") : t("فاتورة بيع") },
+                  { divider: true },
+                  { right: `SO-${receipt.order_id}`, left: dateTime(receipt.created_at ?? new Date().toISOString()) },
+                  ...(receipt.customer_name ? [{ right: `${t("العميل")}: ${receipt.customer_name}` }] : []),
+                  { divider: true },
+                  ...cart.map((l) => ({ right: l.product.name.slice(0, 24), left: `${l.quantity} × ${money(l.price)}` })),
+                  { divider: true },
+                  { right: t("الإجمالي"), left: money(total) },
+                  ...(discountCents > 0 ? [{ right: t("الخصم"), left: money(discountAmount) }] : []),
+                  { right: t("ضريبة القيمة المضافة"), left: money(vatAmount) },
+                  { right: t("الإجمالي المستحق"), left: money(grandDue), bold: true },
+                  ...(documentType === "invoice" && receipt.paid ? [{ right: t("المدفوع"), left: money(receipt.paid) }] : []),
+                  ...(Number(receipt.balance_due) > 0 ? [{ right: t("المتبقي"), left: money(receipt.balance_due), bold: true }] : []),
+                  ...(change !== null && change >= 0 && tendered !== "" ? [{ right: t("الباقي للعميل"), left: money(change), bold: true }] : []),
+                ];
+                await printThermal(lines, "شكراً لزيارتكم — MOZAD");
+              })}
+            >
+              {thermal.busy ? t("جارٍ الطباعة…") : `🖨 ${t("حرارية")}`}
+            </button>
           </div>
+          {thermal.error && <Alert>{thermal.error}</Alert>}
         </Modal>
       )}
     </>

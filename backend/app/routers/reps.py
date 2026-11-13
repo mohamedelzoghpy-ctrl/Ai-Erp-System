@@ -1,9 +1,11 @@
 """Company-scoped sales reps (مندوبي المبيعات): list / create / update / delete."""
 
+from datetime import date
+from decimal import Decimal
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
@@ -211,8 +213,23 @@ def link_rep_user(
         # عضوية الشركة + شركة نشطة — شرطا الدخول عبر get_current_user
         db.add(models.UserCompanyMembership(user_id=target.id, company_id=company_id, role="staff"))
         target.active_company_id = company_id  # type: ignore
-        for bid in branch_ids:
+        # المندوب ميدانيه كل الشركة: يُمنح كل الفروع والمخازن النشطة — بدونها يقصّه
+        # فلتر نطاق الموظف (database.py) ولا يرى مخزناً ولا أوامر إطلاقاً
+        from sqlalchemy import select as _select
+        active_branch_ids = db.execute(
+            _select(models.Branch.id).where(
+                models.Branch.company_id == company_id, models.Branch.is_active.is_(True)
+            ).execution_options(ignore_tenant_scope=True)
+        ).scalars().all()
+        active_warehouse_ids = db.execute(
+            _select(models.Warehouse.id).where(
+                models.Warehouse.company_id == company_id, models.Warehouse.is_active.is_(True)
+            ).execution_options(ignore_tenant_scope=True)
+        ).scalars().all()
+        for bid in (branch_ids or list(active_branch_ids)):
             db.add(models.UserBranchAccess(user_id=target.id, branch_id=bid))
+        for wid in active_warehouse_ids:
+            db.add(models.UserWarehouseAccess(user_id=target.id, warehouse_id=wid))
         created = True
     rep.user_id = target.id  # type: ignore
     audit(db, user, "update", "sales_rep", rep,
@@ -369,3 +386,250 @@ def register_device(
     dev.last_seen_at = _dt.now(_tz.utc)  # type: ignore
     db.commit()
     return {"device_id": dev.id, "registered": True}
+
+
+class RepCollectionIn(BaseModel):
+    """تحصيل ميداني من عميل — نقدية فقط في الإصدار الأول."""
+    customer_id: int
+    amount: Decimal = Field(gt=0, max_digits=14, decimal_places=2)
+    safe_id: Optional[int] = None  # اختياري — الافتراضي: خزينة فاتورة العميل الأخيرة ثم أول خزينة نشطة
+    notes: Optional[str] = Field(default=None, max_length=255)
+
+
+@router.post("/me/collections", status_code=201)
+def me_create_collection(
+    payload: RepCollectionIn,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """تحصيل نقدي من عميل عبر التطبيق — سند قبض رسمي عبر مسار السندات الكامل
+    (قيود مزدوجة، رصيد خزينة، إشعار المندوب) — لا مسار جانبي للنقدية."""
+    rep = _rep_for_user(db, user)
+    company_id = db.info["company_id"]
+    customer = db.get(models.Customer, payload.customer_id)
+    if customer is None or customer.company_id != company_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "العميل غير موجود")
+
+    safe_id = payload.safe_id
+    if safe_id is not None:
+        safe = db.get(models.Safe, safe_id)
+        if safe is None or safe.company_id != company_id:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "الخزينة غير موجودة")
+    else:
+        # الافتراضي: خزينة فاتورة العميل الأخيرة المؤكدة، ثم أول خزينة نشطة بالشركة
+        last_order = (
+            db.query(models.SalesOrder)
+            .filter(
+                models.SalesOrder.company_id == company_id,
+                models.SalesOrder.customer_id == payload.customer_id,
+                models.SalesOrder.status == "confirmed",
+                models.SalesOrder.safe_id.isnot(None),
+            )
+            .order_by(models.SalesOrder.id.desc())
+            .first()
+        )
+        if last_order is not None and last_order.safe_id is not None:
+            safe_id = last_order.safe_id
+        else:
+            first_safe = (
+                db.query(models.Safe)
+                .filter(models.Safe.company_id == company_id, models.Safe.is_active.is_(True))
+                .order_by(models.Safe.id)
+                .first()
+            )
+            safe_id = first_safe.id if first_safe else None
+    if safe_id is None:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "لا خزينة متاحة للتحصيل — أنشئ خزينة أو حدد واحدة")
+
+    from .payments import create_payment
+
+    payment = create_payment(
+        schemas.PaymentCreate(
+            customer_id=payload.customer_id,
+            amount=Decimal(str(payload.amount)),
+            method="cash",
+            safe_id=safe_id,
+            reference=f"REP-{rep.id}",
+            notes=payload.notes or f"تحصيل ميداني — مندوب {rep.name}",
+        ),
+        db,
+        user,
+    )
+    audit(db, user, "create", "rep_collection", payment.id,
+          f"تحصيل ميداني {payment.amount} من العميل {customer.name} — خزينة #{safe_id}")
+    db.commit()
+    # نشاط المندوب في صندوقه — نوع مميز عن payment_collected (التحصيل من الإدارة)
+    from ..push import notify_rep
+    try:
+        notify_rep(db, rep.id, kind="collection_recorded",
+                   title=f"سجلت تحصيلاً {payment.amount} ج.م",
+                   body=f"العميل {customer.name} — سند #{payment.id}",
+                   ref_id=payment.id)
+    except Exception:
+        pass
+    return {
+        "payment_id": payment.id,
+        "amount": str(payment.amount),
+        "customer_id": payload.customer_id,
+        "safe_id": safe_id,
+        "paid_on": str(payment.paid_on),
+    }
+
+class CommissionRunIn(BaseModel):
+    period_from: date
+    period_to: date
+
+    @model_validator(mode="after")
+    def _check_range(self):
+        if self.period_from > self.period_to:
+            raise ValueError("period_from must not be after period_to")
+        return self
+
+
+@router.post("/commission-runs", status_code=201)
+def create_commission_run(
+    payload: CommissionRunIn,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(require_manager),
+):
+    """دورة صرف عمولات: تجميع صافي مبيعات كل مندوب للفترة (مؤكدة، بعد المرتجعات،
+    وغير المدرجة في دورة سابقة) — وتقفل الأوردرات المدرجة (commission_run_id)."""
+    from datetime import datetime as _dt, timezone as _tz
+    from sqlalchemy import func
+
+    company_id = db.info["company_id"]
+    start = _dt.combine(payload.period_from, _dt.min.time(), tzinfo=_tz.utc)
+    end = _dt.combine(payload.period_to + __import__("datetime").timedelta(days=1), _dt.min.time(), tzinfo=_tz.utc)
+
+    reps = db.query(models.SalesRep).filter(
+        models.SalesRep.company_id == company_id, models.SalesRep.is_active.is_(True)
+    ).all()
+    if not reps:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "لا مندوبين نشطين")
+
+    # مبيعات مؤكدة خلال النافذة (لحظة التأكيد = updated_at) وغير مُدرجة في دورة سابقة
+    sales_q = (
+        db.query(
+            models.SalesOrder.rep_id,
+            func.count(models.SalesOrder.id).label("orders_count"),
+            func.coalesce(func.sum(func.coalesce(models.SalesOrder.subtotal, models.SalesOrder.total_amount)), 0).label("gross"),
+        )
+        .filter(
+            models.SalesOrder.company_id == company_id,
+            models.SalesOrder.status == "confirmed",
+            models.SalesOrder.rep_id.isnot(None),
+            models.SalesOrder.commission_run_id.is_(None),
+            models.SalesOrder.updated_at >= start,
+            models.SalesOrder.updated_at < end,
+        )
+        .group_by(models.SalesOrder.rep_id)
+        .all()
+    )
+    sales_map = {rid: (cnt, Decimal(str(g or 0))) for rid, cnt, g in sales_q}
+
+    # مرتجعات منسوبة للمندوب خلال نفس النافذة
+    returns_q = (
+        db.query(models.SalesReturn.rep_id, func.coalesce(func.sum(models.SalesReturn.total_amount - models.SalesReturn.refund_amount), 0))
+        .filter(
+            models.SalesReturn.company_id == company_id,
+            models.SalesReturn.rep_id.isnot(None),
+            models.SalesReturn.commission_run_id.is_(None),
+            models.SalesReturn.created_at >= start,
+            models.SalesReturn.created_at < end,
+        )
+        .group_by(models.SalesReturn.rep_id)
+        .all()
+    )
+    returns_map = {rid: Decimal(str(v or 0)) for rid, v in returns_q}
+
+    run = models.RepCommissionRun(
+        company_id=company_id, period_from=payload.period_from, period_to=payload.period_to,
+        status="posted", created_by=user.id,
+    )
+    db.add(run)
+    db.flush()
+
+    lines = []
+    total = Decimal("0")
+    affected_orders = []
+    for rep in reps:
+        cnt, gross = sales_map.get(rep.id, (0, Decimal("0")))
+        if cnt == 0:
+            continue  # لا أوردرات غير مُقفلة في الفترة
+        rets = returns_map.get(rep.id, Decimal("0"))
+        net = (gross - rets).quantize(Decimal("0.01"))
+        pct = Decimal(str(rep.commission_percent or 0))
+        commission = (net * pct / Decimal("100")).quantize(Decimal("0.01"))
+        line = models.RepCommissionRunLine(
+            company_id=company_id, run_id=run.id, rep_id=rep.id,
+            orders_count=cnt, gross=gross, returns_total=rets, net=net,
+            percent=pct, commission=commission,
+        )
+        db.add(line)
+        lines.append(line)
+        total += commission
+
+    run.total = total.quantize(Decimal("0.01"))  # type: ignore[assignment]
+    db.flush()
+
+    # قفل أوردرات كل مندوب مُدرج (فقط المؤكدة في النافذة وغير المقفلة)
+    for line in lines:
+        ids = [
+            oid for (oid,) in db.query(models.SalesOrder.id).filter(
+                models.SalesOrder.company_id == company_id,
+                models.SalesOrder.rep_id == line.rep_id,
+                models.SalesOrder.status == "confirmed",
+                models.SalesOrder.commission_run_id.is_(None),
+                models.SalesOrder.updated_at >= start,
+                models.SalesOrder.updated_at < end,
+            ).all()
+        ]
+        if ids:
+            db.query(models.SalesOrder).filter(models.SalesOrder.id.in_(ids)).update(
+                {models.SalesOrder.commission_run_id: run.id}, synchronize_session=False
+            )
+            affected_orders.extend(ids)
+        # قفل مرتجعات المندوب في نفس النافذة — تصحيح العمولة يحدث مرة واحدة
+        rids = [
+            rid for (rid,) in db.query(models.SalesReturn.id).filter(
+                models.SalesReturn.company_id == company_id,
+                models.SalesReturn.rep_id == line.rep_id,
+                models.SalesReturn.commission_run_id.is_(None),
+                models.SalesReturn.created_at >= start,
+                models.SalesReturn.created_at < end,
+            ).all()
+        ]
+        if rids:
+            db.query(models.SalesReturn).filter(models.SalesReturn.id.in_(rids)).update(
+                {models.SalesReturn.commission_run_id: run.id}, synchronize_session=False
+            )
+
+    audit(db, user, "create", "rep_commission_run", run,
+          f"دورة عمولات {payload.period_from}→{payload.period_to}: {len(lines)} مندوب · إجمالي {run.total} · {len(affected_orders)} أوردر")
+    db.commit()
+    db.refresh(run)
+    return {
+        "id": run.id, "period_from": str(run.period_from), "period_to": str(run.period_to),
+        "total": str(run.total), "status": run.status,
+        "lines": [{
+            "rep_id": l.rep_id, "rep_name": l.rep.name, "orders_count": l.orders_count,
+            "gross": str(l.gross), "returns_total": str(l.returns_total), "net": str(l.net),
+            "percent": str(l.percent), "commission": str(l.commission),
+        } for l in lines],
+        "orders_locked": len(affected_orders),
+    }
+
+
+@router.get("/commission-runs")
+def list_commission_runs(db: Session = Depends(get_db), _: models.User = Depends(require_manager)):
+    runs = (
+        db.query(models.RepCommissionRun)
+        .filter(models.RepCommissionRun.company_id == db.info["company_id"])
+        .order_by(models.RepCommissionRun.id.desc())
+        .limit(100)
+        .all()
+    )
+    return [{
+        "id": r.id, "period_from": str(r.period_from), "period_to": str(r.period_to),
+        "total": str(r.total), "status": r.status, "created_at": r.created_at.isoformat() if r.created_at else None,
+    } for r in runs]

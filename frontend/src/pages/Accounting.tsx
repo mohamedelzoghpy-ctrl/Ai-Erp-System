@@ -922,6 +922,7 @@ function ReportsTab() {
   const pnlDetail = useFetch(() => api.get<any[]>(qs("/reports/financial/profit-loss-detail")), `pd-${from}-${to}`);
   const bs = useFetch(() => api.get<any>(`/reports/financial/balance-sheet${to ? `?as_of=${to}` : ""}`), `bs4-${to}`);
   const vat = useFetch(() => api.get<any>(qs("/reports/financial/vat-return")), `vat-${from}-${to}`);
+  const cf = useFetch(() => api.get<any>(qs("/reports/financial/cash-flow")), `cf-${from}-${to}`);
   const byCC = useFetch(() => api.get<any[]>(qs("/reports/financial/profit-loss-by-cost-center")), `pnl-cc-${from}-${to}`);
 
   const trial = tb.data ?? [];
@@ -948,7 +949,7 @@ function ReportsTab() {
         <label>من تاريخ: <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} /></label>
         <label>إلى تاريخ: <input type="date" value={to} onChange={(e) => setTo(e.target.value)} /></label>
         <button className="btn btn-sm" onClick={() => { setFrom(""); setTo(""); }}>إعادة تعيين</button>
-        <button className="btn btn-sm btn-primary" onClick={() => { tb.reload(); pnlDetail.reload(); bs.reload(); }}>تحديث</button>
+        <button className="btn btn-sm btn-primary" onClick={() => { tb.reload(); pnlDetail.reload(); bs.reload(); cf.reload(); }}>تحديث</button>
       </div>
 
       <div className="card card-pad" style={{ marginBottom: 20 }}>
@@ -974,6 +975,58 @@ function ReportsTab() {
             ))}
           </div>
         ) : <Empty>لا توجد بيانات ضريبية للفترة</Empty>}
+      </div>
+
+      <div className="card card-pad" style={{ marginBottom: 20 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+          <h3 style={{ margin: 0 }}>💧 قائمة التدفقات النقدية{from || to ? ` — ${from || "…"} إلى ${to || "…"}` : ""}</h3>
+          <div style={{ display: "flex", gap: 6 }}>
+            <button className="btn btn-sm btn-primary" onClick={() => void api.download(qs("/reports/financial/cash-flow/xlsx"), `cash-flow-${from || "start"}_${to || "today"}.xlsx`)}>⬇️ Excel</button>
+            <button className="btn btn-sm" onClick={() => { cf.reload(); }}>تحديث</button>
+          </div>
+        </div>
+        <Alert>{cf.error}</Alert>
+        {cf.loading ? <Loading /> : cf.data ? (
+          <>
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
+              {[
+                ["رصيد أول الفترة", cf.data.opening, "#64748b"],
+                ["التشغيلي", cf.data.operating_total, Number(cf.data.operating_total) >= 0 ? "#15803d" : "#b91c1c"],
+                ["الاستثماري", cf.data.investing_total, "#1f6feb"],
+                ["التمويلي", cf.data.financing_total, "#7c3aed"],
+                ["صافي التغير", cf.data.net_change, Number(cf.data.net_change) >= 0 ? "#15803d" : "#b91c1c"],
+                ["رصيد آخر الفترة", cf.data.closing, "#0f172a"],
+              ].map(([label, value, color]) => (
+                <div key={label as string} style={{ flex: "1 1 150px", border: "1px solid var(--border)", borderRadius: 10, padding: "10px 14px" }}>
+                  <div style={{ fontSize: 12, color: "var(--muted, #64748b)" }}>{label as string}</div>
+                  <div className="num" style={{ fontWeight: 800, fontSize: 17, color: color as string }}>{money(value as any)}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+              {([["التدفقات التشغيلية", cf.data.operating], ["التدفقات الاستثمارية", cf.data.investing], ["التدفقات التمويلية", cf.data.financing]] as [string, any[]][]).map(([title, rows]) => (
+                <div key={title} style={{ flex: "1 1 260px" }}>
+                  <h4 style={{ margin: "0 0 6px", fontSize: 13 }}>{title}</h4>
+                  {rows.length > 0 ? (
+                    <table style={{ width: "100%", fontSize: 13 }}>
+                      <thead><tr><th>الحساب</th><th className="num">الأثر</th></tr></thead>
+                      <tbody>
+                        {rows.map((row: any) => (
+                          <tr key={row.code}>
+                            <td>{row.name} <span dir="ltr" style={{ color: "var(--muted, #64748b)", fontSize: 11 }}>({row.code})</span></td>
+                            <td className="num" style={{ color: Number(row.amount) >= 0 ? "#15803d" : "#b91c1c" }}>{money(row.amount)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  ) : (
+                    <div className="muted" style={{ fontSize: 12 }}>— لا حركة</div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </>
+        ) : <Empty>لا حركة نقدية للفترة</Empty>}
       </div>
 
       <div className="card card-pad" style={{ marginBottom: 20 }}>

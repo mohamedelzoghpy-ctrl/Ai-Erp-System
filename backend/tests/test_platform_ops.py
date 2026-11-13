@@ -34,8 +34,8 @@ def api():
 
     app.dependency_overrides[get_db] = override_get_db
     client = TestClient(app)
-    assert client.post("/auth/setup", json={"username": "boss", "password": "long-password"}).status_code == 201
-    token = client.post("/auth/login", data={"username": "boss", "password": "long-password"}).json()["access_token"]
+    assert client.post("/auth/setup", json={"username": "boss", "password": "long-password-123"}).status_code == 201
+    token = client.post("/auth/login", data={"username": "boss", "password": "long-password-123"}).json()["access_token"]
     client.headers["Authorization"] = f"Bearer {token}"
     yield client
     app.dependency_overrides.pop(get_db, None)
@@ -61,11 +61,11 @@ def test_logout_all_and_password_change_revoke_tokens(api):
     assert c.post("/auth/logout-all").status_code == 204
     assert c.get("/auth/me").status_code == 401
     # دخول جديد يعمل
-    tok = c.post("/auth/login", data={"username": "boss", "password": "long-password"}).json()["access_token"]
+    tok = c.post("/auth/login", data={"username": "boss", "password": "long-password-123"}).json()["access_token"]
     c.headers["Authorization"] = f"Bearer {tok}"
     assert c.get("/auth/me").status_code == 200
     # تغيير الباسورد ذاتيًا: يبطل القديم ويرجع توكن جديد
-    r = ok(c.post("/auth/change-password", json={"old_password": "long-password", "new_password": "newer-password-1"}), 200)
+    r = ok(c.post("/auth/change-password", json={"old_password": "long-password-123", "new_password": "newer-password-1"}), 200)
     assert c.get("/auth/me").status_code == 401
     c.headers["Authorization"] = f"Bearer {r['access_token']}"
     assert c.get("/auth/me").status_code == 200
@@ -232,13 +232,13 @@ def test_company_threshold_overrides_env(api, monkeypatch):
     # حد الشركة 500
     ok(c.patch("/company", json={"je_approval_threshold": "500"}))
     br = ok(c.post("/company/branches", json={"name": "فرع اعتماد"}), 201)
-    r = c.post("/auth/users", json={"username": "jclerk", "password": "long-password", "role": "staff",
+    r = c.post("/auth/users", json={"username": "jclerk", "password": "long-password-123", "role": "staff",
                                     "branch_ids": [br["id"]]})
     uid = r.json()["id"]
     sec = ok(c.post("/access-sections", json={"code": f"th{uid}", "name": "قسم قيود"}), 201)
     ok(c.put(f"/access-sections/{sec['id']}/permissions", json={"permission_codes": ["accounting.journal.create", "accounting.account.view"]}))
     ok(c.put(f"/auth/users/{uid}/section", json={"section_id": sec["id"]}))
-    tok = c.post("/auth/login", data={"username": "jclerk", "password": "long-password"}).json()["access_token"]
+    tok = c.post("/auth/login", data={"username": "jclerk", "password": "long-password-123"}).json()["access_token"]
     staff = TestClient(app)
     staff.headers["Authorization"] = f"Bearer {tok}"
     cash = {a["code"]: a for a in ok(c.get("/chart-of-accounts"))}["1111"]

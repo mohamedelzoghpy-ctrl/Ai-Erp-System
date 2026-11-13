@@ -86,29 +86,32 @@
 /* ---------- لوحة التحكم الهرمية — بطاقات بطل + مجموعات مؤشرات + هياكل تحميل ---------- */
 .hero-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; margin-bottom: 22px; }
 .hero-kpi {
-  position: relative; padding: 18px 20px; border-radius: 16px; color: #fff; overflow: hidden;
-  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.12);
+  position: relative; padding: 18px 20px; border-radius: 16px; color: #0f172a; overflow: hidden;
+  border: 1px solid var(--border, #e2e8f0);
+  box-shadow: 0 2px 10px rgba(15, 23, 42, 0.05);
 }
 .hero-kpi::before {
   content: ""; position: absolute; inset-inline-end: -34px; top: -34px;
   width: 110px; height: 110px; border-radius: 50%;
-  background: rgba(255, 255, 255, 0.12); pointer-events: none;
+  background: rgba(15, 23, 42, 0.035); pointer-events: none;
 }
 .hero-kpi .hero-icon {
   width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center;
   font-size: 22px; margin-bottom: 10px;
-  background: rgba(255, 255, 255, 0.18); border: 1px solid rgba(255, 255, 255, 0.35);
+  background: #ffffff; border: 1px solid rgba(15, 23, 42, 0.08);
+  color: var(--accent, #2563eb);
 }
-.hero-kpi .hero-label { font-size: 13px; font-weight: 600; color: rgba(255, 255, 255, 0.92); }
-.hero-kpi .hero-value { font-size: 26px; font-weight: 800; letter-spacing: 0.3px; margin-top: 1px; }
-.hero-kpi .hero-sub { font-size: 12px; color: rgba(255, 255, 255, 0.85); margin-top: 2px; }
-.hero-bar { height: 7px; background: rgba(255, 255, 255, 0.25); border-radius: 999px; margin-top: 12px; overflow: hidden; }
-.hero-bar > span { display: block; height: 100%; border-radius: 999px; background: rgba(255, 255, 255, 0.92); transition: width 0.4s ease; }
-.hero-bar-label { font-size: 11px; color: rgba(255, 255, 255, 0.82); margin-top: 5px; }
-.hero-kpi.profit { background: linear-gradient(135deg, #059669 0%, #10b981 55%, #34d399 100%); }
-.hero-kpi.assets { background: linear-gradient(135deg, #1d4ed8 0%, #2563eb 55%, #3b82f6 100%); }
-.hero-kpi.liabilities { background: linear-gradient(135deg, #b91c1c 0%, #ef4444 55%, #f87171 100%); }
-.hero-kpi.equity { background: linear-gradient(135deg, #6d28d9 0%, #8b5cf6 55%, #a78bfa 100%); }
+.hero-kpi .hero-label { font-size: 13px; font-weight: 600; color: #64748b; }
+.hero-kpi .hero-value { font-size: 26px; font-weight: 800; letter-spacing: 0.3px; margin-top: 1px; color: #0f172a; }
+.hero-kpi .hero-sub { font-size: 12px; color: #64748b; margin-top: 2px; }
+.hero-bar { height: 7px; background: #e2e8f0; border-radius: 999px; margin-top: 12px; overflow: hidden; }
+.hero-bar > span { display: block; height: 100%; border-radius: 999px; background: var(--accent, #2563eb); transition: width 0.4s ease; }
+.hero-bar-label { font-size: 11px; color: #64748b; margin-top: 5px; }
+/* باستيل هادئ + لمسة لون في الأيقونة والشريط فقط */
+.hero-kpi.profit { background: #ecfdf5; border-color: #d1fae5; --accent: #059669; }
+.hero-kpi.assets { background: #eff6ff; border-color: #dbeafe; --accent: #2563eb; }
+.hero-kpi.liabilities { background: #fef2f2; border-color: #fee2e2; --accent: #dc2626; }
+.hero-kpi.equity { background: #f5f3ff; border-color: #ede9fe; --accent: #7c3aed; }
 
 .kpi-group { margin-bottom: 20px; }
 .kpi-group-title {
@@ -257,8 +260,8 @@
   --ok-bg: #e6f6ee;
   --warn: #9a6700;
   --warn-bg: #fff4d6;
-  --sidebar: #0e1728;
-  --sidebar-text: rgba(255, 255, 255, 0.66);
+  --sidebar: #1f6feb;
+  --sidebar-text: rgba(255, 255, 255, 0.88);
   --radius: 10px;
   font-family: "Segoe UI", "Noto Naskh Arabic", Tahoma, Arial, sans-serif;
   color: var(--text);
@@ -273,14 +276,14 @@ button, input, select, textarea { font: inherit; }
 /* ---------- layout ---------- */
 .app { display: flex; min-height: 100vh; }
 .sidebar {
-  width: 230px; background: linear-gradient(180deg, #14213a 0%, #0e1728 55%, #0a111d 100%); color: rgba(255, 255, 255, 0.75);
+  width: 230px; background: linear-gradient(135deg, #2563eb 0%, #1f6feb 45%, #16a34a 100%); color: rgba(255, 255, 255, 0.92);
   display: flex; flex-direction: column; flex-shrink: 0; position: sticky; top: 0; height: 100vh;
-  box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.06), 0 0 24px rgba(8, 14, 26, 0.35);
+  box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.18), 0 0 24px rgba(37, 99, 235, 0.22);
 }
 .brand {
   display: flex; align-items: center; gap: 11px; padding: 16px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.03);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.08);
 }
 .brand-mark {
   width: 40px; height: 40px; flex-shrink: 0; border-radius: 12px;
@@ -308,21 +311,21 @@ button, input, select, textarea { font: inherit; }
 }
 .nav { display: flex; flex-direction: column; padding: 10px; gap: 2px; overflow-y: auto; }
 .nav::-webkit-scrollbar { width: 8px; }
-.nav::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.14); border-radius: 999px; }
-.nav::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.24); }
+.nav::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.3); border-radius: 999px; }
+.nav::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.45); }
 .nav::-webkit-scrollbar-track { background: transparent; }
 .nav a {
-  color: rgba(255, 255, 255, 0.66); text-decoration: none; padding: 9px 12px; border-radius: 8px;
+  color: rgba(255, 255, 255, 0.92); text-decoration: none; padding: 9px 12px; border-radius: 8px;
   transition: background 0.15s ease, color 0.15s ease;
 }
-.nav a:hover { background: rgba(255, 255, 255, 0.07); color: #fff; }
+.nav a:hover { background: rgba(255, 255, 255, 0.16); color: #fff; }
 .nav a.active {
-  background: rgba(37, 99, 235, 0.24); color: #fff; font-weight: 700;
-  box-shadow: inset -3px 0 0 0 #22c55e;
+  background: rgba(255, 255, 255, 0.22); color: #fff; font-weight: 700;
+  box-shadow: inset -3px 0 0 0 #ffffff;
 }
-.nav-company-admin { width: 100%; border: 0; background: transparent; color: rgba(255, 255, 255, 0.66); text-align: start; text-decoration: none; padding: 9px 12px; border-radius: 8px; cursor: pointer; font: inherit; }
+.nav-company-admin { width: 100%; border: 0; background: transparent; color: rgba(255, 255, 255, 0.88); text-align: start; text-decoration: none; padding: 9px 12px; border-radius: 8px; cursor: pointer; font: inherit; }
 .nav-company-admin:hover { background: rgba(255, 255, 255, 0.07); color: #fff; }
-.nav .section { font-size: 12px; color: rgba(255, 255, 255, 0.42); padding: 14px 12px 4px; letter-spacing: 0.4px; }
+.nav .section { font-size: 12px; color: rgba(255, 255, 255, 0.75); padding: 14px 12px 4px; letter-spacing: 0.4px; }
 .nav .section-toggle { display: flex; align-items: center; justify-content: space-between; width: 100%; border: 0; background: transparent; cursor: pointer; font: inherit; text-align: start; }
 .nav .section-toggle:hover { color: #fff; }
 .nav .section-chevron { font-size: 11px; }
@@ -896,3 +899,30 @@ td.actions { display: flex; gap: 6px; }
 @media (max-width: 1100px) { .perm-two-col { grid-template-columns: 1fr; } }
 .perm-override-form { display: grid; gap: 8px; margin-bottom: 12px; }
 .hint { color: var(--muted); font-size: 12px; }
+
+/* ==== POS اللمسي: شبكة المنتجات + numpad ==== */
+.pos-sale-layout { display: grid; grid-template-columns: minmax(320px, 1fr) minmax(360px, 1.2fr); gap: 14px; align-items: start; }
+@media (max-width: 1100px) { .pos-sale-layout { grid-template-columns: 1fr; } }
+.pos-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.pos-tile {
+  display: flex; flex-direction: column; align-items: stretch; gap: 2px;
+  background: #fff; border: 1px solid var(--border, #e2e8f0); border-radius: 10px;
+  padding: 10px 8px; cursor: pointer; text-align: right; min-height: 84px;
+  transition: transform .06s ease, box-shadow .06s ease;
+}
+.pos-tile:hover { transform: translateY(-1px); box-shadow: 0 2px 8px rgba(15,23,42,.08); }
+.pos-tile:active { transform: scale(.97); }
+.pos-tile-in-cart { border-color: #1f6feb; box-shadow: inset 0 0 0 1px #1f6feb; background: #f0f6ff; }
+.pos-tile-name { font-weight: 700; font-size: 13px; color: #0f172a; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.pos-tile-price { color: #1f6feb; font-weight: 800; font-size: 14px; }
+.pos-tile-stock { color: #64748b; font-size: 11px; }
+.pos-tile-stock.low { color: #b91c1c; font-weight: 700; }
+.pos-numpad { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 10px; }
+.pos-numpad-key {
+  padding: 12px 0; font-size: 16px; font-weight: 700; border-radius: 10px;
+  background: #fff; border: 1px solid var(--border, #e2e8f0); cursor: pointer; color: #0f172a;
+}
+.pos-numpad-key:active { background: #eef2f7; transform: scale(.97); }
+.pos-numpad-clear { color: #b91c1c; }
+.pos-numpad-exact { color: #15803d; }
+.pos-numpad-cash { background: #f0f6ff; color: #1f6feb; }

@@ -11,6 +11,7 @@ import hashlib
 import hmac
 import logging
 import os
+import re
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -63,10 +64,57 @@ def verify_password(password: str, stored: str) -> bool:
 DUMMY_HASH = hash_password(secrets.token_urlsafe(16))
 
 
+# --- سياسة كلمات السر: تُفحص عند الإسناد فقط (إعداد/إنشاء/تعديل) — القديمة لا تتأثر ---
+_COMMON_PASSWORDS = {
+    "password", "password1", "password123", "12345678", "123456789", "1234567890",
+    "qwerty123", "qwertyuiop", "11111111", "00000000", "12121212", "abc12345",
+    "letmein1", "iloveyou1", "admin1234", "welcome1", "monkey123", "dragon123",
+    "passw0rd", "p@ssw0rd", "aaaaaaa1",
+}
+
+
+def validate_password_strength(password: str) -> Optional[str]:
+    """يعيد رسالة الخطأ إن كانت كلمة السر ضعيفة، أو None إن قبلتها السياسة:
+    8-128 حرفًا، أحرف + أرقام معًا، ليست في قائمة الشائعة."""
+    if len(password) < 8:
+        return "كلمة السر يجب أن تكون 8 أحرف على الأقل"
+    if len(password) > 128:
+        return "كلمة السر أطول من الحد المسموح (128)"
+    if not re.search(r"[A-Za-z]", password) or not re.search(r"\d", password):
+        return "كلمة السر يجب أن تجمع أحرفًا وأرقامًا"
+    if password.strip().lower() in _COMMON_PASSWORDS:
+        return "كلمة السر ضعيفة جدًا (شائعة) — اختر غيرها"
+    return None
+
+
 def create_access_token(user_id: int, expires_minutes: Optional[int] = None, token_version: int = 1) -> str:
     """توكن يحمل إصدار الجلسة (ver) — رفع الإصدار على المستخدم يبطل كل التوكنات السابقة."""
     expire = datetime.now(timezone.utc) + timedelta(minutes=expires_minutes or ACCESS_TOKEN_EXPIRE_MINUTES)
-    return jwt.encode({"sub": str(user_id), "exp": expire, "ver": token_version}, SECRET_KEY, algorithm=ALGORITHM)
+    return jwt.encode({"sub": str(user_id), "exp": expire, "ver": token_version, "typ": "access"}, SECRET_KEY, algorithm=ALGORITHM)
+
+
+REFRESH_TOKEN_DAYS = int(os.getenv("REFRESH_TOKEN_DAYS", "30"))
+
+
+def create_refresh_token(user_id: int, token_version: int = 1, days: Optional[int] = None) -> str:
+    """توكن تجديد طويل الأمد للموبايل — يُبطل برفع إصدار الجلسة (logout-all/تغيير كلمة السر)."""
+    expire = datetime.now(timezone.utc) + timedelta(days=days or REFRESH_TOKEN_DAYS)
+    return jwt.encode({"sub": str(user_id), "exp": expire, "ver": token_version, "typ": "refresh"}, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def _decode_typed(token: str, expected_type: str) -> Optional[dict]:
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        if payload.get("typ", "access") != expected_type:
+            return None
+        return {"id": int(payload["sub"]), "ver": int(payload.get("ver", 1))}
+    except (jwt.PyJWTError, KeyError, ValueError):
+        return None
+
+
+def decode_refresh_token(token: str) -> Optional[dict]:
+    """Returns {id, ver} for a refresh token only — access tokens are rejected here."""
+    return _decode_typed(token, "refresh")
 
 
 def decode_access_token(token: str) -> Optional[dict]:

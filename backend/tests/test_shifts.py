@@ -1,6 +1,12 @@
 """اختبارات ورديات الكاشير: دورة الفتح/الإغلاق، معادلة النقد المتوقع
 (افتتاحي + مقبوضات نقدية − مرتجعات نقدية)، تجميد الأرقام عند الإغلاق،
-وحجب الرؤية بين الكاشيرين مع سماح للمدير."""
+وحجب الرؤية بين الكاشيرين مع سماح للمدير.
+
+توقيت: SQLite يخزن CURRENT_TIMESTAMP بدقة الثانية بينما تُمرَّر المقارنات
+بكسور الميكروثانية، فالحركات في نفس ثانية الفتح قد تُستبعد (على Postgres
+الإنتاجي المقارنة رقمية سليمة) — لذا ننتظر ثانية بعد الفتح قبل أي حركة."""
+from time import sleep
+
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -73,6 +79,7 @@ def test_shift_lifecycle_and_expected_cash_math():
 
         # منع وردية ثانية مفتوحة لنفس المستخدم
         assert client.post("/shifts/open", json={"opening_cash": "0"}).status_code == 409
+        sleep(1.1)  # تجاوز دقة الثانية في SQLite — راجع docstring الوحدة
 
         # مقبوض نقدية داخل النافذة يرفع المتوقع
         customer = client.post("/customers", json={"name": "عميل وردية"}).json()
@@ -113,6 +120,7 @@ def test_cash_refund_lowers_expected_cash():
         w1, _ = make_warehouses(client)
         product = make_product(client, "SH1", 10, w1["id"])
         assert client.post("/shifts/open", json={"opening_cash": "100"}).status_code == 201
+        sleep(1.1)  # تجاوز دقة الثانية في SQLite — راجع docstring الوحدة
 
         # مرتجع بيع نقدي داخل النافذة ⇒ المبلغ مخرج من الدرج
         ret = client.post(

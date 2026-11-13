@@ -256,3 +256,70 @@ def delete_line(
     db.delete(line)
     db.commit()
     return None
+
+@router.post("/post-unmatched")
+def post_unmatched(
+    bank_id: int,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(require_manager),
+):
+    """ترحيل الفروق: كل سطر غير مطابق وغير مُرحَّل يُرحَّل قيدًا مستقلاً —
+    داخل للبنك: مدين حساب البنك / دائن فروق 5600 · خارج: العكس.
+    يُوسم السطر بـposted_in_entry_id — لا ترحيل مزدوج."""
+    from ..accounting import AccountingEngine, seed_default_coa
+
+    company_id = db.info["company_id"]
+    bank = db.get(models.Bank, bank_id)
+    if bank is None or bank.company_id != company_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Bank not found")
+    if bank.chart_account_id is None:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "لا يوجد حساب محاسبي مرتبط بالبنك")
+    seed_default_coa(db, company_id)
+    variance = (
+        db.query(models.ChartAccount)
+        .filter(models.ChartAccount.company_id == company_id, models.ChartAccount.code == "5600")
+        .first()
+    )
+    if variance is None:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "حساب الفروق 5600 غير موجود في شجرة الحسابات")
+
+    lines = (
+        db.query(models.BankStatementLine)
+        .filter(
+            models.BankStatementLine.company_id == company_id,
+            models.BankStatementLine.bank_id == bank_id,
+            models.BankStatementLine.matched_payment_id.is_(None),
+            models.BankStatementLine.posted_in_entry_id.is_(None),
+        )
+        .order_by(models.BankStatementLine.value_date, models.BankStatementLine.id)
+        .all()
+    )
+    if not lines:
+        return {"posted": 0, "entry_ids": [], "message": "لا فروق غير مُرحَّلة — الكشف متطابق"}
+
+    entry_ids = []
+    for line in lines:
+        amount = Decimal(str(line.amount))
+        if amount > 0:
+            items = [
+                {"account_id": bank.chart_account_id, "debit": amount, "credit": 0},
+                {"account_id": variance.id, "debit": 0, "credit": amount},
+            ]
+        else:
+            items = [
+                {"account_id": variance.id, "debit": -amount, "credit": 0},
+                {"account_id": bank.chart_account_id, "debit": 0, "credit": -amount},
+            ]
+        entry = AccountingEngine.create_entry(
+            db=db, company_id=company_id, user_id=user.id,
+            description=f"تسوية كشف بنكي {bank.name} — {line.description[:80]}",
+            items=items,
+            reference=f"BNKREC-{line.id}",
+            date=line.value_date,
+        )
+        line.posted_in_entry_id = entry.id  # type: ignore[assignment]
+        entry_ids.append(entry.id)
+
+    audit(db, user, "post", "bank_statement", bank_id, f"ترحيل {len(lines)} سطر فروق — قيود {entry_ids[:5]}…")
+    db.commit()
+    return {"posted": len(lines), "entry_ids": entry_ids, "message": f"رُحّل {len(lines)} سطر كقيود تسوية"}

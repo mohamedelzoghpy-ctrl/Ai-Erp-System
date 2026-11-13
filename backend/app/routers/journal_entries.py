@@ -175,28 +175,49 @@ def update_journal_entry(
 
 @router.delete("/{je_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_journal_entry(je_id: int, db: Session = Depends(get_db), user: models.User = Depends(require_manager)):
+    """حذف قيد: المسودة/المرفوض/المعلق يُحذف نهائيًا (بلا أثر أرصدة)،
+    أما المُرحّل (posted) فلا يُحذف أبدًا — يُعكَس بقيد معاكس مرجعيه VOID-{id}
+    ويُوسم voided؛ الأثر الصافي صفر والدفاتر تحتفظ بالأثر الكامل."""
     je = db.get(models.JournalEntry, je_id)
     if je is None or je.company_id != db.info["company_id"]:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Journal entry not found")
-    # قيد في سنة مقفولة لا يُحذف — الأرشيف المحاسبي غير قابل للطمس
+    # قيد في سنة مقفولة لا يُمس — الأرشيف المحاسبي غير قابل للطمس
     ensure_fiscal_open(db, db.info["company_id"], je.date)
-    # Reverse the account-balance deltas posted by this entry before deleting it
-    for ji in je.items:
-        acc = (
-            db.query(models.ChartAccount)
+
+    if je.status == "voided":
+        raise HTTPException(status.HTTP_409_CONFLICT, f"القيد مُعكوس مسبقًا بالقيد VOID-{je_id} ولا يمكن عكسه مرتين")
+
+    if je.status == "posted":
+        # عكس آلي: قيد معاكس بنفس البنود معكوسة + وسم الأصل voided
+        reversal = (
+            db.query(models.JournalEntry)
             .filter(
-                models.ChartAccount.id == ji.account_id,
-                models.ChartAccount.company_id == db.info["company_id"],
+                models.JournalEntry.company_id == db.info["company_id"],
+                models.JournalEntry.reference == f"VOID-{je.id}",
             )
-            .first()
+            .one_or_none()
         )
-        if acc is not None:
-            delta = ji.debit - ji.credit
-            if acc.type in ("liability", "equity", "revenue"):
-                acc.balance += delta
-            else:
-                acc.balance -= delta
+        if reversal is not None:
+            raise HTTPException(status.HTTP_409_CONFLICT, f"يوجد عكس سابق بالقيد #{reversal.id}")
+        items = [
+            {"account_id": ji.account_id, "debit": ji.credit, "credit": ji.debit, "cost_center_id": ji.cost_center_id}
+            for ji in je.items
+        ]
+        AccountingEngine.create_entry(
+            db=db,
+            company_id=db.info["company_id"],
+            user_id=user.id,
+            description=f"عكس القيد #{je.id}: {je.description}",
+            items=items,
+            reference=f"VOID-{je.id}",
+        )
+        je.status = "voided"  # type: ignore[assignment]
+        audit(db, user, "void", "journal_entry", je, f"عكس القيد #{je.id} بقيد VOID-{je.id}")
+        db.commit()
+        return None
+
+    # pending_approval / rejected: أرصدتها لم تُطبق أصلًا — حذف مباشر بلا مساس بالأرصدة
     db.delete(je)
-    audit(db, user, "delete", "journal_entry", je_id, f"journal entry {je_id}")
+    audit(db, user, "delete", "journal_entry", je_id, f"journal entry {je_id} ({je.status})")
     db.commit()
     return None

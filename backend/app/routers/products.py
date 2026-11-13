@@ -15,6 +15,7 @@ from ..codegen import unique_sku
 from .. import exports
 from ..deps import get_current_user, require_manager, user_role
 from .. import models, schemas, stock
+from ..accounting import seed_default_coa
 from ..database import get_db
 
 router = APIRouter(prefix="/products", tags=["products & inventory"], dependencies=[Depends(get_current_user)])
@@ -168,9 +169,12 @@ def export_products_xlsx(db: Session = Depends(get_db)):
     for p in products:
         wh = db.get(models.Warehouse, p.warehouse_id) if p.warehouse_id else None  # type: ignore
         sup = db.get(models.Supplier, p.supplier_id) if p.supplier_id else None  # type: ignore
-        q = p.quantity or 0
-        cost_value = q * float(p.cost_price)  # type: ignore
-        sale_value = q * float(p.sale_price)  # type: ignore
+        # الكميات والأسعار Numeric تعود Decimal من القاعدة — نحسب بـDecimal ولا
+        # نخلط float (كان يكسر التصدير بـTypeError لأي منتج له كمية)
+        from decimal import Decimal
+        q = Decimal(str(p.quantity or 0))
+        cost_value = q * Decimal(str(p.cost_price or 0))
+        sale_value = q * Decimal(str(p.sale_price or 0))
         total_qty += q
         total_cost_value += cost_value
         total_sale_value += sale_value
@@ -404,6 +408,34 @@ def get_product(product_id: int, db: Session = Depends(get_db)):
     return _product_or_404(db, product_id)
 
 
+REVALUATION_CODE = "5295"  # فروق تقييم المخزون (expense) — يُبذر عند أول حاجة
+
+
+def _ensure_revaluation_account(db: Session, company_id: int) -> int:
+    """حساب فروق التقييم: يُبذر مع الشجرة للشركات الجديدة، ويُنشأ يدويًا هنا
+    للشركات المزروعة سابقًا (البذر idempotent لا يضيف لأشجار قائمة)."""
+    seed_default_coa(db, company_id)
+    acc = (
+        db.query(models.ChartAccount)
+        .filter(models.ChartAccount.company_id == company_id, models.ChartAccount.code == REVALUATION_CODE)
+        .first()
+    )
+    if acc is not None:
+        return acc.id
+    parent = (
+        db.query(models.ChartAccount)
+        .filter(models.ChartAccount.company_id == company_id, models.ChartAccount.code == "5200")
+        .first()
+    )
+    acc = models.ChartAccount(
+        company_id=company_id, code=REVALUATION_CODE, name="فروق تقييم المخزون (Revaluation)",
+        type="expense", is_group=False, parent_id=parent.id if parent else None,
+    )
+    db.add(acc)
+    db.flush()
+    return acc.id
+
+
 @router.patch("/{product_id}", response_model=schemas.ProductOut)
 def update_product(product_id: int, payload: schemas.ProductUpdate, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     product = _product_or_404(db, product_id)
@@ -414,9 +446,48 @@ def update_product(product_id: int, payload: schemas.ProductUpdate, db: Session 
         if Decimal(str(data["cost_price"])) != Decimal(str(product.cost_price)):
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Only a manager or admin can change the cost price")
     _check_refs(db, data.get("warehouse_id"), data.get("supplier_id"))
+
+    # إعادة تقييم المخزون: تعديل التكلفة بكمية قائمة يُرحَّل فرق التقييم للدفاتر
+    # بدل تعديل صامت — إما أن يكون المخزون مساوياً لدفاتره أو هناك قيد يفسر الفرق
+    reval_delta = Decimal("0")
+    if "cost_price" in data and product.quantity and Decimal(str(product.quantity)) > 0:
+        old_cost = Decimal(str(product.cost_price or 0))
+        new_cost = Decimal(str(data["cost_price"] or 0))
+        if new_cost != old_cost:
+            reval_delta = (new_cost - old_cost) * Decimal(str(product.quantity))
+
     for key, value in data.items():
         setattr(product, key, value)
     audit(db, user, "update", "product", product, "، ".join(data) or None)
+
+    if reval_delta != 0:
+        from ..accounting import AccountingEngine
+        company_id = db.info["company_id"]
+        seed_default_coa(db, company_id)
+        reval_acc_id = _ensure_revaluation_account(db, company_id)
+        inventory = (
+            db.query(models.ChartAccount)
+            .filter(models.ChartAccount.company_id == company_id, models.ChartAccount.code == "1101")
+            .first()
+        )
+        if inventory is not None:
+            if reval_delta > 0:
+                items = [
+                    {"account_id": inventory.id, "debit": reval_delta, "credit": 0},
+                    {"account_id": reval_acc_id, "debit": 0, "credit": reval_delta},
+                ]
+            else:
+                items = [
+                    {"account_id": reval_acc_id, "debit": -reval_delta, "credit": 0},
+                    {"account_id": inventory.id, "debit": 0, "credit": -reval_delta},
+                ]
+            AccountingEngine.create_entry(
+                db=db, company_id=company_id, user_id=user.id,
+                description=f"إعادة تقييم مخزون {product.sku} — {product.name}",
+                items=items,
+                reference=f"REVAL-{product.id}",
+            )
+
     db.commit()
     db.refresh(product)
     return product

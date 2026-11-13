@@ -35,7 +35,7 @@ def test_platform_company_creation_limits_and_employee_resource_scope():
         client = TestClient(app)
         response = client.post(
                 "/auth/setup",
-                json={"username": "platform", "password": "long-password", "full_name": "Platform"},
+                json={"username": "platform", "password": "long-password-123", "full_name": "Platform"},
             )
         assert response.status_code == 201, response.text
         for path in (
@@ -54,7 +54,7 @@ def test_platform_company_creation_limits_and_employee_resource_scope():
 
         response = client.post(
             "/auth/login",
-            data={"username": "platform", "password": "long-password"},
+            data={"username": "platform", "password": "long-password-123"},
         )
         assert response.status_code == 200, response.text
         platform_token = response.json()["access_token"]
@@ -69,7 +69,7 @@ def test_platform_company_creation_limits_and_employee_resource_scope():
                     "max_branches": 3,
                     "admin_username": "company-admin",
                     "admin_full_name": "Company Admin Name",
-                    "admin_password": "company-password",
+                    "admin_password": "company-password-123",
                 },
             )
         assert response.status_code == 201, response.text
@@ -80,7 +80,7 @@ def test_platform_company_creation_limits_and_employee_resource_scope():
 
         response = client.post(
                 "/auth/login",
-                data={"username": "company-admin", "password": "company-password"},
+                data={"username": "company-admin", "password": "company-password-123"},
             )
         assert response.status_code == 200, response.text
         company_headers = {"Authorization": f"Bearer {response.json()['access_token']}"}
@@ -130,14 +130,14 @@ def test_platform_company_creation_limits_and_employee_resource_scope():
         all_branch_employee = client.post(
             "/company/employees",
             headers=company_headers,
-            json={"username": "all-branch-login", "full_name": "All Branch User", "password": "staff-password", "role": "staff", "department_id": department_id, "all_branches": True},
+            json={"username": "all-branch-login", "full_name": "All Branch User", "password": "staff-password-123", "role": "staff", "department_id": department_id, "all_branches": True},
         )
         assert all_branch_employee.status_code == 201, all_branch_employee.text
         employee_code = all_branch_employee.json()["employee_code"]
         assert employee_code.isdigit()
         assert all_branch_employee.json()["username"] == "all-branch-login"
         assert all_branch_employee.json()["full_name"] == "All Branch User"
-        employee_login = client.post("/auth/login", data={"username": "all-branch-login", "password": "staff-password"})
+        employee_login = client.post("/auth/login", data={"username": "all-branch-login", "password": "staff-password-123"})
         assert employee_login.status_code == 200, employee_login.text
         assert all_branch_employee.json()["department_id"] == department_id
         assert all_branch_employee.json()["department_name"] == "Accounting and Finance"
@@ -146,7 +146,7 @@ def test_platform_company_creation_limits_and_employee_resource_scope():
         single_branch_employee = client.post(
             "/company/employees",
             headers=company_headers,
-            json={"username": "single-branch-login", "password": "staff-password", "role": "staff", "department_id": department_id, "branch_ids": [branch_two_id]},
+            json={"username": "single-branch-login", "password": "staff-password-123", "role": "staff", "department_id": department_id, "branch_ids": [branch_two_id]},
         )
         assert single_branch_employee.status_code == 201, single_branch_employee.text
         assert single_branch_employee.json()["employee_code"].isdigit()
@@ -243,7 +243,7 @@ def test_platform_company_creation_limits_and_employee_resource_scope():
                 headers=company_headers,
                 json={
                     "username": "branch-staff-legacy",
-                    "password": "staff-password",
+                    "password": "staff-password-123",
                     "role": "staff",
                     "branch_ids": [branch_three_id],
                     "warehouse_ids": [warehouse_id],
@@ -267,7 +267,7 @@ def test_platform_company_creation_limits_and_employee_resource_scope():
             headers=company_headers,
             json={
                 "username": "unscoped-staff",
-                "password": "staff-password",
+                "password": "staff-password-123",
                 "role": "staff",
             },
         )
@@ -278,7 +278,7 @@ def test_platform_company_creation_limits_and_employee_resource_scope():
             headers=company_headers,
             json={
                 "username": "legacy-route-staff",
-                "password": "staff-password",
+                "password": "staff-password-123",
                 "role": "staff",
                 "branch_ids": [branch_three_id],
             },
@@ -288,7 +288,7 @@ def test_platform_company_creation_limits_and_employee_resource_scope():
 
         response = client.post(
             "/auth/login",
-            data={"username": "legacy-route-staff", "password": "staff-password"},
+            data={"username": "legacy-route-staff", "password": "staff-password-123"},
         )
         assert response.status_code == 200, response.text
         legacy_staff_headers = {"Authorization": "Bearer " + response.json()["access_token"]}
@@ -298,7 +298,7 @@ def test_platform_company_creation_limits_and_employee_resource_scope():
 
         response = client.post(
                 "/auth/login",
-                data={"username": branch_staff_username, "password": "staff-password"},
+                data={"username": branch_staff_username, "password": "staff-password-123"},
             )
         assert response.status_code == 200, response.text
         staff_headers = {"Authorization": f"Bearer {response.json()['access_token']}"}
@@ -334,7 +334,7 @@ def test_platform_company_creation_limits_and_employee_resource_scope():
                     "name": "Company Two",
                     "code": "two",
                     "admin_username": "second-admin",
-                    "admin_password": "second-password",
+                    "admin_password": "second-password-123",
                 },
             )
         assert response.status_code == 201, response.text
@@ -342,7 +342,7 @@ def test_platform_company_creation_limits_and_employee_resource_scope():
 
         response = client.post(
             "/auth/login",
-            data={"username": "second-admin", "password": "second-password"},
+            data={"username": "second-admin", "password": "second-password-123"},
         )
         assert response.status_code == 200, response.text
         second_company_headers = {"Authorization": f"Bearer {response.json()['access_token']}"}
@@ -461,8 +461,8 @@ def test_company_license_expiry_blocks_usage_and_renewal_restores(monkeypatch):
     app.dependency_overrides[get_db] = override_get_db
     try:
         client = TestClient(app)
-        assert client.post("/auth/setup", json={"username": "platform", "password": "long-password"}).status_code == 201
-        platform_token = client.post("/auth/login", data={"username": "platform", "password": "long-password"}).json()["access_token"]
+        assert client.post("/auth/setup", json={"username": "platform", "password": "long-password-123"}).status_code == 201
+        platform_token = client.post("/auth/login", data={"username": "platform", "password": "long-password-123"}).json()["access_token"]
         platform_headers = {"Authorization": f"Bearer {platform_token}"}
 
         resp = client.post(
@@ -472,13 +472,13 @@ def test_company_license_expiry_blocks_usage_and_renewal_restores(monkeypatch):
                 "name": "Licensed Co",
                 "admin_username": "co-admin",
                 "admin_full_name": "Co Admin",
-                "admin_password": "company-password",
+                "admin_password": "company-password-123",
             },
         )
         assert resp.status_code == 201, resp.text
         company_id = resp.json()["id"]
 
-        co_token = client.post("/auth/login", data={"username": "co-admin", "password": "company-password"}).json()["access_token"]
+        co_token = client.post("/auth/login", data={"username": "co-admin", "password": "company-password-123"}).json()["access_token"]
         co_headers = {"Authorization": f"Bearer {co_token}"}
 
         # بلا رخصة (NULL = غير مقيّد): العمل طبيعي

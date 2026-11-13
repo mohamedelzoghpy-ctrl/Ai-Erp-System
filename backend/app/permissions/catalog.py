@@ -129,6 +129,8 @@ CATALOG: Dict[str, dict] = {
             "lot": ("اللوطات", [
                 ("view", "عرض اللوطات", False, False),
                 ("create", "استلام لوط / إنشاء", False, False),
+                ("update", "تعديل بيانات لوط", False, False),
+                ("write_off", "إعدام/هالك من لوط", True, False),
             ]),
             "transfer": ("التحويلات المخزنية", [
                 ("view", "عرض التحويلات", False, False),

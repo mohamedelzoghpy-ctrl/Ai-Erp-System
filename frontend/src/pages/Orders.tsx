@@ -279,6 +279,7 @@ function OrderForm({
   const { busy, error, run } = useAction();
 
   const isPurchaseOrder = cfg.priceField === "unit_cost";
+  const [docType, setDocType] = useState<"order" | "quotation">("order");
 
   // Picking a warehouse resets the safe; the effect below auto-fills it from the
   // safe(s) of the branch the selected warehouse belongs to.
@@ -306,7 +307,7 @@ function OrderForm({
   const taxableAmount = Math.max(0, total - discountAmount);
   const vatAmount = taxEnabled ? Math.round(taxableAmount * 0.14 * 100) / 100 : 0;
   const netInvoice = taxableAmount + vatAmount;
-  const validDiscount = !isPurchaseOrder || (Number.isFinite(Number(discountValue || 0)) && Number(discountValue || 0) >= 0 && (discountMode === "percent" ? Number(discountValue || 0) <= 100 : discountAmount <= total));
+  const validDiscount = Number.isFinite(Number(discountValue || 0)) && Number(discountValue || 0) >= 0 && (discountMode === "percent" ? Number(discountValue || 0) <= 100 : discountAmount <= total);
   const valid = !!party && !!warehouse && filled.length > 0 && validDiscount && (!isPurchaseOrder || paymentMode === "credit" || !!safeId) && filled.every((l) => Number.isInteger(Number(l.quantity)) && Number(l.quantity) > 0 && Number(l.price) >= 0);
 
   const pickCurrency = (id: string) => {
@@ -323,7 +324,9 @@ function OrderForm({
         [cfg.partyField]: party!.id,
         warehouse_id: Number(warehouse),
         notes: notes.trim() || null,
-        ...(isPurchaseOrder ? { payment_mode: paymentMode, safe_id: paymentMode === "cash" ? Number(safeId) : null, discount_mode: discountMode, discount_value: discountValue || "0" } : { rep_id: repId === "" ? null : Number(repId), safe_id: safeId === "" ? null : Number(safeId) }),
+        ...(isPurchaseOrder ? { payment_mode: paymentMode, safe_id: paymentMode === "cash" ? Number(safeId) : null } : { rep_id: repId === "" ? null : Number(repId), safe_id: safeId === "" ? null : Number(safeId), document_type: docType }),
+        discount_mode: discountMode,
+        discount_value: discountValue || "0",
         tax_rate: taxEnabled ? "14" : "0",
         ...(currencyId ? { currency_id: Number(currencyId) } : {}),
         items: filled.map((l) => ({ product_id: l.product!.id, quantity: Number(l.quantity), [cfg.priceField]: l.price })),
@@ -384,6 +387,14 @@ function OrderForm({
                   </select>
                 </Field>}
               </> : <>
+                {!isPurchaseOrder && (
+                  <Field label={t("نوع المستند")}>
+                    <select value={docType} onChange={(e) => setDocType(e.target.value as "order" | "quotation")} aria-label={t("نوع المستند")}>
+                      <option value="order">{t("فاتورة (تخصم من المخزون)")}</option>
+                      <option value="quotation">{t("عرض سعر (لا يخصم)")}</option>
+                    </select>
+                  </Field>
+                )}
                 <Field label={t("مندوب المبيعات")}>
                   <select value={repId} onChange={(e) => setRepId(e.target.value)} aria-label={t("مندوب المبيعات")}>
                     <option value="">{t("— بدون مندوب —")}</option>

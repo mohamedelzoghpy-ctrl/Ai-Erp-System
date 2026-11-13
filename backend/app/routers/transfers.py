@@ -210,11 +210,10 @@ def delete_transfer(transfer_id: int, db: Session = Depends(get_db), user: model
             p = products.get(i.product_id)
             if p is None:
                 continue
-            try:
-                stock.move_stock(db, p, t.from_warehouse_id, i.quantity, "transfer_delete_revert", ref)  # type: ignore
-                stock.move_stock(db, p, t.to_warehouse_id, -i.quantity, "transfer_delete_revert", ref)  # type: ignore
-            except Exception:
-                pass
+            # كل الحركات في معاملة واحدة: أي فشل (مثلاً بيع جزء من الكمية في مخزن
+            # الوصول) يرفع 409 ويُرجع المعاملة كاملة — لا حذف بديالة مخزنية ناقصة
+            stock.move_stock(db, p, t.from_warehouse_id, i.quantity, "transfer_delete_revert", ref)  # type: ignore
+            stock.move_stock(db, p, t.to_warehouse_id, -i.quantity, "transfer_delete_revert", ref)  # type: ignore
     else:  # rejected
         if user_role(user) not in ("admin", "manager"):
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Only a manager or admin can delete a rejected transfer")
@@ -276,26 +275,11 @@ def edit_transfer(transfer_id: int, payload: schemas.TransferCreate, db: Session
     for pid, qty in old_wanted.items():
         stock.move_stock(db, products[pid], old_src, qty, "transfer_edit_revert", ref)  # type: ignore
         stock.move_stock(db, products[pid], old_dst, -qty, "transfer_edit_revert", ref)  # type: ignore
-    # apply new movement
-    try:
-        for pid, qty in new_wanted.items():
-            stock.move_stock(db, products[pid], new_src, -qty, "transfer_edit", ref)
-            stock.move_stock(db, products[pid], new_dst, qty, "transfer_edit", ref)
-    except Exception:
-        # restore old
-        for pid, qty in new_wanted.items():
-            try:
-                stock.move_stock(db, products[pid], new_src, qty, "transfer_edit_revert", ref)
-                stock.move_stock(db, products[pid], new_dst, -qty, "transfer_edit_revert", ref)
-            except Exception:
-                pass
-        for pid, qty in old_wanted.items():
-            try:
-                stock.move_stock(db, products[pid], old_src, -qty, "transfer_edit", ref)  # type: ignore
-                stock.move_stock(db, products[pid], old_dst, qty, "transfer_edit", ref)  # type: ignore
-            except Exception:
-                pass
-        raise
+    # apply new movement — كل الحركات (عكس القديم + تطبيق الجديد) معاملة واحدة:
+    # أي فشل يرفع 409 ويُرجع كل شيء ذريًا، فلا حاجة لتراجع يدوي يبتلع الأخطاء
+    for pid, qty in new_wanted.items():
+        stock.move_stock(db, products[pid], new_src, -qty, "transfer_edit", ref)
+        stock.move_stock(db, products[pid], new_dst, qty, "transfer_edit", ref)
 
     # update transfer
     t.from_warehouse_id = new_src  # type: ignore

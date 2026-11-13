@@ -26,8 +26,8 @@ def api():
 
     app.dependency_overrides[get_db] = override_get_db
     client = TestClient(app)
-    assert client.post("/auth/setup", json={"username": "boss", "password": "long-password"}).status_code == 201
-    token = client.post("/auth/login", data={"username": "boss", "password": "long-password"}).json()["access_token"]
+    assert client.post("/auth/setup", json={"username": "boss", "password": "long-password-123"}).status_code == 201
+    token = client.post("/auth/login", data={"username": "boss", "password": "long-password-123"}).json()["access_token"]
     client.headers["Authorization"] = f"Bearer {token}"
     yield client
     app.dependency_overrides.pop(get_db, None)
@@ -36,7 +36,7 @@ def api():
 def make_staff_with_branch(client, branch_id: int, username: str, warehouse_id=None):
     payload = {
         "username": username,
-        "password": "long-password",
+        "password": "long-password-123",
         "role": "staff",
         "branch_ids": [branch_id],
         "warehouse_ids": [warehouse_id] if warehouse_id else [],
@@ -48,7 +48,7 @@ def make_staff_with_branch(client, branch_id: int, username: str, warehouse_id=N
     sec = client.post("/access-sections", json={"code": f"t{user_id}", "name": "قسم اختبار"}).json()
     client.put(f"/access-sections/{sec['id']}/permissions", json={"permission_codes": ["accounting.payment.view", "accounting.payment.create"]})
     client.put(f"/auth/users/{user_id}/section", json={"section_id": sec["id"]})
-    token = client.post("/auth/login", data={"username": username, "password": "long-password"}).json()["access_token"]
+    token = client.post("/auth/login", data={"username": username, "password": "long-password-123"}).json()["access_token"]
     staff = TestClient(app)
     staff.headers["Authorization"] = f"Bearer {token}"
     return staff

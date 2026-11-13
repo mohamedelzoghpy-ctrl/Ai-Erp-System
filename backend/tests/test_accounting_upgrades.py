@@ -34,8 +34,8 @@ def api():
 
     app.dependency_overrides[get_db] = override_get_db
     client = TestClient(app)
-    assert client.post("/auth/setup", json={"username": "boss", "password": "long-password"}).status_code == 201
-    token = client.post("/auth/login", data={"username": "boss", "password": "long-password"}).json()["access_token"]
+    assert client.post("/auth/setup", json={"username": "boss", "password": "long-password-123"}).status_code == 201
+    token = client.post("/auth/login", data={"username": "boss", "password": "long-password-123"}).json()["access_token"]
     client.headers["Authorization"] = f"Bearer {token}"
     yield client
     app.dependency_overrides.pop(get_db, None)
@@ -291,13 +291,13 @@ def test_recurring_journal_run_posts_and_advances(api):
 # ================================================== 8) Maker-Checker
 def _staff_client(c, username="clerk1"):
     branch = _branch(c, "فرع موظف")
-    r = c.post("/auth/users", json={"username": username, "password": "long-password", "role": "staff", "branch_ids": [branch["id"]]})
+    r = c.post("/auth/users", json={"username": username, "password": "long-password-123", "role": "staff", "branch_ids": [branch["id"]]})
     assert r.status_code == 201, r.text
     uid = r.json()["id"]
     sec = ok(c.post("/access-sections", json={"code": f"s{uid}", "name": "قسم قيود"}), 201)
     ok(c.put(f"/access-sections/{sec['id']}/permissions", json={"permission_codes": ["accounting.journal.create", "accounting.account.view"]}))
     ok(c.put(f"/auth/users/{uid}/section", json={"section_id": sec["id"]}))
-    tok = c.post("/auth/login", data={"username": username, "password": "long-password"}).json()["access_token"]
+    tok = c.post("/auth/login", data={"username": username, "password": "long-password-123"}).json()["access_token"]
     staff = TestClient(app)
     staff.headers["Authorization"] = f"Bearer {tok}"
     return staff
@@ -454,7 +454,7 @@ def test_eta_json_export_shape(api):
 # ================================================== الحد الائتماني للعملاء
 def _sales_staff(c, username: str, extra_perms: list, warehouse_id=None):
     branch = _branch(c, f"فرع {username}")
-    r = c.post("/auth/users", json={"username": username, "password": "long-password", "role": "staff",
+    r = c.post("/auth/users", json={"username": username, "password": "long-password-123", "role": "staff",
                                     "branch_ids": [branch["id"]], "warehouse_ids": [warehouse_id] if warehouse_id else []})
     assert r.status_code == 201, r.text
     uid = r.json()["id"]
@@ -463,7 +463,7 @@ def _sales_staff(c, username: str, extra_perms: list, warehouse_id=None):
         "sales.order.view", "sales.order.create", "sales.order.confirm", *extra_perms,
     ]}))
     ok(c.put(f"/auth/users/{uid}/section", json={"section_id": sec["id"]}))
-    tok = c.post("/auth/login", data={"username": username, "password": "long-password"}).json()["access_token"]
+    tok = c.post("/auth/login", data={"username": username, "password": "long-password-123"}).json()["access_token"]
     staff = TestClient(app)
     staff.headers["Authorization"] = f"Bearer {tok}"
     return staff

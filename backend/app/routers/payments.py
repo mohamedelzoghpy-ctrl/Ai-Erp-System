@@ -208,8 +208,12 @@ def create_payment(
     # balances only); only log that the JE was skipped — orders hard-fail instead.
     post_je = bool(cash_acc_id and counter_acc_id)
     if not post_je:
+        cash_location_expected = payload.method == "cheque" or payload.safe_id is not None or payload.bank_id is not None
+        if cash_location_expected:
+            # نقدية فعلية ستتحرك دون قيد = دفاتر كاذبة — نفشل بصوت عالٍ بدل التخطي الصامت
+            raise HTTPException(status.HTTP_409_CONFLICT, "تعذّر تجهيز حسابات شجرة الحسابات لهذا السند — أكمل ربط الخزينة/البنك/الطرف بشجرة الحسابات ثم أعد المحاولة")
         import logging
-        logging.getLogger(__name__).warning("Payment: could not provision CoA links (safe=%s party=%s); skipping double-entry", payload.safe_id or payload.bank_id, payload.customer_id or payload.supplier_id)
+        logging.getLogger(__name__).warning("Payment: party balance-only voucher (no cash location); JE skipped (party=%s)", payload.customer_id or payload.supplier_id)
 
     # ---- العملة الأجنبية ----
     # currency معطاة → amount الوارد يُتجاهل ويُحسب: settle_base (تسوية الطرف بالسعر الموزون)
@@ -372,6 +376,29 @@ def create_payment(
     audit(db, user, "create", "payment", p, f"{'قبض' if is_receipt else 'دفع'} {p.amount}")  # type: ignore
     db.commit()
     db.refresh(p)
+    # تنبيه تطبيق المندوب: تحصيل من عميل فاتورته الأخيرة بمندوب (صندوق + Push إن ضُبط FCM)
+    if is_receipt and payload.customer_id is not None:
+        try:
+            last_order = (
+                db.query(models.SalesOrder)
+                .filter(
+                    models.SalesOrder.customer_id == payload.customer_id,
+                    models.SalesOrder.company_id == company_id,
+                    models.SalesOrder.status == "confirmed",
+                    models.SalesOrder.rep_id.isnot(None),
+                )
+                .order_by(models.SalesOrder.id.desc())
+                .first()
+            )
+            if last_order and last_order.rep_id:
+                from ..push import notify_rep
+                cust = db.get(models.Customer, payload.customer_id)
+                notify_rep(db, last_order.rep_id, kind="payment_collected",
+                           title=f"تحصيل {p.amount} ج.م",
+                           body=f"العميل {cust.name if cust else payload.customer_id} — سند #{p.id}",
+                           ref_id=p.id)
+        except Exception:
+            pass  # الإشعار لا يعطل السند أبدًا
     return _out(p)
 
 

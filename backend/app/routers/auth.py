@@ -21,7 +21,15 @@ from ..audit import audit
 from ..database import get_db
 from ..deps import get_current_user, require_permission_or_role, require_admin
 from ..permissions import effective_permissions
-from ..security import DUMMY_HASH, create_access_token, hash_password, verify_password
+from ..security import (
+    DUMMY_HASH,
+    create_access_token,
+    create_refresh_token,
+    decode_refresh_token,
+    hash_password,
+    validate_password_strength,
+    verify_password,
+)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -34,6 +42,9 @@ def _make_user(
     branch_ids: Optional[List[int]] = None,
     warehouse_ids: Optional[List[int]] = None,
 ) -> models.User:
+    weakness = validate_password_strength(payload.password)
+    if weakness:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, weakness)
     company_id = db.info.get("company_id")
     if company_id is None:
         raise HTTPException(status.HTTP_409_CONFLICT, "No company is configured for user creation")
@@ -177,7 +188,32 @@ def login(request: Request, form: OAuth2PasswordRequestForm = Depends(), db: Ses
         _failures.pop(key, None)
     audit(db, user, "login", "user", user.id, None)
     db.commit()
-    return schemas.Token(access_token=create_access_token(user.id, token_version=int(user.token_version or 1)))  # type: ignore
+    ver = int(user.token_version or 1)  # type: ignore
+    return schemas.Token(
+        access_token=create_access_token(user.id, token_version=ver),
+        refresh_token=create_refresh_token(user.id, token_version=ver),
+    )
+
+
+class RefreshIn(BaseModel):
+    refresh_token: str = Field(min_length=20, max_length=2048)
+
+
+@router.post("/refresh", response_model=schemas.Token)
+def refresh_session(payload: RefreshIn, db: Session = Depends(get_db)):
+    """تجديد الجلسة من توكن التجديد (موبايل/جلسات طويلة): وصول جديد + تدوير توكن التجديد.
+    يُبطل فورًا برفع إصدار الجلسة (logout-all أو تغيير كلمة السر)."""
+    data = decode_refresh_token(payload.refresh_token)
+    if data is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "توكن التجديد غير صالح أو منتهي")
+    user = db.get(models.User, data["id"])
+    if user is None or not user.is_active or int(user.token_version or 1) != data["ver"]:  # type: ignore
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "توكن التجديد غير صالح أو منتهي")
+    ver = int(user.token_version or 1)  # type: ignore
+    return schemas.Token(
+        access_token=create_access_token(user.id, token_version=ver),
+        refresh_token=create_refresh_token(user.id, token_version=ver),
+    )
 
 
 @router.get("/me", response_model=schemas.UserOut)
@@ -226,6 +262,9 @@ def change_password(
         raise HTTPException(status.HTTP_403_FORBIDDEN, "كلمة السر الحالية غير صحيحة")
     if payload.old_password == payload.new_password:
         raise HTTPException(422, "كلمة السر الجديدة يجب أن تختلف عن الحالية")
+    weakness = validate_password_strength(payload.new_password)
+    if weakness:
+        raise HTTPException(422, weakness)
     user.hashed_password = hash_password(payload.new_password)  # type: ignore
     user.token_version = int(user.token_version or 1) + 1  # type: ignore
     audit(db, user, "update", "user", user, f"{user.username}: تغيير كلمة السر ذاتيًا (إبطال الجلسات)")
@@ -373,6 +412,9 @@ def update_user(
         raise HTTPException(status.HTTP_409_CONFLICT, "You cannot demote or deactivate your own account")
     password_changed = "password" in data
     if "password" in data:
+        weakness = validate_password_strength(data["password"])
+        if weakness:
+            raise HTTPException(422, weakness)
         user.hashed_password = hash_password(data.pop("password"))  # type: ignore
         # تغيير كلمة السر يبطل كل جلسات المستخدم السابقة فورًا
         user.token_version = int(user.token_version or 1) + 1  # type: ignore

@@ -257,6 +257,82 @@ def get_profit_loss_by_cost_center(
     return result
 
 
+# ---------------------------------------------------------------- توقعات التدفق النقدي والسيولة (Cash Flow Forecast)
+@router.get("/cash-flow-forecast")
+def get_cash_flow_forecast(
+    days: int = Query(default=30, ge=7, le=180, description="أفق التنبؤ بالأيام"),
+    db: Session = Depends(deps.get_db),
+    user=Depends(deps.get_current_user),
+):
+    """توقعات التدفقات النقدية والسيولة المستقبلية:
+    السيولة النقدية الحالية + مقبوضات العملاء المتوقعة + شيكات واردة
+    - التزامات الموردين المستحقة - شيكات صادرة = صافي المركز المالي المستقبلي."""
+    company_id = user.active_company_id
+
+    # 1. السيولة الحالية الحية في الخزائن والبنوك
+    safes_sum = db.query(func.coalesce(func.sum(models.Safe.balance), 0)).filter(
+        models.Safe.company_id == company_id, models.Safe.is_active.is_(True)
+    ).scalar() or Decimal("0")
+
+    banks_sum = db.query(func.coalesce(func.sum(models.Bank.balance), 0)).filter(
+        models.Bank.company_id == company_id, models.Bank.is_active.is_(True)
+    ).scalar() or Decimal("0")
+
+    current_cash_pool = Decimal(str(safes_sum)) + Decimal(str(banks_sum))
+
+    # 2. مستحقات متوقعة من العملاء (أرصدة مدينة قائمة)
+    from ..accounts import party_balances
+    cust_balances = party_balances(db, "customer")
+    total_receivables = sum((b for b in cust_balances.values() if b > 0), Decimal("0"))
+
+    # 3. التزامات مؤكدة للموردين (أرصدة دائنة قائمة)
+    sup_balances = party_balances(db, "supplier")
+    total_payables = sum((b for b in sup_balances.values() if b > 0), Decimal("0"))
+
+    # 4. أوراق القبض والدفع (الشيكات تحت التحصيل والشيكات الصادرة)
+    from datetime import date as _d, timedelta as _td
+    max_due = _d.today() + _td(days=days)
+
+    cheques_in = db.query(func.coalesce(func.sum(models.Cheque.amount), 0)).filter(
+        models.Cheque.company_id == company_id,
+        models.Cheque.direction == "incoming",
+        models.Cheque.status.in_(["received", "deposited"]),
+        models.Cheque.due_date <= max_due,
+    ).scalar() or Decimal("0")
+
+    cheques_out = db.query(func.coalesce(func.sum(models.Cheque.amount), 0)).filter(
+        models.Cheque.company_id == company_id,
+        models.Cheque.direction == "outgoing",
+        models.Cheque.status.in_(["issued", "delivered"]),
+        models.Cheque.due_date <= max_due,
+    ).scalar() or Decimal("0")
+
+    expected_inflows = total_receivables + Decimal(str(cheques_in))
+    expected_outflows = total_payables + Decimal(str(cheques_out))
+    net_projected_cash = current_cash_pool + expected_inflows - expected_outflows
+
+    # مؤشر الخطر: نسبة تغطية السيولة الحالية للالتزامات العاجلة
+    quick_ratio = round(float(current_cash_pool / expected_outflows), 2) if expected_outflows > 0 else 999.0
+    liquidity_status = "safe" if quick_ratio >= 1.0 or net_projected_cash >= 0 else "deficit_warning"
+
+    return {
+        "as_of": _d.today().isoformat(),
+        "forecast_days": days,
+        "current_cash_pool": _q(current_cash_pool),
+        "safes_balance": _q(Decimal(str(safes_sum))),
+        "banks_balance": _q(Decimal(str(banks_sum))),
+        "expected_inflows": _q(expected_inflows),
+        "receivables_projected": _q(total_receivables),
+        "cheques_incoming_projected": _q(Decimal(str(cheques_in))),
+        "expected_outflows": _q(expected_outflows),
+        "payables_projected": _q(total_payables),
+        "cheques_outgoing_projected": _q(Decimal(str(cheques_out))),
+        "net_projected_cash": _q(net_projected_cash),
+        "quick_coverage_ratio": quick_ratio if quick_ratio < 999 else None,
+        "liquidity_status": liquidity_status,
+    }
+
+
 # ---------------------------------------------------------------- إقرار ضريبة القيمة المضافة
 @router.get("/vat-return")
 def get_vat_return(
@@ -320,6 +396,152 @@ def vat_return_xlsx(
         content=exports.build_tables_xlsx("إقرار ضريبة القيمة المضافة", f"{r['date_from']} → {r['date_to']}", tables),
         media_type=exports.XLSX_MIME,
         headers={"Content-Disposition": f'attachment; filename="vat-return-{r["date_from"]}_{r["date_to"]}.xlsx"'},
+    )
+
+
+# ---------------------------------------------------------------- قائمة التدفقات النقدية (الطريقة المباشرة)
+_CASH_CODES = ("1111", "1112", "1113")
+
+
+def _cash_account_ids(db: Session, company_id: int) -> set:
+    """حسابات النقدية: الأكواد الأساسية 1111/1112/1113 + حسابات الخزائن والبنوك المرتبطة."""
+    ids = {
+        a.id for a in db.query(models.ChartAccount).filter(
+            models.ChartAccount.company_id == company_id,
+            models.ChartAccount.code.in_(_CASH_CODES),
+        ).all()
+    }
+    for model in (models.Safe, models.Bank):
+        for row in db.query(model.chart_account_id).filter(
+            model.company_id == company_id, model.chart_account_id.isnot(None)  # type: ignore[attr-defined]
+        ).all():
+            ids.add(row[0])
+    return ids
+
+
+def _classify_flow(code: str) -> str:
+    """تصنيف الحساب المقابل: أصول ثابتة 12xx استثماري، خصوم وحقوق 2xxx/3xxx تمويلي،
+    وما عداهما (ذمم، مخزون، إيرادات، مصروفات، ضريبة) تشغيلي."""
+    if code.startswith("12"):
+        return "investing"
+    if code.startswith(("2", "3")):
+        return "financing"
+    return "operating"
+
+
+@router.get("/cash-flow", response_model=schemas.CashFlowStatement)
+def get_cash_flow(
+    date_from: Optional[str] = Query(None, description="YYYY-MM-DD — الافتراضي أول الشهر الحالي"),
+    date_to: Optional[str] = Query(None, description="YYYY-MM-DD — الافتراضي اليوم"),
+    db: Session = Depends(deps.get_db),
+    user=Depends(deps.get_current_user),
+):
+    """قائمة التدفقات النقدية — الطريقة المباشرة: حركة حسابات النقدية (خزائن/بنوك/صناديق)
+    في الفترة مجمّعة على الحسابات المقابلة لها في كل قيد."""
+    company_id = user.active_company_id
+    if not company_id:
+        raise HTTPException(status_code=400, detail="No active company selected")
+    start = _parse_date(date_from, date.today().replace(day=1))
+    end = _parse_date(date_to, date.today())
+    if end < start:
+        raise HTTPException(status_code=422, detail="نهاية الفترة قبل بدايتها")
+
+    cash_ids = _cash_account_ids(db, company_id)
+
+    # رصيد أول الفترة: صافي حركة حسابات النقدية قبل تاريخ البداية
+    opening = Decimal("0")
+    if cash_ids:
+        d, c = db.query(
+            func.coalesce(func.sum(models.JournalItem.debit), 0),
+            func.coalesce(func.sum(models.JournalItem.credit), 0),
+        ).join(models.JournalEntry, models.JournalEntry.id == models.JournalItem.entry_id).filter(
+            models.JournalItem.company_id == company_id,
+            models.JournalItem.account_id.in_(cash_ids),
+            models.JournalEntry.date < start,
+        ).one()
+        opening = (Decimal(str(d or 0)) - Decimal(str(c or 0))).quantize(_TWO_PLACES)
+
+    # أطراف الفترة: لكل قيد متوازن، أثر الطرف المقابل على النقدية = (دائن − مدين)؛
+    # بنود النقدية نفسها تُتخطى — التحويل بين خزينة وبنك لا يغير إجمالي النقدية
+    flows: dict = {}
+    if cash_ids:
+        items = (
+            db.query(models.JournalItem, models.ChartAccount)
+            .join(models.JournalEntry, models.JournalEntry.id == models.JournalItem.entry_id)
+            .join(models.ChartAccount, models.ChartAccount.id == models.JournalItem.account_id)
+            .filter(
+                models.JournalItem.company_id == company_id,
+                models.ChartAccount.is_group.is_(False),
+                models.JournalEntry.date >= start,
+                models.JournalEntry.date <= end,
+            )
+            .all()
+        )
+        for item, acc in items:
+            if item.account_id in cash_ids:
+                continue
+            amount = (Decimal(str(item.credit or 0)) - Decimal(str(item.debit or 0))).quantize(_TWO_PLACES)
+            if amount == 0:
+                continue
+            entry = flows.setdefault(acc.id, {"code": acc.code, "name": acc.name, "amount": Decimal("0"), "section": _classify_flow(acc.code or "")})
+            entry["amount"] += amount
+
+    sections: dict = {"operating": [], "investing": [], "financing": []}
+    for f in sorted(flows.values(), key=lambda x: (-abs(x["amount"]), x["code"])):
+        sections[f["section"]].append(schemas.CashFlowRow(code=f["code"], name=f["name"], amount=f["amount"].quantize(_TWO_PLACES)))
+
+    operating_total = _q(sum((r.amount for r in sections["operating"]), Decimal("0")))
+    investing_total = _q(sum((r.amount for r in sections["investing"]), Decimal("0")))
+    financing_total = _q(sum((r.amount for r in sections["financing"]), Decimal("0")))
+    net_change = (operating_total + investing_total + financing_total).quantize(_TWO_PLACES)
+    return schemas.CashFlowStatement(
+        date_from=start,
+        date_to=end,
+        opening=opening,
+        closing=(opening + net_change).quantize(_TWO_PLACES),
+        net_change=net_change,
+        operating=sections["operating"],
+        operating_total=operating_total,
+        investing=sections["investing"],
+        investing_total=investing_total,
+        financing=sections["financing"],
+        financing_total=financing_total,
+    )
+
+
+@router.get("/cash-flow/xlsx")
+def cash_flow_xlsx(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    db: Session = Depends(deps.get_db),
+    user=Depends(deps.get_current_user),
+):
+    r = get_cash_flow(date_from, date_to, db, user)
+
+    def section_table(title: str, rows: List[schemas.CashFlowRow], total: Decimal):
+        body = [[("text", row.code), ("text", row.name), ("money", row.amount)] for row in rows]
+        body.append([("text", ""), ("text", "الإجمالي — " + title), ("money", total)])
+        return (title, ["الكود", "الحساب", "الأثر على النقدية"], body)
+
+    tables = [
+        ("ملخص", ["البند", "القيمة"], [
+            [("text", "من"), ("text", str(r.date_from))],
+            [("text", "إلى"), ("text", str(r.date_to))],
+            [("text", "رصيد أول الفترة"), ("money", r.opening)],
+            [("text", "التدفقات التشغيلية"), ("money", r.operating_total)],
+            [("text", "التدفقات الاستثمارية"), ("money", r.investing_total)],
+            [("text", "التدفقات التمويلية"), ("money", r.financing_total)],
+            [("text", "صافي التغير في النقدية"), ("money", r.net_change)],
+            [("text", "رصيد آخر الفترة"), ("money", r.closing)],
+        ]),
+        section_table("تشغيلي", r.operating, r.operating_total),
+        section_table("استثماري", r.investing, r.investing_total),
+        section_table("تمويلي", r.financing, r.financing_total),
+    ]
+    return FastResponse(
+        content=exports.build_tables_xlsx("قائمة التدفقات النقدية", f"{r.date_from} → {r.date_to}", tables),
+        media_type=exports.XLSX_MIME,
+        headers={"Content-Disposition": f'attachment; filename="cash-flow-{r.date_from}_{r.date_to}.xlsx"'},
     )
 
 

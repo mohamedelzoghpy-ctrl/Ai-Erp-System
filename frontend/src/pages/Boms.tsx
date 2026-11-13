@@ -2,10 +2,11 @@ import { useMemo, useState, type FormEvent } from "react";
 import { api } from "../api";
 import { money, num } from "../format";
 import { useAction, useFetch } from "../hooks";
-import type { Bom, Product } from "../types";
+import type { Bom, Product, WorkCenter } from "../types";
 import { ActiveBadge, Alert, Empty, Field, Loading, Modal, PageHeader } from "../ui";
 
 type ItemRow = { component_id: number | ""; qty_per_output: string; scrap_pct: string; notes: string };
+type OperationRow = { name: string; work_center_id: number | ""; run_minutes_per_unit: string; notes: string };
 
 function BomForm({ initial, products, onClose, onSaved }: {
   initial: Bom | null;
@@ -13,6 +14,8 @@ function BomForm({ initial, products, onClose, onSaved }: {
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const workCenters = useFetch(() => api.get<WorkCenter[]>("/work-centers"), "bom-work-centers");
+  const workCenterList = workCenters.data ?? [];
   const [productId, setProductId] = useState<number | "">(initial?.product_id ?? "");
   const [version, setVersion] = useState(initial?.version ?? "v1");
   const [outputQty, setOutputQty] = useState(String(initial?.output_qty ?? 1));
@@ -23,6 +26,11 @@ function BomForm({ initial, products, onClose, onSaved }: {
       ? initial.items.map((it) => ({ component_id: it.component_id, qty_per_output: String(it.qty_per_output), scrap_pct: String(it.scrap_pct), notes: it.notes ?? "" }))
       : [{ component_id: "", qty_per_output: "1", scrap_pct: "0", notes: "" }]
   );
+  const [operations, setOperations] = useState<OperationRow[]>(
+    initial?.operations?.length
+      ? initial.operations.map((op) => ({ name: op.name, work_center_id: op.work_center_id ?? "", run_minutes_per_unit: String(op.run_minutes_per_unit ?? 0), notes: op.notes ?? "" }))
+      : []
+  );
   const { busy, error, run } = useAction();
 
   const setItem = (idx: number, patch: Partial<ItemRow>) =>
@@ -30,6 +38,11 @@ function BomForm({ initial, products, onClose, onSaved }: {
 
   const addItem = () => setItems((rows) => [...rows, { component_id: "", qty_per_output: "1", scrap_pct: "0", notes: "" }]);
   const removeItem = (idx: number) => setItems((rows) => rows.filter((_, i) => i !== idx));
+
+  const setOperation = (idx: number, patch: Partial<OperationRow>) =>
+    setOperations((rows) => rows.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
+  const addOperation = () => setOperations((rows) => [...rows, { name: "", work_center_id: "", run_minutes_per_unit: "0", notes: "" }]);
+  const removeOperation = (idx: number) => setOperations((rows) => rows.filter((_, i) => i !== idx));
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
@@ -47,6 +60,16 @@ function BomForm({ initial, products, onClose, onSaved }: {
           scrap_pct: r.scrap_pct || "0",
           notes: r.notes.trim() || null,
         })),
+        // مسار التشغيل: مراحل مرتبة تُرحَّل لأوامر الإنتاج (صرف مرحلي + تكلفة عمالة)
+        operations: operations
+          .filter((op) => op.name.trim())
+          .map((op, i) => ({
+            seq: i + 1,
+            name: op.name.trim(),
+            work_center_id: op.work_center_id === "" ? null : op.work_center_id,
+            run_minutes_per_unit: Number(op.run_minutes_per_unit) || 0,
+            notes: op.notes.trim() || null,
+          })),
       };
       if (initial) await api.patch(`/boms/${initial.id}`, body);
       else await api.post("/boms", body);
@@ -120,6 +143,59 @@ function BomForm({ initial, products, onClose, onSaved }: {
         </div>
         <button type="button" className="btn btn-sm" onClick={addItem}>+ إضافة مكوّن</button>
 
+        <p style={{ margin: "14px 0 6px", fontWeight: 700, fontSize: 13 }}>
+          مسار التشغيل (المراحل):
+          <span style={{ fontWeight: 400, color: "#666", marginInlineStart: 8 }}>
+            مراحل مرتبة تُرحَّل لأوامر الإنتاج — صرف مرحلي وتكلفة عمالة لكل مركز
+          </span>
+        </p>
+        {operations.length > 0 && (
+          <div className="table-wrap" style={{ marginBottom: 8 }}>
+            <table>
+              <thead>
+                <tr>
+                  <th className="num">#</th>
+                  <th>المرحلة</th>
+                  <th>مركز التشغيل</th>
+                  <th className="num">دقائق/وحدة</th>
+                  <th>ملاحظات</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {operations.map((op, idx) => (
+                  <tr key={idx}>
+                    <td className="num">{idx + 1}</td>
+                    <td><input value={op.name} onChange={(e) => setOperation(idx, { name: e.target.value })} required maxLength={150} style={{ minWidth: 160 }} /></td>
+                    <td>
+                      <select value={String(op.work_center_id)} onChange={(e) => setOperation(idx, { work_center_id: e.target.value === "" ? "" : Number(e.target.value) })} style={{ minWidth: 160 }}>
+                        <option value="">— بلا مركز —</option>
+                        {workCenterList.filter((wc) => wc.is_active).map((wc) => (
+                          <option key={wc.id} value={wc.id}>{wc.name}</option>
+                        ))}
+                      </select>
+                    </td>
+                    <td className="num"><input type="number" min="0" step="0.01" value={op.run_minutes_per_unit} onChange={(e) => setOperation(idx, { run_minutes_per_unit: e.target.value })} style={{ width: 100 }} /></td>
+                    <td><input value={op.notes} onChange={(e) => setOperation(idx, { notes: e.target.value })} maxLength={200} /></td>
+                    <td className="actions">
+                      <button type="button" className="btn-delete" onClick={() => removeOperation(idx)}>حذف</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <button type="button" className="btn btn-sm" onClick={addOperation} disabled={workCenterList.length === 0 && operations.length === 0 ? undefined : undefined}>
+          + إضافة مرحلة تشغيل
+        </button>
+        {workCenters.loading && <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>جارٍ تحميل مراكز التشغيل…</div>}
+        {!workCenters.loading && workCenterList.length === 0 && operations.length === 0 && (
+          <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+            لا مراكز تشغيل معرّفة — أضفها من صفحة «مراكز العمل» أولًا (اختياري: يمكن ترك المسار فارغًا).
+          </div>
+        )}
+
         <Field label="ملاحظات">
           <textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
         </Field>
@@ -179,6 +255,8 @@ export default function Boms() {
         is_active: !bom.is_active,
         notes: bom.notes,
         items: bom.items.map((it) => ({ component_id: it.component_id, qty_per_output: it.qty_per_output, scrap_pct: it.scrap_pct, notes: it.notes })),
+        // العمليات تُعاد كما هي — إرسالها فارغة يمسح مسار التشغيل
+        operations: (bom.operations ?? []).map((op) => ({ seq: op.seq, name: op.name, work_center_id: op.work_center_id ?? null, run_minutes_per_unit: op.run_minutes_per_unit, notes: op.notes ?? null })),
       });
       boms.reload();
     }).finally(() => setToggling(null));

@@ -589,49 +589,6 @@ export default function CompanyAdmin({ platform = false, onSaved }: { platform?:
         </div>
       )}
 
-          {platform && (
-        <div className="card" style={{ padding: 20, marginBottom: 16 }}>
-          <h2 style={{ margin: "0 0 12px" }}>💾 النسخ الاحتياطي</h2>
-          <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
-            <button className="btn btn-primary" disabled={busy} onClick={async () => {
-              try {
-                const r: any = await api.post("/admin/backups", {});
-                alert(`أُنشئت نسخة ${r?.name} (${Math.round((r?.size ?? 0) / 1024)} ك.ب)`);
-                setBkTick((t) => t + 1);
-              } catch (err) { alert((err as Error).message); }
-            }}>إنشاء نسخة الآن</button>
-          </div>
-          <div className="table-wrap">
-            <table>
-              <thead><tr><th>الملف</th><th>تاريخ الإنشاء</th><th>الحجم</th><th></th></tr></thead>
-              <tbody>
-                {(backups.data ?? []).map((b: any) => (
-                  <tr key={b.name}>
-                    <td dir="ltr">{b.name}</td>
-                    <td dir="ltr">{(b.generated_at || "").slice(0, 19).replace("T", " ")}</td>
-                    <td className="num">{Math.round(b.size / 1024)} ك.ب</td>
-                    <td>
-                      <button className="btn btn-sm" onClick={() => void dl.run(() => api.download(`/admin/backups/${b.name}/download`, b.name))}>⬇️ تنزيل</button>{" "}
-                      <button className="btn-delete" onClick={async () => {
-                        if (!confirm(`حذف ${b.name}؟`)) return;
-                        try { await api.del(`/admin/backups/${b.name}`); setBkTick((t) => t + 1); } catch (err) { alert((err as Error).message); }
-                      }}>حذف</button>{" "}
-                      <button className="btn btn-sm" style={{ color: "#b91c1c" }} onClick={async () => {
-                        const answer = prompt(`⚠️ خطير: الاستعادة تمسح كل البيانات الحالية وتعيد ${b.name}.\nاكتب «استعادة» للتنفيذ:`);
-                        if (answer !== "استعادة") return;
-                        try {
-                          const r: any = await api.post(`/admin/backups/${b.name}/restore`, { confirm: answer });
-                          alert(`تمت الاستعادة — ${r?.rows} صف في ${r?.tables} جدول`);
-                        } catch (err) { alert((err as Error).message); }
-                      }}>استعادة</button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
 
       {platform && <div className="card table-wrap" style={{ marginBottom: 16 }}>
             <h2 style={{ padding: 16 }}>الشركات المسجلة</h2>
@@ -949,6 +906,50 @@ export default function CompanyAdmin({ platform = false, onSaved }: { platform?:
               </>
             )}
 
+
+          {platform && (
+        <div className="card" style={{ padding: 20, marginBottom: 16 }}>
+          <h2 style={{ margin: "0 0 12px" }}>💾 النسخ الاحتياطي</h2>
+          <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+            <button className="btn btn-primary" disabled={busy} onClick={async () => {
+              try {
+                const r: any = await api.post("/admin/backups", {});
+                alert(`أُنشئت نسخة ${r?.name} (${Math.round((r?.size ?? 0) / 1024)} ك.ب)`);
+                setBkTick((t) => t + 1);
+              } catch (err) { alert((err as Error).message); }
+            }}>إنشاء نسخة الآن</button>
+          </div>
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>الملف</th><th>تاريخ الإنشاء</th><th>الحجم</th><th></th></tr></thead>
+              <tbody>
+                {(backups.data ?? []).map((b: any) => (
+                  <tr key={b.name}>
+                    <td dir="ltr">{b.name}</td>
+                    <td dir="ltr">{(b.generated_at || "").slice(0, 19).replace("T", " ")}</td>
+                    <td className="num">{Math.round(b.size / 1024)} ك.ب</td>
+                    <td>
+                      <button className="btn btn-sm" onClick={() => void dl.run(() => api.download(`/admin/backups/${b.name}/download`, b.name))}>⬇️ تنزيل</button>{" "}
+                      <button className="btn-delete" onClick={async () => {
+                        if (!confirm(`حذف ${b.name}؟`)) return;
+                        try { await api.del(`/admin/backups/${b.name}`); setBkTick((t) => t + 1); } catch (err) { alert((err as Error).message); }
+                      }}>حذف</button>{" "}
+                      <button className="btn btn-sm" style={{ color: "#b91c1c" }} onClick={async () => {
+                        const answer = prompt(`⚠️ خطير: الاستعادة تمسح كل البيانات الحالية وتعيد ${b.name}.\nاكتب «استعادة» للتنفيذ:`);
+                        if (answer !== "استعادة") return;
+                        try {
+                          const r: any = await api.post(`/admin/backups/${b.name}/restore`, { confirm: answer });
+                          alert(`تمت الاستعادة — ${r?.rows} صف في ${r?.tables} جدول`);
+                        } catch (err) { alert((err as Error).message); }
+                      }}>استعادة</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
         </>
       )}
 

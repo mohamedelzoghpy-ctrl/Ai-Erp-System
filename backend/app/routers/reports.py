@@ -1055,6 +1055,83 @@ def _stock_movement_rows(db: Session, product_id, warehouse_id, reason, date_fro
     return rows, total
 
 
+@router.get("/writeoffs")
+def writeoffs_report(
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_manager),
+):
+    """تقرير الهالك/الإعدام: حركات lot-writeoff مجمعة بالصنف للفترة —
+    الكمية وعدد الحركات والقيمة بتكلفة الصنف."""
+    M, P = models.StockMovement, models.Product
+    start_day = date_from or date.today().replace(day=1)
+    end_day = date_to or date.today()
+    if start_day > end_day:
+        raise HTTPException(422, "date_from must not be after date_to")
+    start = datetime(start_day.year, start_day.month, start_day.day)
+    end = datetime(end_day.year, end_day.month, end_day.day) + timedelta(days=1)
+
+    rows_q = (
+        db.query(M.product_id, P.sku, P.name, P.cost_price,
+                 func.sum(-M.change).label("qty"), func.count(M.id).label("moves"))
+        .join(P, P.id == M.product_id)
+        .filter(
+            M.company_id == db.info["company_id"],
+            M.reason == "lot-writeoff",
+            M.change < 0,
+            M.created_at >= start,
+            M.created_at < end,
+        )
+        .group_by(M.product_id, P.sku, P.name, P.cost_price)
+        .order_by(func.sum(-M.change).desc())
+        .all()
+    )
+    rows = []
+    total_value = 0.0
+    total_qty = 0.0
+    for pid, sku, name, cost, qty_sum, moves in rows_q:
+        unit_cost = float(cost or 0)
+        q = float(qty_sum or 0)
+        value = q * unit_cost
+        total_value += value
+        total_qty += q
+        rows.append({
+            "product_id": pid, "sku": sku, "product_name": name,
+            "unit_cost": unit_cost, "qty": q, "movements": int(moves or 0),
+            "value": round(value, 2),
+        })
+    return {
+        "date_from": str(start_day), "date_to": str(end_day),
+        "rows": rows, "total_qty": round(total_qty, 3), "total_value": round(total_value, 2),
+    }
+
+
+@router.get("/writeoffs/xlsx")
+def writeoffs_xlsx(
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_manager),
+):
+    r = writeoffs_report(date_from, date_to, db, None)  # المعامل الرابع غير مستخدم داخل الدالة
+    tables = [(
+        "الهالك/الإعدام",
+        ["الكود", "الصنف", "تكلفة الوحدة", "الكمية", "عدد الحركات", "القيمة"],
+        [
+            [("text", row["sku"]), ("text", row["product_name"]), ("money", row["unit_cost"]),
+             ("int", row["qty"]), ("int", row["movements"]), ("money", row["value"])]
+            for row in r["rows"]
+        ] + [
+            [("text", ""), ("text", "الإجمالي"), ("text", ""), ("int", r["total_qty"]), ("text", ""), ("money", r["total_value"])],
+        ],
+    )]
+    return _xlsx_response(
+        exports.build_tables_xlsx("تقرير الهالك", f"{r['date_from']} → {r['date_to']}", tables),
+        f"report-writeoffs-{r['date_from']}_{r['date_to']}.xlsx",
+    )
+
+
 @router.get("/stock-movements")
 def stock_movements(
     response: Response,

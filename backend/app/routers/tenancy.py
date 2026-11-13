@@ -6,6 +6,7 @@ from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.exc import IntegrityError
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
@@ -144,6 +145,9 @@ def create_company(
     try:
         db.info["allow_company_provisioning"] = True
         db.flush()
+        # التدقيق والبذر اللاحقان يُسجَّلان تحت الشركة الجديدة — صحيح دلالياً
+        # (ويفسح للتسجيل الذاتي غير المصادق أن يُنشئ شركة بأثر تدقيق سليم)
+        db.info["company_id"] = company_obj.id
         main_branch_code = unique_code(db, models.Branch, company_obj.id, "Main Branch", "br", max_length=50)
         branch = models.Branch(company_id=company_obj.id, name="Main Branch", code=main_branch_code)  # type: ignore
         db.add(branch)
@@ -1081,3 +1085,42 @@ def update_employee(
     db.commit()
     db.refresh(employee)
     return _employee_out(db, employee)
+
+@platform.post("/register", status_code=201)
+def self_register(payload: schemas.SelfRegisterIn, db: Session = Depends(get_db)):
+    """تسجيل شركة ذاتي (أساس SaaS): معطل تماماً حتى يُضبط REGISTRATION_KEY.
+    ينشئ شركة + مديراً + بذرًا كاملاً + ترخيصًا تجريبياً (REGISTRATION_TRIAL_DAYS=14)."""
+    from datetime import date, timedelta
+
+    key = os.getenv("REGISTRATION_KEY", "")
+    if not key:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "التسجيل الذاتي معطل حالياً")
+    if not secrets.compare_digest(payload.registration_key, key):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "مفتاح التسجيل غير صحيح")
+
+    from ..security import validate_password_strength
+    weakness = validate_password_strength(payload.admin_password)
+    if weakness:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, weakness)
+
+    trial_days = int(os.getenv("REGISTRATION_TRIAL_DAYS", "14"))
+    company = create_company(
+        schemas.CompanyCreate(
+            name=payload.company_name,
+            code=payload.company_code,
+            admin_username=payload.admin_username,
+            admin_password=payload.admin_password,
+            admin_full_name=payload.admin_full_name or payload.company_name,
+        ),
+        db,
+        actor=None,  # تسجيل ذاتي — لا فاعل إداري بعد
+    )
+    company.license_until = date.today() + timedelta(days=trial_days)  # type: ignore[assignment]
+    db.commit()
+    db.refresh(company)
+    return {
+        "company_id": company.id, "name": company.name, "code": company.code,
+        "license_until": str(company.license_until),
+        "trial_days": trial_days,
+        "message": "تم إنشاء حسابكم — سجلّوا الدخول باسم المدير وكلمة السر المختارة",
+    }

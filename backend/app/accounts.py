@@ -299,3 +299,40 @@ def check_credit_limit(
                 f"· المستحق حاليًا {_D(str(current)):.2f} · المتبقي {max(remaining, _D('0')):.2f} · "
                 f"المطلوب {_D(str(additional)):.2f}",
             )
+
+
+def check_supplier_credit_limit(
+    db: Session,
+    supplier_id: int,
+    additional: Decimal,
+    perms=None,
+) -> None:
+    """سقف مديونية المورد: التزامات الشراء الحالية + التزام الفاتورة الجديدة لا يتجاوز السقف."""
+    from decimal import Decimal as _D
+    from fastapi import HTTPException, status as _status
+    from .permissions import user_has_permission
+
+    if additional <= 0:
+        return
+    supplier = (
+        db.query(models.Supplier)
+        .filter(models.Supplier.id == supplier_id, models.Supplier.company_id == db.info["company_id"])
+        .first()
+    )
+    if supplier is None or supplier.credit_limit is None:
+        return
+    if perms is not None and "*" not in perms and not user_has_permission(perms, "purchasing.order.credit_exceed"):
+        prev_scope = db.info.get("ignore_tenant_scope", False)
+        db.info["ignore_tenant_scope"] = True
+        try:
+            current = party_balances(db, "supplier", [supplier_id]).get(supplier_id, ZERO)
+        finally:
+            db.info["ignore_tenant_scope"] = prev_scope
+        remaining = _D(str(supplier.credit_limit)) - _D(str(current))
+        if _D(str(additional)) > remaining:
+            raise HTTPException(
+                _status.HTTP_409_CONFLICT,
+                f"تجاوز سقف المديونية للمورد «{supplier.name}»: السقف {_D(str(supplier.credit_limit)):.2f} "
+                f"· الرصيد المستحق حالياً {_D(str(current)):.2f} · المتبقي {max(remaining, _D('0')):.2f} · "
+                f"المطلوب {_D(str(additional)):.2f}",
+            )

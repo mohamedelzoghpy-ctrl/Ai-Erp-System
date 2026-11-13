@@ -36,8 +36,8 @@ def api():
 
     app.dependency_overrides[get_db] = override_get_db
     client = TestClient(app)
-    assert client.post("/auth/setup", json={"username": "boss", "password": "long-password"}).status_code == 201
-    token = client.post("/auth/login", data={"username": "boss", "password": "long-password"}).json()["access_token"]
+    assert client.post("/auth/setup", json={"username": "boss", "password": "long-password-123"}).status_code == 201
+    token = client.post("/auth/login", data={"username": "boss", "password": "long-password-123"}).json()["access_token"]
     client.headers["Authorization"] = f"Bearer {token}"
     yield client
     app.dependency_overrides.pop(get_db, None)
@@ -492,8 +492,8 @@ def test_eta_devices_lifecycle_and_receipt_signing():
 
     app.dependency_overrides[get_db] = override_get_db
     c = TestClient(app)
-    assert c.post("/auth/setup", json={"username": "boss", "password": "long-password"}).status_code == 201
-    token = c.post("/auth/login", data={"username": "boss", "password": "long-password"}).json()["access_token"]
+    assert c.post("/auth/setup", json={"username": "boss", "password": "long-password-123"}).status_code == 201
+    token = c.post("/auth/login", data={"username": "boss", "password": "long-password-123"}).json()["access_token"]
     c.headers["Authorization"] = f"Bearer {token}"
 
     def ok(r, code=200):

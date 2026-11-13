@@ -20,6 +20,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
 import time
 import uuid as _uuid
 from datetime import date, datetime, timezone
@@ -28,6 +29,43 @@ from typing import Any, Dict, List, Optional
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
+
+
+# ---------------------------------------------------------------------------
+# تشفير الأسرار المخزنة (client_secret / مفاتيح التوقيع الخاصة) — في السكون (at rest).
+# الافتراضي: بلا ETA_ENC_KEY → نص صريح (السلوك القديم محفوظ). بمجرد ضبط المفتاح
+# (Fernet بـ base64 urlsafe 32 بايت) تُخزَّن الأسرار المشفرة وتُفك عند الاستخدام.
+# ---------------------------------------------------------------------------
+_ETA_ENC_PREFIX = "enc:v1:"
+
+
+def _eta_fernet():
+    key = os.getenv("ETA_ENC_KEY", "")
+    if not key:
+        return None
+    from cryptography.fernet import Fernet
+    return Fernet(key.encode())
+
+
+def eta_secret_encrypt(value: Optional[str]) -> Optional[str]:
+    """يُشفِّر سرًّا للتخزين — عديم الأثر إن لم يُضبط ETA_ENC_KEY أو كانت مشفرة أصلًا."""
+    if not value or value.startswith(_ETA_ENC_PREFIX):
+        return value
+    f = _eta_fernet()
+    if f is None:
+        return value
+    return _ETA_ENC_PREFIX + f.encrypt(value.encode()).decode()
+
+
+def eta_secret_decrypt(value: Optional[str]) -> Optional[str]:
+    """يفك تشفير سر مخزن — القيم النصية القديمة تعود كما هي (توافق أثناء الانتقال)."""
+    if not value or not value.startswith(_ETA_ENC_PREFIX):
+        return value
+    f = _eta_fernet()
+    if f is None:
+        # قيمة مشفرة بلا مفتاح في البيئة الحالية — لا يمكن استخدامها
+        raise RuntimeError("ETA_ENC_KEY غير مضبوط وهناك أسرار مشفرة في القاعدة")
+    return f.decrypt(value[len(_ETA_ENC_PREFIX):].encode()).decode()
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from cryptography.x509.oid import NameOID
 

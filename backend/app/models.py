@@ -34,6 +34,7 @@ class TenantOwned:
 class Company(Base):
     __tablename__ = "companies"
     __table_args__ = (
+        UniqueConstraint("code", name="uq_company_code"),
         CheckConstraint(
             "max_warehouses_per_branch IS NULL OR max_warehouses_per_branch > 0",
             name="ck_company_warehouse_limit_positive",
@@ -263,6 +264,8 @@ class Supplier(TenantOwned, Base):
     chart_account_id = Column(Integer, ForeignKey("chart_accounts.id"), nullable=True, index=True)
     # What the party owed / was owed before this system was used (negative = credit in their favour).
     opening_balance = Column(Numeric(14, 2), nullable=False, default=0, server_default="0")
+    # الحد الائتماني للمورد: سقف المستحقات المسموح تراكمها دون سداد (NULL = بلا حد)
+    credit_limit = Column(Numeric(14, 2), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
@@ -411,6 +414,12 @@ class SalesOrder(TenantOwned, Base):
     foreign_total = Column(Numeric(14, 2), nullable=True)
     created_by = Column(Integer, ForeignKey("users.id"), nullable=True)  # NULL for orders made before this was recorded
     rep_id = Column(Integer, ForeignKey("sales_reps.id", ondelete="SET NULL"), nullable=True, index=True)
+    # معرف يولده تطبيق المندوب لكل أوردر أوفلاين — يضمن عدم التكرار عند إعادة المزامنة
+    client_ref = Column(String(64), nullable=True, index=True)
+    # خصم على مستوى الأوردر (يُخصم من الإجمالي قبل الضريبة) — توثيقه عمودًا لشفافية ETA والتقارير
+    discount_amount = Column(Numeric(14, 2), nullable=False, default=0, server_default="0")
+    # دورة عمولات أُدرج فيها الأوردر — يمنع احتساب العمولة مرتين
+    commission_run_id = Column(Integer, nullable=True, index=True)
     safe_id = Column(Integer, ForeignKey("safes.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(
@@ -1151,6 +1160,8 @@ class SalesReturn(TenantOwned, Base):
     @property
     def party_name(self):
         return self.customer.name if self.customer else None
+    # دورة العمولات التي احتسبت هذا المرتجع — يمنع الخصم المزدوج من العمولة
+    commission_run_id = Column(Integer, nullable=True, index=True)
 
 
 class SalesReturnItem(TenantOwned, Base):
@@ -1573,6 +1584,8 @@ class BankStatementLine(TenantOwned, Base):
     amount = Column(Numeric(14, 2), nullable=False)  # موجب = داخل للبنك، سالب = خارج
     reference = Column(String(200), nullable=True)
     matched_payment_id = Column(Integer, ForeignKey("payments.id", ondelete="SET NULL"), nullable=True)
+    # سطر مُرحَّل كقيد تسوية (فروق) — يمنع الترحيل المزدوج ويوثق أثره
+    posted_in_entry_id = Column(Integer, nullable=True, index=True)
     imported_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     imported_by = Column(Integer, ForeignKey("users.id"), nullable=True)
 
@@ -1634,6 +1647,40 @@ class JournalItem(TenantOwned, Base):
 # الموارد البشرية (HR) — ملف الموظف المؤسسي: وظائف، درجات، موظفون،
 # عقود، مستندات، وسجل تحركات وظيفية.
 # =====================================================================
+
+class RepCommissionRun(TenantOwned, Base):
+    """دورة صرف عمولات المندوبين: تُحسب صافي مبيعات الفترة (بعد المرتجعات)
+    وتقفل الأوردرات المدرجة — فلا تحتسب عمولتها مرتين في دورة لاحقة."""
+
+    __tablename__ = "rep_commission_runs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    period_from = Column(Date, nullable=False)
+    period_to = Column(Date, nullable=False)
+    total = Column(Numeric(14, 2), nullable=False, default=0, server_default="0")
+    status = Column(String(20), nullable=False, default="posted", server_default="posted")
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    lines = relationship("RepCommissionRunLine", back_populates="run", cascade="all, delete-orphan")
+
+
+class RepCommissionRunLine(TenantOwned, Base):
+    __tablename__ = "rep_commission_run_lines"
+
+    id = Column(Integer, primary_key=True, index=True)
+    run_id = Column(Integer, ForeignKey("rep_commission_runs.id", ondelete="CASCADE"), nullable=False, index=True)
+    rep_id = Column(Integer, ForeignKey("sales_reps.id", ondelete="RESTRICT"), nullable=False, index=True)
+    orders_count = Column(Integer, nullable=False, default=0, server_default="0")
+    gross = Column(Numeric(14, 2), nullable=False, default=0, server_default="0")
+    returns_total = Column(Numeric(14, 2), nullable=False, default=0, server_default="0")
+    net = Column(Numeric(14, 2), nullable=False, default=0, server_default="0")
+    percent = Column(Numeric(5, 2), nullable=False, default=0, server_default="0")
+    commission = Column(Numeric(14, 2), nullable=False, default=0, server_default="0")
+
+    run = relationship("RepCommissionRun", back_populates="lines")
+    rep = relationship("SalesRep")
+
 
 class HrJobTitle(TenantOwned, Base):
     """مسمى وظيفي على مستوى الشركة (مهندس، محاسب، ...) مع حد أدنى/أقصى اختياري للراتب."""
@@ -2315,6 +2362,8 @@ class HrSettlement(TenantOwned, Base):
     @property
     def employee_code(self) -> str | None:
         return self.employee.code if self.employee else None
+    status = Column(String(20), nullable=False, default="draft", server_default="draft")  # draft | posted
+    journal_entry_id = Column(Integer, nullable=True)
 
 
 class HrAttendanceCorrection(TenantOwned, Base):

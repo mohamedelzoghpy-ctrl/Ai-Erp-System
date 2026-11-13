@@ -39,7 +39,7 @@ def _masked(company: models.Company) -> dict:
         "tin": company.eta_tin,
         "client_id": company.eta_client_id,
         "has_client_secret": bool(company.eta_client_secret),
-        "client_secret_masked": ("••••" + company.eta_client_secret[-4:]) if company.eta_client_secret else None,
+        "client_secret_masked": ("••••" + eta.eta_secret_decrypt(company.eta_client_secret)[-4:]) if company.eta_client_secret else None,
         "has_private_key": bool(company.eta_private_key),
         "activity_code": company.eta_activity_code,
         "address": {
@@ -55,7 +55,7 @@ def _client_for(company: models.Company) -> eta.EtaClient:
     return eta.EtaClient(
         env=company.eta_env,
         client_id=company.eta_client_id or "",
-        client_secret=company.eta_client_secret or "",
+        client_secret=eta.eta_secret_decrypt(company.eta_client_secret) or "",
     )
 
 
@@ -743,7 +743,7 @@ def update_config(
     if "client_id" in data:
         company.eta_client_id = (data["client_id"] or "").strip() or None
     if "client_secret" in data and data["client_secret"]:
-        company.eta_client_secret = data["client_secret"]
+        company.eta_client_secret = eta.eta_secret_encrypt(data["client_secret"])
     if "activity_code" in data:
         company.eta_activity_code = (data["activity_code"] or "").strip() or "4690"
     if isinstance(data.get("address"), dict):
@@ -765,7 +765,7 @@ def generate_keys(db: Session = Depends(get_db), user: models.User = Depends(get
     if not company.eta_tin:
         raise HTTPException(409, "أدخل الرقم الضريبي أولًا ثم ولّد المفاتيح")
     keys = eta.generate_keypair_and_csr(company.eta_tin, company.name)
-    company.eta_private_key = keys["private_key"]
+    company.eta_private_key = eta.eta_secret_encrypt(keys["private_key"])
     audit(db, user, "update", "eta_config", company, "توليد زوج مفاتيح + CSR للفاتورة الإلكترونية")
     db.commit()
     return {"csr": keys["csr"], "message": "احتفظ بملف الـ CSR — ارفعه في بوابة المنظومة أثناء تسجيل الحل"}
@@ -782,7 +782,7 @@ def test_connection(db: Session = Depends(get_db), user: models.User = Depends(g
     except eta.EtaNotConfigured as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     probe = eta.canonicalize({"probe": "ok"})
-    sig = eta.sign_document({"probe": "ok"}, company.eta_private_key.encode())
+    sig = eta.sign_document({"probe": "ok"}, eta.eta_secret_decrypt(company.eta_private_key).encode())
     return {
         "ok": True,
         "env": company.eta_env,
@@ -850,9 +850,9 @@ def _submit_documents(db: Session, company: models.Company, user: models.User, d
     device_ids: List[Optional[int]] = []
     for document in documents:
         if document["documentType"] == "R" and active_device is not None:
-            key_pem, device_id = active_device.private_key.encode(), active_device.id  # type: ignore[union-attr]
+            key_pem, device_id = eta.eta_secret_decrypt(active_device.private_key).encode(), active_device.id  # type: ignore[union-attr]
         else:
-            key_pem, device_id = company.eta_private_key.encode(), None  # type: ignore[union-attr]
+            key_pem, device_id = eta.eta_secret_decrypt(company.eta_private_key).encode(), None  # type: ignore[union-attr]
         sig = eta.sign_document(document, key_pem)
         signatures.append(sig)
         device_ids.append(device_id)
@@ -1307,7 +1307,7 @@ def create_device(
     keys = eta.generate_keypair_and_csr(company.eta_tin or serial, company.name)
     dev = models.EtaDevice(
         company_id=company.id, name=payload.name.strip(), serial=serial,
-        private_key=keys["private_key"], public_key=keys["public_key"], csr=keys["csr"],
+        private_key=eta.eta_secret_encrypt(keys["private_key"]), public_key=keys["public_key"], csr=keys["csr"],
         registered_by=user.id,
     )
     db.add(dev)

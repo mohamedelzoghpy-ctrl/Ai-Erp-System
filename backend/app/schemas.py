@@ -169,15 +169,16 @@ class PartyUpdate(BaseModel):
 
 class SupplierCreate(PartyBase):
     tax_registration_number: Optional[str] = Field(default=None, max_length=50, description="الرقم الضريبي (فواتير المنظومة)")
-    pass
+    credit_limit: Optional[Decimal] = Field(default=None, ge=0, description="سقف المديونية للمورد (NULL = بلا سقف)")
 
 
 class SupplierUpdate(PartyUpdate):
-    pass
+    credit_limit: Optional[Decimal] = Field(default=None, ge=0)
 
 
 class SupplierOut(PartyBase, ORMModel):
     tax_registration_number: Optional[str] = None
+    credit_limit: Optional[Decimal] = None
     id: int
     created_at: datetime
     balance: Optional[Decimal] = Decimal("0")  # what we owe the supplier — يُقنَّع لمن لا يملك صلاحية العرض
@@ -363,6 +364,9 @@ class SalesOrderCreate(BaseModel):
     safe_id: Optional[int] = None  # اسم الخزينة المقترحة لتحصيل الفاتورة
     tax_rate: Decimal = Field(default=Decimal("0"), ge=0, le=100)  # ضريبة القيمة المضافة %
     currency_id: Optional[int] = None  # عملة الفاتورة (اختياري — الافتراضي جنيه)
+    document_type: Optional[Literal["order", "quotation"]] = "order"  # عرض سعر = لا مخزون ولا تأكيد
+    discount_mode: Optional[Literal["amount", "percent"]] = "amount"
+    discount_value: Optional[Decimal] = Field(default=None, ge=0)
     items: List[SalesItemIn] = Field(min_length=1)
 
 
@@ -372,6 +376,7 @@ class SalesOrderOut(ORMModel):
     party_name: Optional[str] = None
     warehouse_id: int
     status: str
+    discount_amount: Optional[Decimal] = None
     notes: Optional[str]
     rep_id: Optional[int] = None
     rep_name: Optional[str] = None
@@ -537,6 +542,7 @@ class EmployeeOut(UserOut):
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"
+    refresh_token: Optional[str] = None  # توكن تجديد طويل الأمد (الموبايل) — None للتوافق مع القديم
 
 
 # ---------- Reports ----------
@@ -1338,6 +1344,28 @@ class AgingReport(BaseModel):
     rows: List[AgingRow]
 
 
+class CashFlowRow(BaseModel):
+    """سطر في قائمة التدفقات النقدية: الحساب المقابل وأثره على النقدية."""
+    code: str
+    name: str
+    amount: Decimal
+
+
+class CashFlowStatement(BaseModel):
+    """قائمة التدفقات النقدية — الطريقة المباشرة من حركة حسابات النقدية."""
+    date_from: date
+    date_to: date
+    opening: Decimal
+    closing: Decimal
+    net_change: Decimal
+    operating: List[CashFlowRow]
+    operating_total: Decimal
+    investing: List[CashFlowRow]
+    investing_total: Decimal
+    financing: List[CashFlowRow]
+    financing_total: Decimal
+
+
 class AuditLogOut(ORMModel):
     id: int
     created_at: datetime
@@ -1527,7 +1555,7 @@ class StocktakeCreate(BaseModel):
 
 class StocktakeCount(BaseModel):
     product_id: int
-    counted_qty: Optional[int] = Field(default=None, ge=0, description="null clears the count")
+    counted_qty: Optional[float] = Field(default=None, ge=0, description="null clears the count — كميات عشرية مسموحة (0.5 كجم)")
 
 
 class StocktakeAddLine(BaseModel):
@@ -2473,12 +2501,18 @@ class HrSettlementCreate(BaseModel):
     note: Optional[str] = None
 
 
+class HrOvertimeReview(BaseModel):
+    approved: bool
+
+
 class HrSettlementOut(ORMModel):
     id: int
     company_id: int
     employee_id: int
     employee_name: Optional[str] = None
     employee_code: Optional[str] = None
+    status: str = "draft"
+    journal_entry_id: Optional[int] = None
     termination_date: date
     service_days: int
     service_years: Decimal
@@ -2881,3 +2915,14 @@ class PayrollTaxSettingsUpdate(BaseModel):
     wage_reduction_percent: Optional[Decimal] = Field(default=None, ge=0, le=100, max_digits=5, decimal_places=2)
     social_insurance_percent: Optional[Decimal] = Field(default=None, ge=0, le=100, max_digits=5, decimal_places=2)
     brackets: Optional[List[TaxBracketIn]] = None
+
+
+class SelfRegisterIn(BaseModel):
+    """طلب تسجيل شركة ذاتي — محمي بمفتاح تشغيلي وليس بحساب."""
+    company_name: str = Field(min_length=1, max_length=150)
+    company_code: Optional[str] = Field(default=None, min_length=2, max_length=50)
+    admin_username: str = Field(min_length=3, max_length=60)
+    admin_password: str = Field(min_length=8, max_length=128)
+    admin_full_name: Optional[str] = None
+    registration_key: str = Field(min_length=1, max_length=128)
+

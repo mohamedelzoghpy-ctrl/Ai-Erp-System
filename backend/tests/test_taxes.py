@@ -26,8 +26,8 @@ def _client():
 
     app.dependency_overrides[get_db] = override_get_db
     c = TestClient(app)
-    assert c.post("/auth/setup", json={"username": "boss", "password": "long-password"}).status_code == 201
-    token = c.post("/auth/login", data={"username": "boss", "password": "long-password"}).json()["access_token"]
+    assert c.post("/auth/setup", json={"username": "boss", "password": "long-password-123"}).status_code == 201
+    token = c.post("/auth/login", data={"username": "boss", "password": "long-password-123"}).json()["access_token"]
     c.headers["Authorization"] = f"Bearer {token}"
     return c, engine, factory
 

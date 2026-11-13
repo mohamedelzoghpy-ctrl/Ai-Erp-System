@@ -370,6 +370,21 @@ def dispose_asset(
 @router.delete("/{asset_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_asset(asset_id: int, db: Session = Depends(get_db), user: models.User = Depends(require_manager)):
     asset = _get_company_asset(db, asset_id)
+    # حاجز دفتر الأستاذ: أصل عليه قيود رسملة/إهلاك/تصريف لا يُحذف — التصريف هو المسار الصحيح
+    has_ledger = (
+        db.query(models.JournalEntry.id)
+        .filter(
+            models.JournalEntry.company_id == db.info["company_id"],
+            models.JournalEntry.reference.in_([f"FA-C{asset_id}", f"FA-D{asset_id}", f"FA-{asset_id}"]),
+        )
+        .first()
+        is not None
+    )
+    if has_ledger:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "الأصل عليه قيود محاسبية (رسملة/إهلاك/تصريف) ولا يُحذف — استخدم التصريف بدلاً من الحذف",
+        )
     db.delete(asset)
     db.commit()
     audit(db, user, "delete", "fixed_asset", asset_id, f"asset {asset_id}")

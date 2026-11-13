@@ -185,11 +185,42 @@ def update_safe(
     return safe
 
 
+def _ensure_cash_location_deletable(db: Session, label: str, chart_account_id=None, safe_id=None, bank_id=None):
+    """حاجز دفتر الأستاذ: موقع نقدية عليه حركة لا يُحذف — يُعطَّل بدلاً من حذفه.
+
+    الحركة: سندات قبض/صرف مُرحّلة عليه، شيكات مسحوبة عليه (للبنوك)، أو قيود
+    محاسبية على الحساب المرتبط به في شجرة الحسابات."""
+    company_id = db.info["company_id"]
+    reasons: List[str] = []
+    posted = db.query(models.Payment.id).filter(
+        models.Payment.company_id == company_id, models.Payment.status == "posted"
+    )
+    if safe_id is not None and posted.filter(models.Payment.safe_id == safe_id).first() is not None:
+        reasons.append("سندات قبض/صرف مسجلة عليه")
+    if bank_id is not None:
+        if posted.filter(models.Payment.bank_id == bank_id).first() is not None:
+            reasons.append("سندات قبض/صرف مسجلة عليه")
+        if db.query(models.Cheque.id).filter(
+            models.Cheque.company_id == company_id, models.Cheque.bank_id == bank_id
+        ).first() is not None:
+            reasons.append("شيكات مسحوبة عليه")
+    if chart_account_id is not None and db.query(models.JournalItem.id).filter(
+        models.JournalItem.account_id == chart_account_id
+    ).first() is not None:
+        reasons.append("قيود محاسبية على حسابه المرتبط بشجرة الحسابات")
+    if reasons:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"لا يمكن حذف {label}: " + " و".join(sorted(set(reasons))) + " — عطّله بدلاً من حذفه",
+        )
+
+
 @safes.delete("/{safe_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_safe(safe_id: int, db: Session = Depends(get_db), user: models.User = Depends(require_manager)):
     s = db.get(models.Safe, safe_id)
     if s is None or s.company_id != db.info["company_id"]:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Safe not found")
+    _ensure_cash_location_deletable(db, "الخزينة", chart_account_id=s.chart_account_id, safe_id=safe_id)
     audit(db, user, "delete", "safe", safe_id, f"safe {safe_id}")
     db.delete(s)
     db.commit()
@@ -296,6 +327,7 @@ def delete_bank(bank_id: int, db: Session = Depends(get_db), user: models.User =
     b = db.get(models.Bank, bank_id)
     if b is None or b.company_id != db.info["company_id"]:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Bank not found")
+    _ensure_cash_location_deletable(db, "البنك", chart_account_id=b.chart_account_id, bank_id=bank_id)
     audit(db, user, "delete", "bank", bank_id, f"bank {bank_id}")
     db.delete(b)
     db.commit()

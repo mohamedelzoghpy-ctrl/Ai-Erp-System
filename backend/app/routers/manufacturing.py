@@ -1264,14 +1264,39 @@ def produce_batch(
     po.qty_produced = dec(po.qty_produced) + qty  # type: ignore
     batch_seq = db.query(models.ProductionBatch).filter(models.ProductionBatch.order_id == po.id).count() + 1
     try:
+        batch_no = f"{po.code}-B{batch_seq}"
         db.add(models.ProductionBatch(
             company_id=company_id,  # type: ignore
             order_id=po.id,  # type: ignore
-            batch_no=f"{po.code}-B{batch_seq}",  # type: ignore
+            batch_no=batch_no,  # type: ignore
             qty=qty,  # type: ignore
             cost=batch_cost,  # type: ignore
         ))
         db.flush()
+        # لوط المنتج النهائي بنفس رقم الدفعة: تتبع كامل + بوابة فحص الجودة عند البيع
+        lot = (
+            db.query(models.StockLot)
+            .filter(
+                models.StockLot.company_id == company_id,
+                models.StockLot.product_id == po.product_id,
+                models.StockLot.warehouse_id == po.output_warehouse_id,
+                models.StockLot.lot_code == batch_no,
+            )
+            .first()
+        )
+        if lot is None:
+            db.add(models.StockLot(
+                company_id=company_id,  # type: ignore
+                product_id=po.product_id,  # type: ignore
+                warehouse_id=po.output_warehouse_id,  # type: ignore
+                lot_code=batch_no,  # type: ignore
+                source="production",  # type: ignore
+                reference=po.code,  # type: ignore
+                qty_received=q3(qty),  # type: ignore
+                qty_remaining=q3(qty),  # type: ignore
+            ))
+        else:
+            lot.qty_remaining = Decimal(str(lot.qty_remaining or 0)) + q3(qty)  # type: ignore
     except IntegrityError:
         db.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, "تسجيل الإنتاج مكرر — أعد المحاولة")
@@ -1339,6 +1364,19 @@ def qc_production_batch(
         if product is None:
             raise HTTPException(422, "المنتج النهائي غير موجود")
         move_stock(db, product, po.output_warehouse_id, -dec(batch.qty), "production_reject", reference=batch.batch_no)
+        # اشطب لوط الدفعة نفسه — بدونه يظل رصيد اللوط أعلى من المخزون الفعلي (انجراف)
+        batch_lot = (
+            db.query(models.StockLot)
+            .filter(
+                models.StockLot.company_id == db.info["company_id"],
+                models.StockLot.product_id == po.product_id,
+                models.StockLot.warehouse_id == po.output_warehouse_id,
+                models.StockLot.lot_code == batch.batch_no,
+            )
+            .first()
+        )
+        if batch_lot is not None:
+            batch_lot.qty_remaining = max(Decimal("0"), Decimal(str(batch_lot.qty_remaining or 0)) - dec(batch.qty))  # type: ignore
         company_id = db.info["company_id"]
         inventory_acc = _account_id_by_code(db, company_id, INVENTORY_CODE)
         scrap_acc = _account_id_by_code(db, company_id, SCRAP_CODE)

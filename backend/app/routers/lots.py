@@ -1,5 +1,8 @@
-"""لوطات الخامات: استلام يدوي/افتتاحي، رصيد، وتتبع — الصرف يخصص FIFO تلقائيًا."""
+"""لوطات الخامات: استلام يدوي/افتتاحي، رصيد، وتتبع — الصرف يخصص FIFO تلقائيًا.
 
+الاستلام اليدوي حركة مخزنية كاملة: يمر عبر move_stock (دفتر الحركة + منع
+السالب) ثم يُنشئ/يزيد اللوط — لا يجوز زيادة رصيد لوط دون أثر مخزني حتى لا
+ينحرف دفتر اللوطات عن المخزون الفعلي، فالصرف كله مقيّد بمخزن."""
 from datetime import date
 from typing import List, Optional
 
@@ -7,10 +10,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from .. import models
+from .. import models, stock
 from ..audit import audit
 from ..database import get_db
-from ..deps import get_current_user
+from ..deps import get_current_user, require_manager
 from ..pagination import paginate
 
 router = APIRouter(prefix="/lots", tags=["lots"])
@@ -18,11 +21,21 @@ router = APIRouter(prefix="/lots", tags=["lots"])
 
 class LotIn(BaseModel):
     product_id: int
-    warehouse_id: Optional[int] = None
+    warehouse_id: int = Field(description="المخزن إلزامي — الصرف من اللوطات مقيّد بمخزن")
     lot_code: str = Field(min_length=1, max_length=60)
     qty: float = Field(gt=0)
     expiry_date: Optional[date] = None
     reference: Optional[str] = Field(default=None, max_length=80)
+
+
+class LotWriteOff(BaseModel):
+    """إعدام/هالك من لوط — حركة مخزنية معكوسة موثقة بالسبب."""
+    qty: float = Field(gt=0)
+    reason: str = Field(min_length=1, max_length=200)
+
+
+class LotPatch(BaseModel):
+    expiry_date: Optional[date] = None
 
 
 class LotOut(BaseModel):
@@ -84,19 +97,23 @@ def receive_lot(
     db: Session = Depends(get_db),
     user: models.User = Depends(get_current_user),
 ):
-    """استلام لوط: ينشئ لوطًا جديدًا أو يزيد رصيد لوط قائم بنفس الكود لنفس المنتج والمخزن."""
+    """استلام لوط: حركة مخزنية داخلية (+qty عبر move_stock) تُقترن بإنشاء اللوط
+    أو زيادة رصيد لوط قائم بنفس الكود لنفس المنتج والمخزن."""
     company_id = db.info["company_id"]
     product = db.get(models.Product, payload.product_id)
     if product is None or product.company_id != company_id:
         raise HTTPException(422, "المنتج غير موجود")
-    if payload.warehouse_id is not None:
-        warehouse = db.get(models.Warehouse, payload.warehouse_id)
-        if warehouse is None or warehouse.company_id != company_id:
-            raise HTTPException(422, "المخزن غير موجود")
+    warehouse = db.get(models.Warehouse, payload.warehouse_id)
+    if warehouse is None or warehouse.company_id != company_id:
+        raise HTTPException(422, "المخزن غير موجود")
 
     lot_code = payload.lot_code.strip()
     if not lot_code:
         raise HTTPException(422, "كود اللوط مطلوب")
+
+    # الحركة المخزنية أولًا: بوابة move_stock هي المرجع (دفتر حركة + منع سالب) —
+    # واللوط مجرد تتبع فوقها؛ فشل الحركة يلغي كل شيء قبل إنشاء أي لوط.
+    stock.move_stock(db, product, payload.warehouse_id, payload.qty, "lot-receive", lot_code)
 
     lot = (
         db.query(models.StockLot)
@@ -124,14 +141,59 @@ def receive_lot(
         db.flush()
         action = "create"
     else:
-        lot.qty_received = (lot.qty_received or 0) + payload.qty  # type: ignore
-        lot.qty_remaining = (lot.qty_remaining or 0) + payload.qty  # type: ignore
+        # أرصدة Numeric تعود Decimal من القاعدة — نوحّد قبل الجمع (كان يفشل Decimal+float)
+        from decimal import Decimal
+        add_qty = Decimal(str(payload.qty))
+        lot.qty_received = Decimal(str(lot.qty_received or 0)) + add_qty  # type: ignore
+        lot.qty_remaining = Decimal(str(lot.qty_remaining or 0)) + add_qty  # type: ignore
         if payload.expiry_date is not None:
             lot.expiry_date = payload.expiry_date
         if payload.reference:
             lot.reference = payload.reference
         action = "receive"
     audit(db, user, "update" if action == "receive" else "create", "stock_lot", lot, f"لوط {lot_code} · {product.name} · +{payload.qty}")
+    db.commit()
+    db.refresh(lot)
+    return _lot_out(db, lot)
+
+
+@router.patch("/{lot_id}", response_model=LotOut)
+def update_lot(lot_id: int, payload: LotPatch, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    """تعديل بيانات لوط — تاريخ الصلاحية فقط (بيانات تتبع لا تمس الأرصدة)."""
+    lot = db.get(models.StockLot, lot_id)
+    if lot is None or lot.company_id != db.info["company_id"]:
+        raise HTTPException(404, "اللوط غير موجود")
+    if payload.expiry_date is not None:
+        lot.expiry_date = payload.expiry_date  # type: ignore[assignment]
+        audit(db, user, "update", "stock_lot", lot, f"تعديل صلاحية لوط {lot.lot_code} → {payload.expiry_date}")
+        db.commit()
+        db.refresh(lot)
+    return _lot_out(db, lot)
+
+
+@router.post("/{lot_id}/write-off", response_model=LotOut)
+def write_off_lot(lot_id: int, payload: LotWriteOff, db: Session = Depends(get_db), user: models.User = Depends(require_manager)):
+    """إعدام كمية من لوط (هالك/انتهاء صلاحية/تلف): حركة مخزنية سالبة عبر move_stock
+    تقترن بخصم رصيد اللوط — لا إعدام خارج الدفترين."""
+    company_id = db.info["company_id"]
+    lot = db.get(models.StockLot, lot_id)
+    if lot is None or lot.company_id != company_id:
+        raise HTTPException(404, "اللوط غير موجود")
+    if lot.warehouse_id is None:
+        raise HTTPException(422, "لوط قديم بلا مخزن — عدّل رصيده بالجرد بدلاً من الإعدام")
+    product = db.get(models.Product, lot.product_id)
+    if product is None:
+        raise HTTPException(422, "منتج اللوط غير موجود")
+    from decimal import Decimal
+    qty = Decimal(str(payload.qty))
+    remaining = Decimal(str(lot.qty_remaining or 0))
+    if qty > remaining:
+        raise HTTPException(409, f"رصيد اللوط لا يكفي للإعدام: المتبقي {remaining} والمطلوب {qty}")
+
+    # الحركة المخزنية أولًا (بوابة منع السالب للمنتج كله) ثم خصم اللوط — ذريًا
+    stock.move_stock(db, product, lot.warehouse_id, -qty, "lot-writeoff", lot.lot_code)
+    lot.qty_remaining = remaining - qty  # type: ignore[assignment]
+    audit(db, user, "update", "stock_lot", lot, f"إعدام من لوط {lot.lot_code} · {product.name} · -{qty} · السبب: {payload.reason}")
     db.commit()
     db.refresh(lot)
     return _lot_out(db, lot)

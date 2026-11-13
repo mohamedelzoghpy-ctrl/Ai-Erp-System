@@ -167,13 +167,24 @@ def _create(kind: str, payload: schemas.ReturnCreate, db: Session, user: models.
                     ],
                     reference=f"{c['prefix']}-{ret.id}", date=None,
                 )
-    except Exception as exc:
-        import logging
-        logging.getLogger(__name__).warning("Return %s: JE skipped: %s", ret.id, exc)
+    except Exception:
+        # القيد إلزامي: فشل الترحيل (فترة مغلقة/حساب مفقود) يُفشل المرتجع كله —
+        # لا مرتجع بلا قيد؛ المعاملة تُرجع ذريًا (لا commit بعد هذه النقطة)
+        raise
 
     audit(db, user, "return", f"{kind}_return", ret, f"{c['prefix']}-{ret.id} · إجمالي {total} · مردود نقداً {ret.refund_amount} · أمر {order.id}")
     db.commit()
     db.refresh(ret)
+    # تنبيه تطبيق المندوب: مرتجع على فاتورته (صندوق + Push إن ضُبط FCM)
+    if kind == "sales" and ret.rep_id:
+        from ..push import notify_rep
+        try:
+            notify_rep(db, ret.rep_id, kind="return_recorded",
+                       title=f"مرتجع {c['prefix']}-{ret.id}",
+                       body=f"إجمالي {total} ج.م — مردود نقداً {ret.refund_amount} — العميل {getattr(order, 'party_name', '') or ''}",
+                       ref_id=ret.id)
+        except Exception:
+            pass  # الإشعار لا يعطل المرتجع أبدًا
     return ret
 
 
@@ -283,14 +294,24 @@ def _create_standalone(kind: str, payload: schemas.ReturnCreate, db: Session, us
                     ],
                     reference=f"{c['prefix']}-{ret.id}", date=None,
                 )
-    except Exception as exc:
-        import logging
-        logging.getLogger(__name__).warning("Standalone return %s: JE skipped: %s", ret.id, exc)
+    except Exception:
+        # القيد إلزامي هنا أيضاً — نفس منطق المرتجع المرتبط بأمر
+        raise
 
     party_txt = f" · {c['party_col'][:-3]} {party.id}" if party is not None else " · بدون طرف"
     audit(db, user, "return", f"{kind}_return", ret, f"{c['prefix']}-{ret.id} · إجمالي {total} · مردود نقداً {ret.refund_amount} · مرتجع مستقل{party_txt}")
     db.commit()
     db.refresh(ret)
+    # تنبيه تطبيق المندوب: مرتجع مستقل منسوب له
+    if kind == "sales" and ret.rep_id:
+        from ..push import notify_rep
+        try:
+            notify_rep(db, ret.rep_id, kind="return_recorded",
+                       title=f"مرتجع {c['prefix']}-{ret.id}",
+                       body=f"إجمالي {total} ج.م — مردود نقداً {ret.refund_amount} · مرتجع مستقل",
+                       ref_id=ret.id)
+        except Exception:
+            pass
     return ret
 
 

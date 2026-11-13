@@ -306,10 +306,13 @@ def get_purchase_order(order_id: int, db: Session = Depends(get_db)):
 
 
 @purchases.post("/{order_id}/receive", response_model=schemas.PurchaseOrderOut)
-def receive_purchase_order(order_id: int, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+def receive_purchase_order(order_id: int, request: Request, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     """Mark goods as received: adds stock, updates each product's cost price, logs movements."""
     order = _locked_order_or_404(db, models.PurchaseOrder, order_id, "Purchase order")
     _require_draft(order, "receive")
+    # فحص سقف المديونية للمورد قبل استلام المشتريات وتوليد التزام الدفع
+    from ..accounts import check_supplier_credit_limit
+    check_supplier_credit_limit(db, order.supplier_id, Decimal(str(order.total_amount)), perms=getattr(request.state, "permissions", None))
     for item in order.items:
         product = _locked_product(db, item.product_id)
         stock.move_stock(db, product, order.warehouse_id, item.quantity, "purchase_receipt", f"PO-{order.id}")  # type: ignore
@@ -399,6 +402,12 @@ def apply_sale_stock(db: Session, order) -> None:
         db.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, "Insufficient stock: " + "; ".join(shortages))
 
+    # بوابة فحص الجودة (QC_GATE): تمنع صرف دفعات إنتاج بانتظار الفحص —
+    # قبل أي خصم حتى يفشل الطلب كله ذريًا إن وُجدت دفعة معلقة
+    for pid, qty in needed.items():
+        company_id = getattr(db, "info", {}).get("company_id") or getattr(products[pid], "company_id", None)
+        stock.assert_no_pending_qc_lots(db, company_id, products[pid], order.warehouse_id, qty)
+
     for pid, qty in needed.items():
         stock.move_stock(db, products[pid], order.warehouse_id, -qty, "sale", f"SO-{order.id}")
         stock.consume_lots(db, products[pid], order.warehouse_id, qty)  # FEFO: أقرب انتهاءً أولًا
@@ -414,7 +423,9 @@ def create_sales_order(payload: schemas.SalesOrderCreate, request: Request, db: 
     # صلاحية تعديل سعر البيع: بدونها يُباع بسعر البيع المعتمد فقط، ومعها الزيادة فقط.
     perms = getattr(request.state, "permissions", None)
     price_edit_locked = perms is not None and "*" not in perms
+    doc_type = getattr(payload, "document_type", "order") or "order"
     order = models.SalesOrder(
+        status="quotation" if doc_type == "quotation" else "draft",
         customer_id=payload.customer_id, warehouse_id=payload.warehouse_id, notes=payload.notes, created_by=user.id,  # type: ignore
         rep_id=payload.rep_id if payload.rep_id and db.get(models.SalesRep, payload.rep_id) else None,
     )
@@ -441,14 +452,29 @@ def create_sales_order(payload: schemas.SalesOrderCreate, request: Request, db: 
             )
         )
         total += price * Decimal(str(item.quantity))
-    # ضريبة القيمة المضافة على البيع: total_amount = الصافي + الضريبة (مثل أوامر الشراء)
+    # خصم على مستوى الأوردر (يُخصم قبل الضريبة) — يُوثق عموداً لشفافية ETA والتقارير
+    discount_amount = Decimal("0")
+    if getattr(payload, "discount_value", None):
+        dv = Decimal(str(payload.discount_value))
+        if payload.discount_mode == "percent":
+            if dv < 0 or dv > 100:
+                raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "نسبة الخصم يجب أن تكون بين 0 و 100")
+            discount_amount = (total * dv / Decimal("100")).quantize(Decimal("0.01"))
+        else:
+            discount_amount = dv.quantize(Decimal("0.01"))
+        if discount_amount < 0 or discount_amount > total:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "الخصم لا يمكن أن يتجاوز الإجمالي")
+
+    # ضريبة القيمة المضافة على البيع: total_amount = الصافي بعد الخصم + الضريبة
     subtotal = total.quantize(Decimal("0.01"))
+    taxable = (subtotal - discount_amount).quantize(Decimal("0.01"))
     tax_rate = Decimal(str(payload.tax_rate or 0))
-    tax_amount = (subtotal * tax_rate / Decimal("100")).quantize(Decimal("0.01"))
-    order.subtotal = subtotal  # type: ignore
+    tax_amount = (taxable * tax_rate / Decimal("100")).quantize(Decimal("0.01"))
+    order.subtotal = taxable  # type: ignore
+    order.discount_amount = discount_amount  # type: ignore
     order.tax_rate = tax_rate  # type: ignore
     order.tax_amount = tax_amount  # type: ignore
-    order.total_amount = subtotal + tax_amount  # type: ignore
+    order.total_amount = taxable + tax_amount  # type: ignore
     # عملة الفاتورة (اختياري): تُثبّت على المستند — الدفاتر تبقى بالجنيه
     from ..pricing import resolve_currency
     currency, rate = resolve_currency(db, getattr(payload, "currency_id", None))
@@ -576,6 +602,19 @@ def confirm_sales_order(order_id: int, request: Request, db: Session = Depends(g
                        ref_id=order.id)
         except Exception:
             pass  # الإشعار لا يعطل التأكيد أبدًا
+    return order
+
+
+@sales.post("/{order_id}/convert", response_model=schemas.SalesOrderOut)
+def convert_quotation_to_order(order_id: int, request: Request, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    """تحويل عرض سعر إلى أوردر فعلي: status quotation → draft — ثم يُؤكد كأي أوردر."""
+    order = _order_or_404(db, models.SalesOrder, order_id, "Sales order")
+    if order.status != "quotation":  # type: ignore[union-attr]
+        raise HTTPException(status.HTTP_409_CONFLICT, f"Only quotations can be converted (current: {order.status})")
+    order.status = "draft"  # type: ignore[assignment]
+    audit(db, user, "convert", "sales_order", order, f"تحويل عرض السعر SO-{order.id} إلى أوردر")
+    db.commit()
+    db.refresh(order)
     return order
 
 

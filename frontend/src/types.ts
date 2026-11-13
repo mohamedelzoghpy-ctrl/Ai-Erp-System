@@ -370,6 +370,16 @@ export interface BomItem {
   notes?: string | null;
 }
 
+export interface BomOperation {
+  id?: number;
+  seq: number;
+  name: string;
+  work_center_id?: number | null;
+  work_center_name?: string | null;
+  run_minutes_per_unit: number;
+  notes?: string | null;
+}
+
 export interface Bom {
   id: number;
   product_id: number;
@@ -379,6 +389,7 @@ export interface Bom {
   is_active: boolean;
   notes?: string | null;
   items: BomItem[];
+  operations: BomOperation[];
   created_at: string;
 }
 
@@ -1141,6 +1152,15 @@ export interface HrAnalytics {
   recruiting: any;
   talent: any;
 }
+export interface WorkCenter {
+  id: number;
+  name: string;
+  capacity_per_hour?: number | null;
+  hourly_cost?: string | null;
+  notes?: string | null;
+  is_active: boolean;
+}
+
 export interface WorkCenterPerf {
   date_from?: string | null;
   date_to?: string | null;

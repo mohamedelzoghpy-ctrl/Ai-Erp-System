@@ -2615,6 +2615,97 @@ def create_settlement(employee_id: int, payload: schemas.HrSettlementCreate, db:
     return row
 
 
+@router.post("/settlements/{settlement_id}/post", response_model=schemas.HrSettlementOut)
+def post_settlement(
+    settlement_id: int,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(require_manager),
+):
+    """ترحيل تسوية نهاية الخدمة على GL: مدين مصروف EOSB (5215) بالمستحق الكامل،
+    دائن رواتب مستحقة (2140) — القيد مرة واحدة (status posted يمنع التكرار)."""
+    from ..accounting import AccountingEngine, seed_default_coa
+
+    company_id = db.info["company_id"]
+    st = (
+        db.query(models.HrSettlement)
+        .filter(models.HrSettlement.company_id == company_id, models.HrSettlement.id == settlement_id)
+        .one_or_none()
+    )
+    if st is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "التسوية غير موجودة")
+    if st.status == "posted":  # type: ignore[union-attr]
+        raise HTTPException(status.HTTP_409_CONFLICT, f"التسوية مُرحّلة بالقيد #{st.journal_entry_id}")
+
+    seed_default_coa(db, company_id)
+    # حساب مصروف EOSB — يُنشأ تلقائياً للشركات المزروعة سابقاً (تحت 5200)
+    eosb_acc = (
+        db.query(models.ChartAccount)
+        .filter(models.ChartAccount.company_id == company_id, models.ChartAccount.code == "5215")
+        .first()
+    )
+    if eosb_acc is None:
+        parent = (
+            db.query(models.ChartAccount)
+            .filter(models.ChartAccount.company_id == company_id, models.ChartAccount.code == "5200")
+            .first()
+        )
+        eosb_acc = models.ChartAccount(
+            company_id=company_id, code="5215", name="مكافأة نهاية خدمة (EOSB)",
+            type="expense", is_group=False, parent_id=parent.id if parent else None,
+        )
+        db.add(eosb_acc)
+        db.flush()
+    payable = (
+        db.query(models.ChartAccount)
+        .filter(models.ChartAccount.company_id == company_id, models.ChartAccount.code == _PAYROLL_PAYABLE_CODE)
+        .first()
+    )
+    if payable is None:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "حساب الرواتب المستحقة 2140 غير موجود")
+
+    total_due = Decimal(str(st.total_due or 0))
+    entry = AccountingEngine.create_entry(
+        db=db, company_id=company_id, user_id=user.id,
+        description=f"تسوية نهاية خدمة — موظف #{st.employee_id}",
+        items=[
+            {"account_id": eosb_acc.id, "debit": total_due, "credit": Decimal("0"), "notes": f"EOSB {st.eosb_days} يوم + إجازات {st.unused_leave_days} − سلف {st.advances_remaining}"},
+            {"account_id": payable.id, "debit": Decimal("0"), "credit": total_due, "notes": "مستحقات موظف"},
+        ],
+        reference=f"HR-EOSB-{st.id}",
+    )
+    st.status = "posted"  # type: ignore[assignment]
+    st.journal_entry_id = entry.id  # type: ignore[assignment]
+    audit(db, user, "post", "hr_settlement", st, f"ترحيل تسوية #{st.id} — قيد #{entry.id} بمبلغ {total_due}")
+    db.commit()
+    db.refresh(st)
+    return st
+
+
+@router.post("/attendance/{attendance_id}/overtime-review", response_model=schemas.HrAttendanceOut)
+def overtime_review(
+    attendance_id: int,
+    payload: schemas.HrOvertimeReview,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(require_manager),
+):
+    """مراجعة أوفر تايم: موافقة/رفض ساعات إضافية مسجلة (approved=True/False)."""
+    att = (
+        db.query(models.HrAttendance)
+        .filter(models.HrAttendance.company_id == db.info["company_id"], models.HrAttendance.id == attendance_id)
+        .one_or_none()
+    )
+    if att is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "سجل الحضور غير موجود")
+    if int(att.overtime_minutes or 0) <= 0:  # type: ignore[union-attr]
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "لا ساعات إضافية في هذا السجل")
+    att.overtime_approved = payload.approved  # type: ignore[assignment]
+    audit(db, user, "update", "hr_attendance", att,
+          f"مراجعة أوفر تايم {att.overtime_minutes} دقيقة ({att.overtime_type}): {'موافقة' if payload.approved else 'رفض'}")
+    db.commit()
+    db.refresh(att)
+    return att
+
+
 @router.get("/settlements", response_model=List[schemas.HrSettlementOut])
 def list_settlements(
     db: Session = Depends(get_db),

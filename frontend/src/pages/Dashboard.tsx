@@ -166,21 +166,23 @@ export default function Dashboard() {
   );
   const pnl = useFetch(() => (isManager ? api.get<{ total_revenue: string; total_expenses: string; net_profit: string }>(`/reports/financial/profit-loss`) : Promise.resolve(null)), `pnl${isManager}`);
   const bs = useFetch(() => (isManager ? api.get<{ total_assets: string; total_liabilities: string; total_equity: string; is_balanced: boolean }>(`/reports/financial/balance-sheet`) : Promise.resolve(null)), `bs${isManager}`);
+  const cashflow = useFetch(() => (isManager ? api.get<any>("/reports/financial/cash-flow-forecast?days=30") : Promise.resolve(null)), `cf${isManager}`);
 
-  const refreshing = dash.loading || sales.loading || valuation.loading || pnl.loading || bs.loading;
+  const refreshing = dash.loading || sales.loading || valuation.loading || pnl.loading || bs.loading || cashflow.loading;
 
   // Manual refresh (debounced)
   const handleRefresh = useCallback(() => {
     if (refreshRef.current) clearTimeout(refreshRef.current);
-    refreshRef.current = window.setTimeout(() => {
-      dash.reload();
-      sales.reload();
-      valuation.reload();
-      pnl.reload();
-      bs.reload();
-      setLastRefresh(new Date());
-    }, 500);
-  }, [dash, sales, valuation, pnl, bs]);
+      refreshRef.current = window.setTimeout(() => {
+        dash.reload();
+        sales.reload();
+        valuation.reload();
+        pnl.reload();
+        bs.reload();
+        cashflow.reload();
+        setLastRefresh(new Date());
+      }, 500);
+    }, [dash, sales, valuation, pnl, bs, cashflow]);
 
   // Clear the debounce timer on unmount so callbacks never fire on a dead component
   useEffect(() => () => { if (refreshRef.current) clearTimeout(refreshRef.current); }, []);
@@ -354,6 +356,10 @@ export default function Dashboard() {
                 items: [
                   <Kpi key="recv" icon="💰" color="#10b981" label={t("dashboard.receivables")} value={money(d.receivables_total)} sub={t("dashboard.totalReceivables")} warn={Number(d.receivables_total) > 0} />,
                   <Kpi key="pay" icon="💸" color="#ef4444" label={t("dashboard.payables")} value={money(d.payables_total)} sub={t("dashboard.totalPayables")} />,
+                  ...(cashflow.data ? [
+                    <Kpi key="net-cf" icon="🧭" color={Number(cashflow.data.net_projected_cash) >= 0 ? "#10b981" : "#ef4444"} label="صافي التدفق النقدي (30 يوم)" value={money(cashflow.data.net_projected_cash)} sub={`السيولة الحالية: ${money(cashflow.data.current_cash_pool)}`} warn={Number(cashflow.data.net_projected_cash) < 0} />,
+                    <Kpi key="in-cf" icon="📥" color="#3b82f6" label="مقبوضات متوقعة (30 يوم)" value={money(cashflow.data.expected_inflows)} sub={`شيكات واردة: ${money(cashflow.data.cheques_incoming_projected)}`} />,
+                  ] : []),
                 ],
               },
             ].map((g) => (

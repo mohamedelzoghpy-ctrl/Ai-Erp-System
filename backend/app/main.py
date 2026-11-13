@@ -15,7 +15,7 @@ from . import models  # noqa: F401  (importing registers the tables on Base.meta
 from .database import Base, engine, get_db
 from .deps import get_current_user
 from .permissions import permission_gate, seed_all
-from .routers import access, attachments, backups, currencies, price_lists, audit as audit_router, auth, bank_statements, eta as eta_router, cheques, coa, cost_centers, data_io, departments, fixed_assets, fiscal_years, general_ledger, hr, journal_entries, lots, manufacturing, pos, qc, recurring_journals, reports, reports_fin, returns, reps, shifts, stocktakes, taxes, transfers, masterdata, orders, payments, products, tenancy, safes_banks
+from .routers import access, attachments, backups, currencies, price_lists, audit as audit_router, auth, bank_statements, eta as eta_router, cheques, coa, cost_centers, data_io, departments, fixed_assets, fiscal_years, general_ledger, hr, journal_entries, lots, manufacturing, pos, qc, recurring_journals, reports, reports_fin, returns, reps, shifts, stocktakes, taxes, transfers, masterdata, orders, payments, products, tenancy, safes_banks, sync
 
 
 @asynccontextmanager
@@ -66,6 +66,7 @@ app.include_router(tenancy.platform)
 app.include_router(tenancy.company)
 app.include_router(departments.router)
 app.include_router(reps.router)
+app.include_router(sync.router)  # مزامنة تطبيق المندوبين — محمية بصلاحية sales.rep.mobile
 
 # Every business route requires a logged-in user.
 _protected = [Depends(get_current_user)]

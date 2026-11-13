@@ -96,6 +96,7 @@ export default function Layout() {
       items: [
         { to: "/boms", label: t("nav.boms"), perm: "manufacturing.bom.view" },
         { to: "/production-orders", label: t("nav.productionOrders"), perm: "manufacturing.order.view" },
+        { to: "/work-centers", label: t("مراكز العمل"), perm: "manufacturing.work_center.view" },
         { to: "/quality", label: t("nav.quality"), perm: "manufacturing.quality.view" },
         { to: "/production-reports", label: t("nav.productionReports"), perm: "manufacturing.order.report_summary" },
         { to: "/production-floor", label: t("nav.productionFloor"), perm: "manufacturing.order.produce" },

@@ -4,12 +4,13 @@ import { api } from "../api";
 import { num } from "../format";
 import { useAction, useFetch } from "../hooks";
 import { useI18n } from "../i18n";
-import type { Product, StockLot } from "../types";
+import type { Product, StockLot, Warehouse } from "../types";
 import { Alert, Empty, Field, Loading, Modal, PageHeader } from "../ui";
 
 export default function Lots() {
   const { t } = useI18n();
   const products = useFetch(() => api.get<Product[]>("/products?limit=1000"), "lots-products");
+  const warehouses = useFetch(() => api.get<Warehouse[]>("/warehouses"), "lots-warehouses");
   const [productFilter, setProductFilter] = useState("");
   const lots = useFetch(
     () => api.get<StockLot[]>(`/lots?limit=1000${productFilter ? `&product_id=${productFilter}` : ""}`),
@@ -20,10 +21,32 @@ export default function Lots() {
   const [msg, setMsg] = useState<string | null>(null);
 
   const [productId, setProductId] = useState("");
+  const [warehouseId, setWarehouseId] = useState("");
   const [lotCode, setLotCode] = useState("");
   const [qty, setQty] = useState("");
   const [expiry, setExpiry] = useState("");
   const [reference, setReference] = useState("");
+
+  // إعدام/هالك من لوط: حركة مخزنية موثقة بالسبب (مدير فقط — الـAPI يفرض ذلك)
+  const [writingOff, setWritingOff] = useState<StockLot | null>(null);
+  const [woQty, setWoQty] = useState("");
+  const [woReason, setWoReason] = useState("");
+
+  const submitWriteOff = (e: FormEvent) => {
+    e.preventDefault();
+    if (!writingOff || !woQty || !woReason.trim()) return;
+    void run(async () => {
+      const saved = await api.post<StockLot>(`/lots/${writingOff.id}/write-off`, {
+        qty: Number(woQty),
+        reason: woReason.trim(),
+      });
+      setWritingOff(null);
+      setWoQty("");
+      setWoReason("");
+      setMsg(`⚠️ ${t("تم الإعدام من لوط")} «${saved.lot_code}» — ${t("الرصيد الآن")} ${num(saved.qty_remaining)}`);
+      lots.reload();
+    });
+  };
 
   const productsList = products.data ?? [];
   const lotsList = lots.data ?? [];
@@ -31,10 +54,11 @@ export default function Lots() {
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    if (!productId || !lotCode || !qty) return;
+    if (!productId || !warehouseId || !lotCode || !qty) return;
     void run(async () => {
       const saved = await api.post<StockLot>("/lots", {
         product_id: Number(productId),
+        warehouse_id: Number(warehouseId),
         lot_code: lotCode.trim(),
         qty: Number(qty),
         expiry_date: expiry || null,
@@ -52,6 +76,7 @@ export default function Lots() {
 
   const receiveMore = (lot: StockLot) => {
     setProductId(String(lot.product_id));
+    setWarehouseId(lot.warehouse_id ? String(lot.warehouse_id) : "");
     setLotCode(lot.lot_code);
     setQty("");
     setExpiry(lot.expiry_date ?? "");
@@ -111,7 +136,12 @@ export default function Lots() {
                       <span className={`badge ${remainingPct === 0 ? "badge-off" : "badge-confirmed"}`}>{num(l.qty_remaining)}</span>
                     </td>
                     <td>{l.expiry_date ?? "—"}</td>
-                    <td><button className="btn-edit" onClick={() => receiveMore(l)}>{t("استلام إضافي")}</button></td>
+                    <td>
+                      <button className="btn-edit" onClick={() => receiveMore(l)}>{t("استلام إضافي")}</button>{" "}
+                      {Number(l.qty_remaining) > 0 && l.warehouse_id && (
+                        <button className="btn-delete" onClick={() => { setWritingOff(l); setWoQty(""); setWoReason(""); }}>{t("إعدام")}</button>
+                      )}
+                    </td>
                   </tr>
                 );
               })}
@@ -132,6 +162,12 @@ export default function Lots() {
                 {productsList.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
             </Field>
+            <Field label={t("المخزن")} hint={t("الاستلام حركة مخزنية تُضاف لرصيد المخزن المختار")}>
+              <select value={warehouseId} onChange={(e) => setWarehouseId(e.target.value)} required>
+                <option value="">— {t("اختر المخزن")} —</option>
+                {(warehouses.data ?? []).map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+              </select>
+            </Field>
             <Field label={t("كود اللوط")} hint={t("نفس الكود لنفس الصنف والمخزن يضيف للرصيد القائم")}>
               <input dir="ltr" value={lotCode} onChange={(e) => setLotCode(e.target.value)} maxLength={60} required />
             </Field>
@@ -147,6 +183,27 @@ export default function Lots() {
             <div className="form-actions">
               <button type="submit" className="btn btn-primary" disabled={busy}>{t("استلام")}</button>
               <button type="button" className="btn" onClick={() => setShowForm(false)}>{t("إلغاء")}</button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {writingOff && (
+        <Modal title={`${t("إعدام من لوط")} — ${writingOff.lot_code}`} onClose={() => setWritingOff(null)}>
+          <form onSubmit={submitWriteOff}>
+            {error && <Alert kind="error">{error}</Alert>}
+            <p className="muted" style={{ margin: "0 0 10px", fontSize: 13 }}>
+              {t("الرصيد المتاح")}: <b>{num(writingOff.qty_remaining)}</b> — {t("الإعدام حركة مخزنية سالبة موثقة بالسبب، تخصم اللوط والمخزون معاً")}
+            </p>
+            <Field label={t("الكمية المعدومة")}>
+              <input type="number" min="0.001" step="0.001" max={Number(writingOff.qty_remaining)} value={woQty} onChange={(e) => setWoQty(e.target.value)} required autoFocus />
+            </Field>
+            <Field label={t("السبب")} hint={t("هالك / انتهاء صلاحية / تلف بالتخزين…")}>
+              <input value={woReason} onChange={(e) => setWoReason(e.target.value)} required maxLength={200} />
+            </Field>
+            <div className="form-actions">
+              <button type="submit" className="btn-delete" disabled={busy}>{t("تنفيذ الإعدام")}</button>
+              <button type="button" className="btn" onClick={() => setWritingOff(null)}>{t("إلغاء")}</button>
             </div>
           </form>
         </Modal>

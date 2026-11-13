@@ -74,6 +74,60 @@ function printReport(report: ManufacturingReportOut) {
   w.document.close();
 }
 
+interface MrpAggregateRow {
+  product_id: number;
+  product_name?: string | null;
+  unit?: string | null;
+  in_stock: number | string;
+  open_demand: number | string;
+  shortfall: number | string;
+  has_bom: boolean;
+}
+
+/** تخطيط الاحتياجات (MRP): الطلب المفتوح مقابل الرصيد — ما يجب إنتاجه لسد العجز. */
+function MrpPanel() {
+  const aggregate = useFetch(() => api.get<{ lines: MrpAggregateRow[] }>("/production-orders/mrp/aggregate"), "mrp-aggregate");
+  const lines = (aggregate.data?.lines ?? []).filter((l) => Number(l.open_demand) > 0 || Number(l.shortfall) > 0);
+
+  return (
+    <div className="card card-pad" style={{ marginBottom: 16 }}>
+      <h3 style={{ margin: "0 0 8px", fontSize: 15 }}>🧮 تخطيط الاحتياجات — الطلب المفتوح مقابل الرصيد</h3>
+      {aggregate.loading && !aggregate.data ? (
+        <Loading />
+      ) : aggregate.error ? (
+        <Alert>{aggregate.error}</Alert>
+      ) : lines.length > 0 ? (
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr><th>المنتج</th><th className="num">الرصيد بكل المخازن</th><th className="num">الطلب المفتوح</th><th className="num">الإنتاج المقترح</th><th>قائمة مواد؟</th></tr>
+            </thead>
+            <tbody>
+              {lines.map((l) => (
+                <tr key={l.product_id}>
+                  <td>{l.product_name ?? `#${l.product_id}`}</td>
+                  <td className="num">{num(l.in_stock)}</td>
+                  <td className="num">{num(l.open_demand)}</td>
+                  <td className="num">
+                    {Number(l.shortfall) > 0 ? (
+                      <span className="badge badge-cancelled">{num(l.shortfall)}</span>
+                    ) : (
+                      <span className="badge badge-confirmed">مغطى</span>
+                    )}
+                  </td>
+                  <td>{l.has_bom ? "✅" : <span className="muted">بلا BOM</span>}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <Empty>لا طلب مفتوح حالياً — الأرصدة تغطي أوامر البيع المؤكدة.</Empty>
+      )}
+    </div>
+  );
+}
+
 export default function ProductionReports() {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
@@ -182,6 +236,8 @@ export default function ProductionReports() {
           <Empty>لا توجد أوامر قيد التنفيذ.</Empty>
         )}
       </div>
+
+      <MrpPanel />
 
       {!valid || report.loading ? (
         <Loading />
