@@ -79,6 +79,7 @@ export default function Layout() {
         { to: "/sales-orders", label: t("nav.salesOrders"), perm: "sales.order.view" },
         { to: "/shifts", label: t("nav.shifts"), perm: "sales.shift.view" },
         { to: "/sales-reps", label: t("nav.salesReps"), perm: "sales.rep.view" },
+        { to: "/crm", label: t("nav.crm"), perm: "crm.lead.view" },
         { to: "/customers", label: t("nav.customers"), perm: "sales.customer.view" },
       ],
     },

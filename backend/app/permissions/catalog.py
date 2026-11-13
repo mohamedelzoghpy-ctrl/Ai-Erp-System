@@ -16,7 +16,9 @@ from .. import models
 # ---------------------------------------------------------------------------
 
 # صلاحيات أساسية يملكها كل مستخدم غير مدير تلقائياً (الخدمة الذاتية).
-BASELINE_PERMISSIONS: Tuple[str, ...] = ("hr.me.use", "sales.rep.mobile")
+# ملاحظة الأمان: rep_mobile_balance تُمنح افتراضياً لتعمل شاشة التحصيل في تطبيق
+# المندوب، لكنها صلاحية مُعلنة قابلة للسحب من قسم المستخدم في شاشة الصلاحيات.
+BASELINE_PERMISSIONS: Tuple[str, ...] = ("hr.me.use", "sales.rep.mobile", "sales.customer.rep_mobile_balance")
 
 # صلاحية إدارة الصلاحيات نفسها.
 PERM_MANAGE = "admin.user.permissions_manage"
@@ -61,6 +63,7 @@ CATALOG: Dict[str, dict] = {
                 ("statement_pdf", "كشف حساب PDF", False, False),
                 ("statement_xlsx", "كشف حساب Excel", False, False),
                 ("balance_view", "عرض رصيد العميل (حقل حساس)", False, True),
+                ("rep_mobile_balance", "أرصدة العملاء في تطبيق المندوب (التحصيل)", False, True),
             ]),
             "rep": ("المندوبون", [
                 ("mobile", "تطبيق المندوب (الحساب المرتبط)", False, False),
@@ -151,6 +154,19 @@ CATALOG: Dict[str, dict] = {
                 ("adjust", "تسوية بناءً على جرد", True, False),
                 ("cancel", "إلغاء جرد", False, False),
                 ("export", "تصدير الجرد Excel", False, False),
+            ]),
+        },
+    },
+    "crm": {
+        "label": "العملاء المحتملون (CRM)",
+        "resources": {
+            "lead": ("العملاء المحتملون", [
+                ("view", "عرض العملاء المحتملين", False, False),
+                ("create", "إضافة عميل محتمل", False, False),
+                ("update", "تعديل عميل محتمل / تغيير المرحلة", False, False),
+                ("delete", "حذف عميل محتمل", True, False),
+                ("convert", "تحويل عميل محتمل لعميل فعلي", False, False),
+                ("activity", "تسجيل أنشطة المتابعة (مكالمة/اجتماع)", False, False),
             ]),
         },
     },

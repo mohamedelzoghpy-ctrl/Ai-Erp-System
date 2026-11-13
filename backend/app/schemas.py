@@ -327,6 +327,8 @@ class PurchaseOrderOut(ORMModel):
     status: str
     notes: Optional[str]
     total_amount: Decimal
+    discount_amount: Decimal = Decimal("0")
+    tax_amount: Decimal = Decimal("0")
     currency_id: Optional[int] = None
     currency_code: Optional[str] = None
     exchange_rate: Optional[Decimal] = None
@@ -1672,6 +1674,63 @@ class CostCenterUpdate(BaseModel):
 
 class CostCenterOut(CostCenterBase, ORMModel):
     id: int
+    created_at: datetime
+
+# ---------- CRM (العملاء المحتملون) ----------
+LeadSource = Literal["walk_in", "phone", "social", "referral", "exhibition", "other"]
+LeadStatus = Literal["new", "contacted", "qualified", "won", "lost"]
+ActivityKind = Literal["note", "call", "meeting"]
+
+
+class CrmLeadBase(BaseModel):
+    name: str = Field(min_length=1, max_length=150)
+    company_name: Optional[str] = Field(default=None, max_length=150)
+    phone: Optional[str] = Field(default=None, max_length=50)
+    email: Optional[str] = Field(default=None, max_length=150)
+    address: Optional[str] = None
+    source: LeadSource = "walk_in"
+    status: LeadStatus = "new"
+    expected_value: Decimal = Field(default=Decimal("0"), ge=0)
+    assigned_rep_id: Optional[int] = None
+    notes: Optional[str] = None
+
+
+class CrmLeadCreate(CrmLeadBase):
+    code: Optional[str] = Field(default=None, max_length=50)
+
+
+class CrmLeadUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=150)
+    company_name: Optional[str] = Field(default=None, max_length=150)
+    phone: Optional[str] = Field(default=None, max_length=50)
+    email: Optional[str] = Field(default=None, max_length=150)
+    address: Optional[str] = None
+    source: Optional[LeadSource] = None
+    status: Optional[LeadStatus] = None
+    expected_value: Optional[Decimal] = Field(default=None, ge=0)
+    assigned_rep_id: Optional[int] = None
+    notes: Optional[str] = None
+
+
+class CrmLeadOut(CrmLeadBase, ORMModel):
+    id: int
+    code: str
+    converted_customer_id: Optional[int] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class CrmActivityCreate(BaseModel):
+    kind: ActivityKind = "note"
+    body: str = Field(min_length=1)
+
+
+class CrmActivityOut(ORMModel):
+    id: int
+    lead_id: int
+    kind: ActivityKind
+    body: str
+    created_by: Optional[int] = None
     created_at: datetime
 
 # ---------- Fiscal Years ----------

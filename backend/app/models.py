@@ -350,6 +350,9 @@ class PurchaseOrder(TenantOwned, Base):
     status = Column(String(20), nullable=False, default="draft", server_default="draft", index=True)
     notes = Column(Text, nullable=True)
     total_amount = Column(Numeric(14, 2), nullable=False, default=0, server_default="0")
+    # تفكيك الإجمالي: يلزم عند الاستلام لترحيل ضريبة المدخلات (1145) وخصمها من قيمة المخزون
+    discount_amount = Column(Numeric(14, 2), nullable=False, default=0, server_default="0")
+    tax_amount = Column(Numeric(14, 2), nullable=False, default=0, server_default="0")
     currency_id = Column(Integer, ForeignKey("currencies.id", ondelete="SET NULL"), nullable=True)
     exchange_rate = Column(Numeric(14, 6), nullable=True)
     foreign_total = Column(Numeric(14, 2), nullable=True)
@@ -2662,3 +2665,59 @@ class UserPermissionOverride(TenantOwned, Base):
     reason = Column(String(255), nullable=True)
     granted_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class CrmLead(TenantOwned, Base):
+    """عميل محتمل (Lead) — خط البيع قبل التحويل لعميل فعلي في العملاء.
+
+    المراحل: new → contacted → qualified → won (بعد التحويل) / lost.
+    الكود فريد داخل الشركة (uq_crm_lead_company_code)."""
+
+    __tablename__ = "crm_leads"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('new', 'contacted', 'qualified', 'won', 'lost')",
+            name="ck_crm_lead_status",
+        ),
+        UniqueConstraint("company_id", "code", name="uq_crm_lead_company_code"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    code = Column(String(50), nullable=False, index=True)
+    name = Column(String(150), nullable=False, index=True)          # اسم الشخص المسؤول
+    company_name = Column(String(150), nullable=True)               # اسم النشاط/الشركة
+    phone = Column(String(50), nullable=True)
+    email = Column(String(150), nullable=True)
+    address = Column(Text, nullable=True)
+    source = Column(String(50), nullable=False, default="walk_in", server_default="walk_in")
+    status = Column(String(20), nullable=False, default="new", server_default="new", index=True)
+    expected_value = Column(Numeric(14, 2), nullable=False, default=0, server_default="0")
+    assigned_rep_id = Column(Integer, ForeignKey("sales_reps.id", ondelete="SET NULL"), nullable=True, index=True)
+    notes = Column(Text, nullable=True)
+    converted_customer_id = Column(Integer, ForeignKey("customers.id", ondelete="SET NULL"), nullable=True, index=True)
+    created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    assigned_rep = relationship("SalesRep")
+    converted_customer = relationship("Customer")
+    activities = relationship(
+        "CrmActivity", back_populates="lead", cascade="all, delete-orphan", order_by="CrmActivity.id.desc()"
+    )
+
+
+class CrmActivity(TenantOwned, Base):
+    """نشاط متابعة على عميل محتمل (مكالمة/اجتماع/ملاحظة)."""
+
+    __tablename__ = "crm_activities"
+
+    id = Column(Integer, primary_key=True, index=True)
+    lead_id = Column(Integer, ForeignKey("crm_leads.id", ondelete="CASCADE"), nullable=False, index=True)
+    kind = Column(String(20), nullable=False, default="note", server_default="note")
+    body = Column(Text, nullable=False)
+    created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    lead = relationship("CrmLead", back_populates="activities")

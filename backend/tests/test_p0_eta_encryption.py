@@ -93,7 +93,9 @@ def test_eta_secrets_stored_encrypted_and_decrypted_transparently(encrypted_clie
     assert submit.json().get("status") in ("valid", "submitted", "Accepted")
 
 
-def test_without_key_plaintext_mode_unchanged():
+def test_without_key_plaintext_mode_unchanged(monkeypatch):
+    # يحاكي بيئة بلا مفتاح حتى لو كان ETA_ENC_KEY مضبوطاً في البيئة الفعلية
+    monkeypatch.delenv("ETA_ENC_KEY", raising=False)
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},

@@ -26,6 +26,7 @@ import Accounting from "./pages/Accounting";
 import AuditLog from "./pages/AuditLog";
 import Shifts from "./pages/Shifts";
 import SalesReps from "./pages/SalesReps";
+import Crm from "./pages/Crm";
 import Stocktakes from "./pages/Stocktakes";
 import Transfers from "./pages/Transfers";
 import Pos from "./pages/Pos";
@@ -129,6 +130,7 @@ export default function App() {
         <Route path="work-centers" element={<Guard perm="manufacturing.work_center.view"><WorkCenters /></Guard>} />
         <Route path="production-floor" element={<Guard perm="manufacturing.order.produce"><ProductionFloor /></Guard>} />
         <Route path="sales-reps" element={<Guard perm="sales.rep.view"><SalesReps /></Guard>} />
+        <Route path="crm" element={<Guard perm="crm.lead.view"><Crm /></Guard>} />
         <Route path="hr" element={<Guard perm="hr.employee.view"><Navigate to="/hr/employees" replace /></Guard>} />
         <Route path="hr/employees" element={<Guard perm="hr.employee.view"><HrEmployees /></Guard>} />
         <Route path="hr/employees/:id" element={<Guard perm="hr.employee.view"><HrEmployeeProfile /></Guard>} />

@@ -20,7 +20,6 @@ PUBLIC_ENDPOINTS: Set[Tuple[str, str]] = {
     ("POST", "/auth/setup"),
     ("GET", "/health"),
     ("GET", "/"),
-    ("GET", "/products/{product_id}/image"),  # تخدم وسوم <img>
 }
 
 #: مسارات تتطلب مستخدماً مسجلاً فقط (بلا صلاحية إضافية) — خدمة المستخدم لنفسه.
@@ -420,6 +419,8 @@ ROUTE_RULES: List[RouteRule] = [
     _rule("GET", "/products/import-template/xlsx", "inventory.product.template"),
     _rule("POST", "/products/import/xlsx", "inventory.product.import"),
     _rule("GET", "/products/{product_id}", "inventory.product.view"),
+    # صورة المنتج: مصادقة عبر توكن الاستعلام (?token=) لخدمة وسوم <img> — مطابقة لقاعدة العرض
+    _rule("GET", "/products/{product_id}/image", "inventory.product.view"),
     _rule("PATCH", "/products/{product_id}", "inventory.product.update"),
     _rule("DELETE", "/products/{product_id}", "inventory.product.delete"),
     _rule("POST", "/products/{product_id}/adjust-stock", "inventory.product.adjust_stock"),
@@ -645,6 +646,17 @@ ROUTE_RULES: List[RouteRule] = [
     _rule("GET", "/taxes/payroll-tax/{run_id}", "taxes.payroll.view"),
     _rule("GET", "/taxes/payroll-tax/{run_id}/xlsx", "taxes.payroll.export"),
     _rule("GET", "/taxes/payroll-tax/{run_id}/pdf", "taxes.payroll.export"),
+    # CRM — العملاء المحتملون
+    _rule("GET", "/crm/leads", "crm.lead.view"),
+    _rule("POST", "/crm/leads", "crm.lead.create"),
+    _rule("GET", "/crm/leads/{obj_id}", "crm.lead.view"),
+    _rule("PATCH", "/crm/leads/{obj_id}", "crm.lead.update"),
+    _rule("DELETE", "/crm/leads/{obj_id}", "crm.lead.delete"),
+    _rule("POST", "/crm/leads/{obj_id}/convert", "crm.lead.convert"),
+    _rule("GET", "/crm/leads/{obj_id}/activities", "crm.lead.view"),
+    _rule("POST", "/crm/leads/{obj_id}/activities", "crm.lead.activity"),
+    # مدير الموبايل — ملخص إداري داخل تطبيق المندوبين (بيانات على مستوى الشركة = صلاحية التقارير)
+    _rule("GET", "/reps/me/manager-summary", "reports.dashboard.view"),
 ]
 
 _RULES_BY_METHOD: Dict[str, List[RouteRule]] = {}

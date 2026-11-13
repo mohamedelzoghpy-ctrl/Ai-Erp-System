@@ -15,14 +15,14 @@ from . import models  # noqa: F401  (importing registers the tables on Base.meta
 from .database import Base, engine, get_db
 from .deps import get_current_user
 from .permissions import permission_gate, seed_all
-from .routers import access, attachments, backups, currencies, price_lists, audit as audit_router, auth, bank_statements, eta as eta_router, cheques, coa, cost_centers, data_io, departments, fixed_assets, fiscal_years, general_ledger, hr, journal_entries, lots, manufacturing, pos, qc, recurring_journals, reports, reports_fin, returns, reps, shifts, stocktakes, taxes, transfers, masterdata, orders, payments, products, tenancy, safes_banks, sync
+from .routers import access, attachments, backups, currencies, price_lists, audit as audit_router, auth, bank_statements, eta as eta_router, cheques, coa, cost_centers, crm, data_io, departments, fixed_assets, fiscal_years, general_ledger, hr, journal_entries, lots, manufacturing, pos, qc, recurring_journals, reports, reports_fin, returns, reps, shifts, stocktakes, taxes, transfers, masterdata, orders, payments, products, tenancy, safes_banks, sync
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     # Create missing tables automatically at startup (handy for development).
-    # Set AUTO_CREATE_TABLES=false when the schema is managed with Alembic migrations.
-    if os.getenv("AUTO_CREATE_TABLES", "true").lower() not in ("0", "false", "no"):
+    # Schema should be managed with Alembic migrations: set AUTO_CREATE_TABLES=true explicitly for dev.
+    if os.getenv("AUTO_CREATE_TABLES", "false").lower() not in ("0", "false", "no"):
         Base.metadata.create_all(bind=engine)
     # بذر كتالوج الصلاحيات والأقسام النظامية لكل شركة (idempotent).
     try:
@@ -70,6 +70,7 @@ app.include_router(sync.router)  # مزامنة تطبيق المندوبين �
 
 # Every business route requires a logged-in user.
 _protected = [Depends(get_current_user)]
+app.include_router(crm.router, dependencies=_protected)
 app.include_router(hr.router, dependencies=_protected)
 app.include_router(masterdata.warehouses, dependencies=_protected)
 app.include_router(masterdata.suppliers, dependencies=_protected)

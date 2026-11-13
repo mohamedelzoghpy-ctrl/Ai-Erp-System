@@ -10,6 +10,7 @@ import { useCart } from "../cart";
 
 export default function HomeScreen({ navigation }: any) {
   const [summary, setSummary] = useState<any>(null);
+  const [mgr, setMgr] = useState<any>(null);
   const [pending, setPending] = useState(0);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -22,6 +23,12 @@ export default function HomeScreen({ navigation }: any) {
       setSummary(await api.get<any>("/reps/me/summary"));
     } catch {
       /* الحساب قد لا يكون مرتبطاً بمندوب — الشاشة تعمل بالمزامنة */
+    }
+    // مدير؟ بطاقة الشركة + زر لوحة المدير تظهر فقط عند نجاح الملخص الإداري (403 = مندوب عادي)
+    try {
+      setMgr(await api.get<any>("/reps/me/manager-summary"));
+    } catch {
+      setMgr(null);
     }
   }, []);
 
@@ -74,6 +81,15 @@ export default function HomeScreen({ navigation }: any) {
         {cart.items.length > 0 && <Row left="في سلة الأوردر الحالي" right={`${qty(cart.items.length)} صنف — ${money(cart.total)}`} />}
         <Btn label="مزامنة الآن" onPress={doSync} busy={busy} />
       </Card>
+
+      {mgr ? (
+        <Card>
+          <Text style={{ fontWeight: "800", marginBottom: 6, textAlign: "right" }}>🏢 الشركة اليوم</Text>
+          <Row left="مبيعات الشركة اليوم" right={money(mgr.today_sales ?? 0)} />
+          <Row left="أوردرات بانتظار التأكيد" right={qty(mgr.pending_orders ?? 0)} strong={(mgr.pending_orders ?? 0) > 0} />
+          <Btn label="📊 افتح لوحة المدير" kind="ghost" onPress={() => navigation.navigate("manager")} />
+        </Card>
+      ) : null}
 
       <Card style={{ flexDirection: "row-reverse", flexWrap: "wrap", gap: 8 }}>
         <View style={{ width: "48%" }}>

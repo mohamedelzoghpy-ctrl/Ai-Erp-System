@@ -228,7 +228,7 @@ def test_me_returns_effective_permissions(client, admin_token):
 
     uid = _create_staff(client, admin_token, "mesect")
     staff_me = client.get("/auth/me", headers=_auth(_staff_token(client, "mesect")))
-    assert staff_me.json()["permissions"] == ["hr.me.use", "sales.rep.mobile"]
+    assert set(staff_me.json()["permissions"]) == {"hr.me.use", "sales.rep.mobile", "sales.customer.rep_mobile_balance"}
 
 
 def test_manager_bypasses_everything(client, admin_token):

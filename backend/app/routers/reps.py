@@ -633,3 +633,86 @@ def list_commission_runs(db: Session = Depends(get_db), _: models.User = Depends
         "id": r.id, "period_from": str(r.period_from), "period_to": str(r.period_to),
         "total": str(r.total), "status": r.status, "created_at": r.created_at.isoformat() if r.created_at else None,
     } for r in runs]
+
+
+@router.get("/me/manager-summary")
+def me_manager_summary(
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """ملخص إداري مختصر لشاشة المدير في تطبيق المندوبين:
+    مبيعات اليوم/الشهر، تحصيلات اليوم، الأوردرات المعلقة، أفضل المنتجات، أعلى العملاء مديونية."""
+    from ..accounting import local_today
+    from ..exports import LOCAL_TZ
+    from datetime import datetime as _dt, time as _time, timezone as _tz
+    company_id = db.info["company_id"]
+    today = local_today()
+    day_start_local = _dt.combine(today, _time.min, tzinfo=LOCAL_TZ)
+    today_start_u = day_start_local.astimezone(_tz.utc).replace(tzinfo=None)
+    today_end_u = (day_start_local + _td(days=1)).astimezone(_tz.utc).replace(tzinfo=None)
+    month_start_u = _dt.combine(today.replace(day=1), _time.min, tzinfo=LOCAL_TZ).astimezone(_tz.utc).replace(tzinfo=None)
+
+    SO = models.SalesOrder
+    # شاشة المدير تري الشركة كلها — يتجاوز نطاق مخازن المستخدم صراحةً
+    today_agg = db.query(_func.count(SO.id), _func.coalesce(_func.sum(SO.total_amount), 0)).filter(
+        SO.company_id == company_id, SO.status == "confirmed",
+        SO.updated_at >= today_start_u, SO.updated_at < today_end_u,
+    ).execution_options(ignore_tenant_scope=True).one()
+    month_agg = db.query(_func.count(SO.id), _func.coalesce(_func.sum(SO.total_amount), 0)).filter(
+        SO.company_id == company_id, SO.status == "confirmed",
+        SO.updated_at >= month_start_u,
+    ).execution_options(ignore_tenant_scope=True).one()
+    pending = db.query(_func.count(SO.id)).filter(
+        SO.company_id == company_id, SO.status == "draft",
+    ).execution_options(ignore_tenant_scope=True).scalar() or 0
+
+    P = models.Payment
+    collected_today = db.query(_func.coalesce(_func.sum(P.amount), 0)).filter(
+        P.company_id == company_id, P.status == "posted",
+        P.created_at >= today_start_u, P.created_at < today_end_u,
+    ).execution_options(ignore_tenant_scope=True).scalar() or 0
+
+    # أفضل 5 منتجات مبيعة هذا الشهر (أوامر مؤكدة)
+    top_rows = (
+        db.query(models.SalesOrderItem.product_id, models.Product.name,
+                 _func.coalesce(_func.sum(models.SalesOrderItem.quantity), 0),
+                 _func.coalesce(_func.sum(models.SalesOrderItem.quantity * models.SalesOrderItem.unit_price), 0))
+        .join(SO, SO.id == models.SalesOrderItem.order_id)
+        .join(models.Product, models.Product.id == models.SalesOrderItem.product_id)
+        .filter(
+            SO.company_id == company_id, SO.status == "confirmed",
+            SO.updated_at >= month_start_u,
+        )
+        .group_by(models.SalesOrderItem.product_id, models.Product.name)
+        .order_by(_func.sum(models.SalesOrderItem.quantity * models.SalesOrderItem.unit_price).desc())
+        .limit(5)
+        .execution_options(ignore_tenant_scope=True)
+        .all()
+    )
+
+    # أعلى 5 عملاء مديونية (رصيد موجب)
+    from ..accounts import party_balances
+    customers = db.query(models.Customer.id, models.Customer.name).filter(
+        models.Customer.company_id == company_id, models.Customer.is_active.is_(True)
+    ).execution_options(ignore_tenant_scope=True).all()
+    balances = party_balances(db, "customer", [c.id for c in customers] or [0])
+    top_debtors = sorted(
+        ({"customer_id": cid, "name": name, "balance": float(balances.get(cid, 0))}
+         for cid, name in customers if balances.get(cid, 0) > 0),
+        key=lambda d: d["balance"], reverse=True,
+    )[:5]
+
+    return {
+        "as_of": today.isoformat(),
+        "today_orders": today_agg[0] or 0,
+        "today_sales": float(today_agg[1] or 0),
+        "month_orders": month_agg[0] or 0,
+        "month_sales": float(month_agg[1] or 0),
+        "collected_today": float(collected_today),
+        "pending_orders": int(pending),
+        "top_products": [
+            {"product_id": pid, "name": name, "quantity": float(qty), "value": float(val)}
+            for pid, name, qty, val in top_rows
+        ],
+        "top_debtors": top_debtors,
+    }
