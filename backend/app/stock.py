@@ -45,6 +45,18 @@ def available(db: Session, product_id: int, warehouse_id: int) -> Decimal:
     return dec(row.quantity) if row else ZERO  # type: ignore
 
 
+def total_available(db: Session, product_id: int) -> Decimal:
+    """إجمالي المتاح للصنف عبر كل المخازن — يطابق Product.quantity (نفس دلالة mrp_suggestions)."""
+    from sqlalchemy import func
+
+    total = (
+        db.query(func.coalesce(func.sum(models.ProductStock.quantity), 0))
+        .filter(models.ProductStock.product_id == product_id)
+        .scalar()
+    )
+    return dec(total)
+
+
 def _warehouse_name(db: Session, warehouse_id: int) -> str:
     w = db.get(models.Warehouse, warehouse_id)
     return w.name if w else str(warehouse_id)  # type: ignore

@@ -86,6 +86,43 @@ def test_bom_mrp_simulation_detects_shortages():
         engine.dispose()
 
 
+def test_bom_mrp_simulation_default_total_availability():
+    """انحدار (2026-11-14): المسار الافتراضي بلا raw_warehouse_id كان يرفع 500 —
+    نداء stock.total_available لم يكن معرفًا أصلًا في stock.py، والواجهة تستخدم هذا
+    المسار افتراضيًا (زر ⚡ محاكي MRP في قوائم المواد)."""
+    client, engine = _client()
+    try:
+        w1, w2 = make_warehouses(client)
+        comp1 = make_product(client, "RAW-T1", 10, w1["id"], cost_price="20.00")
+        comp2 = make_product(client, "RAW-T2", 4, w2["id"], cost_price="50.00")  # مخزن مختلف
+        finished = make_product(client, "FIN-T1", 0, w2["id"])
+        bom = client.post(
+            "/boms",
+            json={
+                "product_id": finished["id"],
+                "version": "v1",
+                "output_qty": 1,
+                "items": [
+                    {"component_id": comp1["id"], "qty_per_output": 2, "scrap_pct": 0},
+                    {"component_id": comp2["id"], "qty_per_output": 1, "scrap_pct": 0},
+                ],
+            },
+        ).json()
+        # بلا raw_warehouse_id: المتاح = الإجمالي عبر كل المخازن (نفس دلالة mrp_suggestions)
+        resp = client.get(f"/boms/{bom['id']}/mrp-simulate?qty_planned=10")
+        assert resp.status_code == 200, resp.text
+        sim = resp.json()
+        item1 = next(i for i in sim["items"] if i["component_id"] == comp1["id"])
+        item2 = next(i for i in sim["items"] if i["component_id"] == comp2["id"])
+        assert item1["available_qty"] == 10.0 and item1["shortage_qty"] == 10.0   # مطلوب 20
+        assert item2["available_qty"] == 4.0 and item2["shortage_qty"] == 6.0     # مطلوب 10
+        assert sim["can_produce_immediately"] is False
+        assert sim["total_shortage_cost"] == 500.0  # 10×20 + 6×50
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+        engine.dispose()
+
+
 def test_qc_release_and_reject_flow():
     client, engine = _client()
     try:
