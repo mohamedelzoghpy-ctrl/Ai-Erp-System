@@ -84,6 +84,7 @@ ROUTE_RULES: List[RouteRule] = [
     _rule("POST", "/boms", "manufacturing.bom.create"),
     _rule("GET", "/boms/{bom_id}", "manufacturing.bom.view"),
     _rule("GET", "/boms/{bom_id}/mrp-simulate", "manufacturing.bom.view"),
+    _rule("GET", "/boms/{bom_id}/cost-rollup", "manufacturing.bom.view"),
     _rule("PATCH", "/boms/{bom_id}", "manufacturing.bom.update"),
     _rule("DELETE", "/boms/{bom_id}", "manufacturing.bom.delete"),
     # ---------- شجرة الحسابات ----------
@@ -394,6 +395,7 @@ ROUTE_RULES: List[RouteRule] = [
     _rule("GET", "/production-orders/batches/trace", "manufacturing.order.trace"),
     _rule("GET", "/production-orders/lots/{lot_id}/trace-forward", "manufacturing.order.trace"),
     _rule("GET", "/production-orders/mrp/aggregate", "manufacturing.order.mrp_aggregate"),
+    _rule("POST", "/production-orders/mrp/execute", "manufacturing.order.create"),
     _rule("GET", "/production-orders/mrp/suggestions", "manufacturing.order.mrp_suggestions"),
     _rule("GET", "/production-orders/reports/summary", "manufacturing.order.report_summary"),
     _rule("GET", "/production-orders/reports/wip", "manufacturing.order.report_wip"),

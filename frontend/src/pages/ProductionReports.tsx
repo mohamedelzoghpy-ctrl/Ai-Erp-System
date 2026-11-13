@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { api } from "../api";
 import { money, num } from "../format";
-import { useFetch } from "../hooks";
+import { useAction, useFetch, type Fetched } from "../hooks";
 import type { ManufacturingReportOut, WipOrder, WorkCenterPerfOut } from "../types";
 import { Alert, Empty, Loading, PageHeader } from "../ui";
+import { useI18n } from "../i18n";
 
 function escapeHtml(v: unknown): string {
   return String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -85,13 +86,54 @@ interface MrpAggregateRow {
 }
 
 /** تخطيط الاحتياجات (MRP): الطلب المفتوح مقابل الرصيد — ما يجب إنتاجه لسد العجز. */
-function MrpPanel() {
+function MrpPanel({ warehouses }: { warehouses: Fetched<{ id: number; name: string }[]> }) {
+  const { t } = useI18n();
   const aggregate = useFetch(() => api.get<{ lines: MrpAggregateRow[] }>("/production-orders/mrp/aggregate"), "mrp-aggregate");
+  const suppliers = useFetch(() => api.get<{ id: number; name: string }[]>("/suppliers"), "mrp-suppliers");
+  const { run, busy, error } = useAction();
+  const [note, setNote] = useState<string | null>(null);
+  const [sel, setSel] = useState<Record<number, { qty: string; action: "produce" | "buy"; supplier_id: string }>>({});
   const lines = (aggregate.data?.lines ?? []).filter((l) => Number(l.open_demand) > 0 || Number(l.shortfall) > 0);
+
+  const pick = (l: MrpAggregateRow) =>
+    sel[l.product_id] ?? { qty: String(l.shortfall || 0), action: (l.has_bom ? "produce" : "buy") as "produce" | "buy", supplier_id: "" };
+  const setPick = (pid: number, patch: Partial<{ qty: string; action: "produce" | "buy"; supplier_id: string }>) =>
+    setSel((s) => ({ ...s, [pid]: { ...pick(lines.find((x) => x.product_id === pid)!), ...patch } }));
+
+  const execute = () => {
+    const rawWh = (warehouses.data ?? [])[0]?.id;
+    if (!rawWh) { setNote(t("لا توجد مخازن — أضف مخزنًا أولًا")); return; }
+    const items = lines
+      .filter((l) => sel[l.product_id] ? Number(sel[l.product_id].qty) > 0 : Number(l.shortfall) > 0)
+      .map((l) => {
+        const p = pick(l);
+        return { product_id: l.product_id, qty: Number(p.qty), action: p.action, supplier_id: p.supplier_id ? Number(p.supplier_id) : null };
+      });
+    if (items.length === 0) { setNote(t("حدد كميات للتنفيذ أولًا")); return; }
+    void run(async () => {
+      const out = await api.post<{ created: { order_code: string; action: string; product_id: number }[]; skipped: { product_id: number; reason: string }[] }>("/production-orders/mrp/execute", {
+        raw_warehouse_id: rawWh, output_warehouse_id: rawWh,
+        items,
+      });
+      const made = out.created.map((c) => `${c.order_code}`).join("، ");
+      const skippedCount = out.skipped.length;
+      setNote(`${t("نُفذ:")} ${out.created.length} ${t("أمر")} ${made ? `(${made})` : ""}${skippedCount ? ` — ${t("تعذر")} ${skippedCount}` : ""}`);
+      setSel({});
+      aggregate.reload();
+    });
+  };
 
   return (
     <div className="card card-pad" style={{ marginBottom: 16 }}>
-      <h3 style={{ margin: "0 0 8px", fontSize: 15 }}>🧮 تخطيط الاحتياجات — الطلب المفتوح مقابل الرصيد</h3>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+        <h3 style={{ margin: 0, fontSize: 15 }}>🧮 {t("تخطيط الاحتياجات — الطلب المفتوح مقابل الرصيد")}</h3>
+        <button className="btn btn-primary" disabled={busy || lines.length === 0} onClick={execute}>
+          {busy ? t("جارٍ التنفيذ…") : t("⚡ تنفيذ المحدد (أوامر مسودة)")}
+        </button>
+      </div>
+      {error && <Alert>{error}</Alert>}
+      {note && <div className="hint" style={{ marginBottom: 8 }}>{note}</div>}
+      {(warehouses.data ?? []).length > 0 && <small className="hint" style={{ display: "block", marginBottom: 8 }}>{t("مخزن الصرف والناتج:")} <b>{(warehouses.data ?? [])[0]?.name}</b> — {t("تُنشأ الأوامر كمسودات للمراجعة قبل التأكيد")}</small>}
       {aggregate.loading && !aggregate.data ? (
         <Loading />
       ) : aggregate.error ? (
@@ -100,29 +142,48 @@ function MrpPanel() {
         <div className="table-wrap">
           <table>
             <thead>
-              <tr><th>المنتج</th><th className="num">الرصيد بكل المخازن</th><th className="num">الطلب المفتوح</th><th className="num">الإنتاج المقترح</th><th>قائمة مواد؟</th></tr>
+              <tr><th>{t("المنتج")}</th><th className="num">{t("الرصيد بكل المخازن")}</th><th className="num">{t("الطلب المفتوح")}</th><th className="num">{t("العجز")}</th><th>{t("التنفيذ")}</th></tr>
             </thead>
             <tbody>
-              {lines.map((l) => (
-                <tr key={l.product_id}>
-                  <td>{l.product_name ?? `#${l.product_id}`}</td>
-                  <td className="num">{num(l.in_stock)}</td>
-                  <td className="num">{num(l.open_demand)}</td>
-                  <td className="num">
-                    {Number(l.shortfall) > 0 ? (
-                      <span className="badge badge-cancelled">{num(l.shortfall)}</span>
-                    ) : (
-                      <span className="badge badge-confirmed">مغطى</span>
-                    )}
-                  </td>
-                  <td>{l.has_bom ? "✅" : <span className="muted">بلا BOM</span>}</td>
-                </tr>
-              ))}
+              {lines.map((l) => {
+                const p = pick(l);
+                return (
+                  <tr key={l.product_id}>
+                    <td>{l.product_name ?? `#${l.product_id}`}</td>
+                    <td className="num">{num(l.in_stock)}</td>
+                    <td className="num">{num(l.open_demand)}</td>
+                    <td className="num">
+                      {Number(l.shortfall) > 0 ? (
+                        <span className="badge badge-cancelled">{num(l.shortfall)}</span>
+                      ) : (
+                        <span className="badge badge-confirmed">{t("مغطى")}</span>
+                      )}
+                    </td>
+                    <td>
+                      <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                        <input dir="ltr" style={{ width: 90 }} inputMode="decimal" value={p.qty} onChange={(e) => setPick(l.product_id, { qty: e.target.value.replace(/[^0-9.]/g, "") })} />
+                        <select value={p.action} onChange={(e) => setPick(l.product_id, { action: e.target.value as "produce" | "buy" })}>
+                          <option value="produce">{t("إنتاج")} {l.has_bom ? "✅" : "⚠️"}</option>
+                          <option value="buy">{t("شراء")}</option>
+                        </select>
+                        {p.action === "buy" && (
+                          <select value={p.supplier_id} onChange={(e) => setPick(l.product_id, { supplier_id: e.target.value })}>
+                            <option value="">{t("اختر موردًا…")}</option>
+                            {(suppliers.data ?? []).map((s) => (
+                              <option key={s.id} value={s.id}>{s.name}</option>
+                            ))}
+                          </select>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
       ) : (
-        <Empty>لا طلب مفتوح حالياً — الأرصدة تغطي أوامر البيع المؤكدة.</Empty>
+        <Empty>{t("لا طلب مفتوح حالياً — الأرصدة تغطي أوامر البيع.")}</Empty>
       )}
     </div>
   );
@@ -132,6 +193,7 @@ export default function ProductionReports() {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const valid = !from || !to || from <= to;
+  const warehouses = useFetch(() => api.get<{ id: number; name: string }[]>("/warehouses"), "mfg-warehouses");
   const wip = useFetch(() => api.get<WipOrder[]>("/production-orders/reports/wip"), "mfg-wip");
   const wipTotal = (wip.data ?? []).reduce((s, w) => s + Number(w.wip_value), 0);
   const report = useFetch(
@@ -237,7 +299,7 @@ export default function ProductionReports() {
         )}
       </div>
 
-      <MrpPanel />
+      <MrpPanel warehouses={warehouses} />
 
       {!valid || report.loading ? (
         <Loading />

@@ -746,6 +746,9 @@ class Bom(TenantOwned, Base):
     version = Column(String(20), nullable=False, default="v1", server_default="v1")
     output_qty = Column(Integer, nullable=False, default=1, server_default="1")  # الكمية الناتجة من هذه القائمة
     is_active = Column(Boolean, nullable=False, default=True, server_default="true")
+    # سريان الإصدار (اختياري): تُختار القائمة المفعّلة التي يشمل تاريخ الأمر فترتها — NULL = دائمة
+    valid_from = Column(Date, nullable=True)
+    valid_to = Column(Date, nullable=True)
     notes = Column(Text, nullable=True)
     created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
@@ -825,6 +828,8 @@ class ProductionOrder(TenantOwned, Base):
     scrap_cost = Column(Numeric(14, 2), nullable=False, default=0, server_default="0")  # إجمالي تكلفة الهالك المُرحّلة من WIP (أمر + مراحل)
     std_unit_cost = Column(Numeric(14, 4), nullable=True)  # التكلفة القياسية للوحدة وقت الإنشاء (من قائمة المواد)
     parent_order_id = Column(Integer, ForeignKey("production_orders.id"), nullable=True, index=True)  # أمر فرعي من تصنيع مرحلي
+    # تصنيع حسب الطلب: أمر البيع الذي دفع هذا الأمر (MRP التنفيذي)
+    sales_order_id = Column(Integer, ForeignKey("sales_orders.id", ondelete="SET NULL"), nullable=True, index=True)
     production_line_id = Column(Integer, ForeignKey("production_lines.id"), nullable=True)  # خط الإنتاج
     status = Column(String(20), nullable=False, default="draft", server_default="draft", index=True)  # draft | in_progress | completed | cancelled
     raw_warehouse_id = Column(Integer, ForeignKey("warehouses.id"), nullable=False)  # مخزن الخامات

@@ -387,6 +387,8 @@ export interface Bom {
   version: string;
   output_qty: number;
   is_active: boolean;
+  valid_from?: string | null;
+  valid_to?: string | null;
   notes?: string | null;
   items: BomItem[];
   operations: BomOperation[];

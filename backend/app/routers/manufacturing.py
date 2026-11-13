@@ -11,7 +11,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 import os
 
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -101,15 +101,25 @@ def _consumptions_out(po: models.ProductionOrder) -> models.ProductionOrder:
     return po
 
 
-def _active_bom(db: Session, company_id: int, product_id: int) -> models.Bom:
-    bom = (
-        db.query(models.Bom)
-        .filter(models.Bom.company_id == company_id, models.Bom.product_id == product_id, models.Bom.is_active.is_(True))
-        .order_by(models.Bom.id.desc())
-        .first()
+def _bom_window_query(db: Session, company_id: int, product_id: int, on_date):
+    """القوائم المفعّلة التي يشمل تاريخ الأمر فترتها (NULL في السريان = دائمة)."""
+    q = db.query(models.Bom).filter(
+        models.Bom.company_id == company_id,
+        models.Bom.product_id == product_id,
+        models.Bom.is_active.is_(True),
     )
+    if on_date is not None:
+        q = q.filter(
+            or_(models.Bom.valid_from.is_(None), models.Bom.valid_from <= on_date),
+            or_(models.Bom.valid_to.is_(None), models.Bom.valid_to >= on_date),
+        )
+    return q.order_by(models.Bom.id.desc())
+
+
+def _active_bom(db: Session, company_id: int, product_id: int) -> models.Bom:
+    bom = _bom_window_query(db, company_id, product_id, date.today()).first()
     if bom is None or not bom.items:
-        raise HTTPException(422, "لا توجد قائمة مواد (BOM) مفعّلة لهذا المنتج — أنشئها أولًا")
+        raise HTTPException(422, "لا توجد قائمة مواد (BOM) مفعّلة وسارية لهذا المنتج — أنشئها أولًا")
     return bom
 
 
@@ -280,12 +290,16 @@ def create_bom(payload: schemas.BomCreate, db: Session = Depends(get_db), user: 
         if item.operation_seq is not None and item.operation_seq not in op_seqs:
             raise HTTPException(422, f"المكوّن مرتبط بمرحلة {item.operation_seq} غير موجودة في مسار التشغيل")
 
+    if payload.valid_from and payload.valid_to and payload.valid_from > payload.valid_to:
+        raise HTTPException(422, "بداية السريان بعد نهايته")
     bom = models.Bom(
         company_id=company_id,  # type: ignore
         product_id=payload.product_id,  # type: ignore
         version=payload.version.strip() or "v1",  # type: ignore
         output_qty=int(payload.output_qty),  # type: ignore
         is_active=payload.is_active,  # type: ignore
+        valid_from=payload.valid_from,  # type: ignore
+        valid_to=payload.valid_to,  # type: ignore
         notes=payload.notes,  # type: ignore
         created_by=user.id,  # type: ignore
     )
@@ -385,6 +399,65 @@ def copy_bom(
     db.refresh(new_bom)
     audit(db, user, "copy", "bom", new_bom, f"نسخ {src_bom.version} → {new_bom.version}")
     return _bom_out(db, new_bom)
+
+
+@boms.get("/{bom_id}/cost-rollup", response_model=schemas.BomCostRollupOut)
+def bom_cost_rollup(bom_id: int, db: Session = Depends(get_db), _: models.User = Depends(get_current_user)):
+    """التكلفة المعيارية المجمّعة للقائمة عبر كل المستويات: المكوّن له قائمة سارية تُستخدم
+    تكلفته المجمّعة (لكل وحدة ناتج) وإلا تكلفة شرائه المسجلة — مع كشف الدوران."""
+    company_id = db.info["company_id"]
+    bom = db.get(models.Bom, bom_id)
+    if bom is None or bom.company_id != company_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "قائمة المواد غير موجودة")
+
+    rollup_cache: dict = {}
+
+    def component_unit_cost(pid: int, chain: tuple) -> Decimal:
+        if pid in chain:
+            raise HTTPException(422, "قوائم المواد دائرية — لا يمكن حساب التكلفة المجمّعة")
+        if pid in rollup_cache:
+            return rollup_cache[pid]
+        child = _bom_window_query(db, company_id, pid, date.today()).first()
+        if child is not None and child.id != bom_id and child.items:
+            cost = _bom_unit_cost(child, chain + (pid,))
+            rollup_cache[pid] = cost
+            return cost
+        comp = db.get(models.Product, pid)
+        cost = dec(comp.cost_price) if comp else Decimal("0")
+        rollup_cache[pid] = cost
+        return cost
+
+    def _bom_unit_cost(b: models.Bom, chain: tuple) -> Decimal:
+        output = max(dec(b.output_qty), Decimal("1"))
+        total = Decimal("0")
+        for item in b.items:
+            uc = component_unit_cost(item.component_id, chain)
+            total += dec(item.qty_per_output) * (1 + dec(item.scrap_pct) / 100) * uc
+        return (total / output).quantize(Decimal("0.0001"))
+
+    lines = []
+    total = Decimal("0")
+    for item in bom.items:
+        comp = db.get(models.Product, item.component_id)
+        child = _bom_window_query(db, company_id, item.component_id, date.today()).first()
+        if child is not None and child.id != bom.id and child.items:
+            source = "own_bom"
+            uc = component_unit_cost(item.component_id, (bom.product_id,))
+        else:
+            source = "cost_price"
+            uc = component_unit_cost(item.component_id, (bom.product_id,))
+        line_cost = (dec(item.qty_per_output) * (1 + dec(item.scrap_pct) / 100) * uc).quantize(Decimal("0.0001"))
+        total += line_cost
+        lines.append(schemas.BomCostRollupLine(
+            component_id=item.component_id, component_name=comp.name if comp else None,
+            qty_per_output=dec(item.qty_per_output), scrap_pct=dec(item.scrap_pct),
+            source=source, unit_cost=uc.quantize(Decimal("0.0001")), line_cost=line_cost,
+        ))
+    output = max(dec(bom.output_qty), Decimal("1"))
+    return schemas.BomCostRollupOut(
+        bom_id=bom.id, product_id=bom.product_id, product_name=bom.product.name if bom.product else None,
+        output_qty=dec(bom.output_qty), unit_cost=(total / output).quantize(Decimal("0.0001")), lines=lines,
+    )
 
 
 @boms.get("/{bom_id}/mrp-simulate")
@@ -503,7 +576,11 @@ def update_bom(bom_id: int, payload: schemas.BomCreate, db: Session = Depends(ge
     bom.product_id = payload.product_id  # type: ignore
     bom.version = payload.version.strip() or bom.version  # type: ignore
     bom.output_qty = q3(payload.output_qty)  # type: ignore
-    bom.is_active = payload.is_active  # type: ignore
+    if payload.valid_from and payload.valid_to and payload.valid_from > payload.valid_to:
+        raise HTTPException(422, "بداية السريان بعد نهايته")
+    bom.is_active = payload.is_active
+    bom.valid_from = payload.valid_from
+    bom.valid_to = payload.valid_to  # type: ignore
     bom.notes = payload.notes  # type: ignore
     bom.items.clear()
     bom.operations.clear()
@@ -755,6 +832,10 @@ def create_production_order(
         line = db.get(models.ProductionLine, payload.production_line_id)
         if line is None or line.company_id != company_id:
             raise HTTPException(422, "خط الإنتاج غير موجود")
+    if payload.sales_order_id is not None:
+        so = db.get(models.SalesOrder, payload.sales_order_id)
+        if so is None or so.company_id != company_id:
+            raise HTTPException(422, "أمر البيع المربوط غير موجود")
 
     bom = _active_bom(db, company_id, payload.product_id)
     if payload.bom_id is not None and payload.bom_id != bom.id:
@@ -773,6 +854,7 @@ def create_production_order(
         output_warehouse_id=payload.output_warehouse_id,  # type: ignore
         subcontractor_id=payload.subcontractor_id,  # type: ignore
         production_line_id=payload.production_line_id,  # type: ignore
+        sales_order_id=payload.sales_order_id,  # type: ignore
         scheduled_date=payload.scheduled_date,  # type: ignore
         notes=payload.notes,  # type: ignore
         created_by=user.id,  # type: ignore
@@ -1850,9 +1932,7 @@ def mrp_suggestions(
 
     def component_has_bom(pid: int) -> bool:
         if pid not in has_bom_cache:
-            has_bom_cache[pid] = db.query(models.Bom).filter(
-                models.Bom.company_id == company_id, models.Bom.product_id == pid, models.Bom.is_active.is_(True)
-            ).first() is not None
+            has_bom_cache[pid] = _bom_window_query(db, company_id, pid, date.today()).first() is not None
         return has_bom_cache[pid]
 
     def explode(pid: int, quantity: Decimal, chain: tuple) -> None:
@@ -1860,9 +1940,7 @@ def mrp_suggestions(
             raise HTTPException(422, f"تعذر التفكيك — سلسلة قوائم مواد دائرية تشمل المنتج {pid}")
         if pid in chain:
             raise HTTPException(422, "قوائم المواد دائرية (منتج مكوّن في سلسلة نفسه)")
-        bom = db.query(models.Bom).filter(
-            models.Bom.company_id == company_id, models.Bom.product_id == pid, models.Bom.is_active.is_(True)
-        ).first()
+        bom = _bom_window_query(db, company_id, pid, date.today()).first()
         if bom is None:
             return
         output_qty = max(dec(bom.output_qty), Decimal("1"))
@@ -1891,10 +1969,19 @@ def mrp_suggestions(
 
 
 @production_orders.get("/mrp/aggregate", response_model=schemas.MrpAggregateOut)
-def mrp_aggregate(db: Session = Depends(get_db), _: models.User = Depends(get_current_user)):
+def mrp_aggregate(
+    sales_order_id: Optional[int] = Query(None, description="حصر الطلب على أمر بيع واحد (MTO)"),
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+):
     """تخطيط الاحتياجات الإجمالي: لكل منتج له قائمة مواد مفعّلة — كميات أوامر البيع المسودة
-    (الطلب القادم) مقابل الرصيد الكلي، مع اقتراح كمية إنتاج عند العجز."""
+    (الطلب القادم) مقابل الرصيد الكلي، مع اقتراح كمية إنتاج عند العجز.
+    مع sales_order_id: النواقص اللازمة لتنفيذ أمر بيع بعينه."""
     company_id = db.info["company_id"]
+    if sales_order_id is not None:
+        so = db.get(models.SalesOrder, sales_order_id)
+        if so is None or so.company_id != company_id:
+            raise HTTPException(404, "أمر البيع غير موجود")
     # الطلب المفتوح = بنود أوامر البيع المسودة (المؤكدة خُصم مخزونها بالفعل)
     demand_rows = (
         db.query(models.SalesOrderItem.product_id, func.sum(models.SalesOrderItem.quantity))
@@ -1903,6 +1990,14 @@ def mrp_aggregate(db: Session = Depends(get_db), _: models.User = Depends(get_cu
         .group_by(models.SalesOrderItem.product_id)
         .all()
     )
+    # (لأمر بيع واحد: استعلام مباشر على بنوده بدل مسودة الكل)
+    if sales_order_id is not None:
+        demand_rows = (
+            db.query(models.SalesOrderItem.product_id, func.sum(models.SalesOrderItem.quantity))
+            .filter(models.SalesOrderItem.order_id == sales_order_id)
+            .group_by(models.SalesOrderItem.product_id)
+            .all()
+        )
     demand = {pid: dec(qty) for pid, qty in demand_rows}
     lines = []
     for bom in db.query(models.Bom).filter(models.Bom.company_id == company_id, models.Bom.is_active.is_(True)).all():
@@ -1920,6 +2015,79 @@ def mrp_aggregate(db: Session = Depends(get_db), _: models.User = Depends(get_cu
         ))
     lines.sort(key=lambda r: r.shortfall, reverse=True)
     return schemas.MrpAggregateOut(lines=lines)
+
+
+@production_orders.post("/mrp/execute", response_model=schemas.MrpExecuteOut)
+def mrp_execute(
+    payload: schemas.MrpExecuteIn,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(require_manager),
+):
+    """MRP التنفيذي: تحويل اقتراحات التخطيط إلى أوامر فعلية —
+    produce → أمر تصنيع مسودة (بقائمة المواد السارية)؛ buy → أمر شراء مسودة للمورد.
+    العناصر المتعذرة تُعاد في skipped بسببها ولا يفشل الباقي."""
+    company_id = db.info["company_id"]
+    raw_wh = db.get(models.Warehouse, payload.raw_warehouse_id)
+    if raw_wh is None or raw_wh.company_id != company_id:
+        raise HTTPException(422, "مخزن الخامات غير موجود")
+    out_wh = db.get(models.Warehouse, payload.output_warehouse_id)
+    if out_wh is None or out_wh.company_id != company_id:
+        raise HTTPException(422, "مخزن الناتج غير موجود")
+    purchase_wh_id = payload.purchase_warehouse_id or payload.raw_warehouse_id
+    if payload.purchase_warehouse_id is not None:
+        pwh = db.get(models.Warehouse, payload.purchase_warehouse_id)
+        if pwh is None or pwh.company_id != company_id:
+            raise HTTPException(422, "مخزن استلام الشراء غير موجود")
+
+    created: List[schemas.MrpExecuteResult] = []
+    skipped: List[schemas.MrpExecuteResult] = []
+
+    for item in payload.items:
+        product = db.get(models.Product, item.product_id)
+        if product is None or product.company_id != company_id:
+            skipped.append(schemas.MrpExecuteResult(product_id=item.product_id, action=item.action, ok=False, reason="المنتج غير موجود"))
+            continue
+        if item.action == "produce":
+            try:
+                bom = _active_bom(db, company_id, item.product_id)
+            except HTTPException:
+                skipped.append(schemas.MrpExecuteResult(product_id=item.product_id, action=item.action, ok=False, reason="لا قائمة مواد سارية"))
+                continue
+            code = unique_code(db, models.ProductionOrder, company_id, product.name, "MO", max_length=50)
+            mo = models.ProductionOrder(
+                company_id=company_id, code=code, product_id=item.product_id, bom_id=bom.id,
+                qty_planned=q3(item.qty), status="draft",
+                raw_warehouse_id=payload.raw_warehouse_id, output_warehouse_id=payload.output_warehouse_id,
+                scheduled_date=item.scheduled_date, created_by=user.id,
+            )
+            db.add(mo)
+            db.flush()
+            _snapshot_operations(db, company_id, mo, bom)
+            mo.std_unit_cost = _snapshot_items(db, company_id, mo, bom)
+            audit(db, user, "create", "production_order", mo, f"MRP execute · {code} · {q3(item.qty)}")
+            created.append(schemas.MrpExecuteResult(product_id=item.product_id, action=item.action, ok=True, order_id=mo.id, order_code=code))
+        else:  # buy
+            if item.supplier_id is None:
+                skipped.append(schemas.MrpExecuteResult(product_id=item.product_id, action=item.action, ok=False, reason="المورد مطلوب لأمر الشراء"))
+                continue
+            supplier = db.get(models.Supplier, item.supplier_id)
+            if supplier is None or supplier.company_id != company_id:
+                skipped.append(schemas.MrpExecuteResult(product_id=item.product_id, action=item.action, ok=False, reason="المورد غير موجود"))
+                continue
+            qty = q3(item.qty)
+            cost = item.purchase_price if item.purchase_price is not None else dec(product.cost_price)
+            porder = models.PurchaseOrder(
+                supplier_id=supplier.id, warehouse_id=purchase_wh_id,
+                notes="مسودة من MRP التنفيذي", status="draft",
+            )
+            porder.items.append(models.PurchaseOrderItem(product_id=item.product_id, quantity=qty, unit_cost=cost))
+            porder.total_amount = (cost * qty).quantize(Decimal("0.01"))
+            db.add(porder)
+            db.flush()
+            audit(db, user, "create", "purchase_order", porder, f"MRP execute · {product.name} · {qty}")
+            created.append(schemas.MrpExecuteResult(product_id=item.product_id, action=item.action, ok=True, order_id=porder.id, order_code=f"PO-{porder.id}"))
+    db.commit()
+    return schemas.MrpExecuteOut(created=created, skipped=skipped)
 
 
 @production_orders.get("/{order_id}/print-card", response_class=Response)

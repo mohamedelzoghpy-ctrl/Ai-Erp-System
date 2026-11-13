@@ -20,6 +20,8 @@ function BomForm({ initial, products, onClose, onSaved }: {
   const [version, setVersion] = useState(initial?.version ?? "v1");
   const [outputQty, setOutputQty] = useState(String(initial?.output_qty ?? 1));
   const [isActive, setIsActive] = useState(initial?.is_active ?? true);
+  const [validFrom, setValidFrom] = useState(initial?.valid_from ?? "");
+  const [validTo, setValidTo] = useState(initial?.valid_to ?? "");
   const [notes, setNotes] = useState(initial?.notes ?? "");
   const [items, setItems] = useState<ItemRow[]>(
     initial?.items?.length
@@ -53,6 +55,8 @@ function BomForm({ initial, products, onClose, onSaved }: {
         version: version.trim() || "v1",
         output_qty: Number(outputQty) || 1,
         is_active: isActive,
+        valid_from: validFrom || null,
+        valid_to: validTo || null,
         notes: notes.trim() || null,
         items: items.map((r) => ({
           component_id: r.component_id,
@@ -97,6 +101,12 @@ function BomForm({ initial, products, onClose, onSaved }: {
         <div className="form-grid">
           <Field label="الكمية الناتجة من القائمة" hint="عدد الوحدات النهائية المنتجة بتطبيق هذه القائمة كاملة">
             <input type="number" min="1" step="1" value={outputQty} onChange={(e) => setOutputQty(e.target.value)} required />
+          </Field>
+          <Field label="سارية من" hint="اختياري — تُختار القائمة تلقائيًا ضمن فترتها عند إنشاء أوامر التصنيع">
+            <input type="date" dir="ltr" value={validFrom} onChange={(e) => setValidFrom(e.target.value)} />
+          </Field>
+          <Field label="سارية إلى" hint="اختياري — فارغ = بلا نهاية">
+            <input type="date" dir="ltr" value={validTo} onChange={(e) => setValidTo(e.target.value)} />
           </Field>
           <Field label="مفعّلة">
             <label className="check" style={{ paddingTop: 8 }}>
@@ -313,12 +323,25 @@ export default function Boms() {
               {filtered.map((bom) => (
                 <tr key={bom.id} style={bom.is_active ? undefined : { opacity: 0.55 }}>
                   <td>{productsById.get(bom.product_id)?.name ?? `#${bom.product_id}`}</td>
-                  <td dir="ltr">{bom.version}</td>
+                  <td dir="ltr">
+                    {bom.version}
+                    {(bom.valid_from || bom.valid_to) && (
+                      <div><small className="muted" dir="ltr">{bom.valid_from ?? "…"} → {bom.valid_to ?? "…"}</small></div>
+                    )}
+                  </td>
                   <td className="num">{num(bom.output_qty)}</td>
                   <td className="num">{bom.items.length}</td>
                   <td className="num">{money(stdCost(bom))}</td>
                   <td><ActiveBadge active={bom.is_active} /></td>
                   <td className="actions">
+                    <button className="btn btn-sm" title="التكلفة المعيارية المجمّعة عبر كل المستويات" onClick={async () => {
+                      try {
+                        const r = await api.get<any>(`/boms/${bom.id}/cost-rollup`);
+                        window.alert(`التكلفة المجمّعة للوحدة: ${Number(r.unit_cost).toFixed(4)}\n` + r.lines.map((l: any) => `${l.component_name}: ${Number(l.unit_cost).toFixed(4)} × ${Number(l.qty_per_output)} (${l.source === "own_bom" ? "من قائمته" : "تكلفة شراء"})`).join("\n"));
+                      } catch (err) { alert((err as Error).message); }
+                    }}>
+                      💰 تكلفة مجمعة
+                    </button>{" "}
                     <button className="btn btn-sm" title="محاكي MRP واستكشاف النواقص" onClick={async () => {
                       setSimulatingBom(bom);
                       setSimResult(null);

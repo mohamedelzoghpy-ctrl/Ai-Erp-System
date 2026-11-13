@@ -912,6 +912,8 @@ class BomCreate(BaseModel):
     version: str = Field(default="v1", max_length=20)
     output_qty: float = Field(default=1, ge=1)  # الكمية الناتجة من القائمة
     is_active: bool = True
+    valid_from: Optional[date] = None  # سريان الإصدار — NULL = دائمة
+    valid_to: Optional[date] = None
     notes: Optional[str] = None
     items: List[BomItemIn] = []
     operations: List[BomOperationIn] = []  # مسار التشغيل (مراحل مرتبة)
@@ -936,6 +938,8 @@ class BomOut(ORMModel):
     version: str
     output_qty: float
     is_active: bool
+    valid_from: Optional[date] = None
+    valid_to: Optional[date] = None
     notes: Optional[str] = None
     items: List[BomItemOut] = []
     operations: List[BomOperationOut] = []
@@ -950,6 +954,7 @@ class ProductionOrderCreate(BaseModel):
     output_warehouse_id: int
     subcontractor_id: Optional[int] = None  # مورد التصنيع الخارجي (اختياري)
     production_line_id: Optional[int] = None  # خط الإنتاج
+    sales_order_id: Optional[int] = None  # تصنيع حسب الطلب — أمر البيع المربوط
     scheduled_date: Optional[date] = None
     notes: Optional[str] = None
 
@@ -1003,6 +1008,7 @@ class ProductionOrderOut(ORMModel):
     std_unit_cost: Optional[Decimal] = None
     parent_order_id: Optional[int] = None
     notes: Optional[str] = None
+    sales_order_id: Optional[int] = None
     consumptions: List[ProductionConsumptionOut] = []
     costs: List[ProductionCostOut] = []
     costs_total: Decimal = Decimal("0")
@@ -1267,6 +1273,57 @@ class MrpAggregateRow(BaseModel):
     open_demand: Decimal         # كميات أوامر البيع المؤكدة وغير المشحونة
     shortfall: Decimal           # ما يجب إنتاجه لسد الطلب المفتوح (عند العجز)
     has_bom: bool
+
+
+# ---------- MRP التنفيذي: تحويل الاقتراحات إلى أوامر ----------
+class MrpExecuteItem(BaseModel):
+    product_id: int
+    qty: float = Field(gt=0)
+    action: Literal["produce", "buy"]
+    supplier_id: Optional[int] = None       # مطلوب للشراء
+    purchase_price: Optional[Decimal] = Field(default=None, ge=0)  # اختيارية للشراء — الافتراضي سعر التكلفة
+    scheduled_date: Optional[date] = None
+
+
+class MrpExecuteIn(BaseModel):
+    raw_warehouse_id: int                    # مخزن صرف الخامات لأوامر الإنتاج
+    output_warehouse_id: int                 # مخزن استلام الناتج
+    purchase_warehouse_id: Optional[int] = None  # مخزن استلام الشراء (يُدمج من raw إن غاب)
+    items: List[MrpExecuteItem] = Field(min_length=1)
+
+
+class MrpExecuteResult(BaseModel):
+    product_id: int
+    action: str
+    ok: bool
+    order_id: Optional[int] = None
+    order_code: Optional[str] = None
+    reason: Optional[str] = None
+
+
+class MrpExecuteOut(BaseModel):
+    created: List[MrpExecuteResult] = []
+    skipped: List[MrpExecuteResult] = []
+
+
+# ---------- تكلفة BOM المجمّعة (شجرة) ----------
+class BomCostRollupLine(BaseModel):
+    component_id: int
+    component_name: Optional[str] = None
+    qty_per_output: Decimal
+    scrap_pct: Decimal
+    source: str                       # own_bom | cost_price
+    unit_cost: Decimal                # تكلفة الوحدة من مصدرها
+    line_cost: Decimal                # الكمية × التكلفة (بالهالك)
+
+
+class BomCostRollupOut(BaseModel):
+    bom_id: int
+    product_id: int
+    product_name: Optional[str] = None
+    output_qty: Decimal
+    unit_cost: Decimal                # تكلفة الوحدة النهائية المجمّعة
+    lines: List[BomCostRollupLine] = []
 
 
 class BatchTraceChild(BaseModel):
