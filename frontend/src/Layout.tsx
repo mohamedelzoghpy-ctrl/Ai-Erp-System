@@ -138,6 +138,7 @@ export default function Layout() {
       { to: "/reports/profit", label: t("nav.reports.profit"), perm: "reports.sales.profit" },
       { to: "/reports/purchases", label: t("nav.reports.purchases"), perm: "reports.purchasing.summary" },
       { to: "/reports/inventory", label: t("nav.reports.inventory"), perm: "reports.inventory.valuation" },
+      { to: "/reports/analytics", label: t("nav.reports.analytics"), perm: "reports.inventory.stock_analytics" },
       { to: "/reports/receivables", label: t("nav.reports.receivables"), perm: "reports.sales.receivables" },
       { to: "/reports/payables", label: t("nav.reports.payables"), perm: "reports.purchasing.payables" },
     ],

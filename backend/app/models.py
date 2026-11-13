@@ -1401,6 +1401,8 @@ class ProductStock(TenantOwned, Base):
     quantity = Column(Numeric(12, 3), nullable=False, default=0, server_default="0")
     # حد الطلب الأدنى لهذا المخزن تحديدًا — يتجاوز reorder_level العام للمنتج عند ضبطه
     min_level = Column(Numeric(12, 3), nullable=True)
+    # حد أقصى لكل مخزن (min-max): عند ضبطه يقود اقتراحات الشراء — الطلب حتى الامتلاء
+    max_level = Column(Numeric(12, 3), nullable=True)
 
     warehouse = relationship("Warehouse")
 
@@ -1460,6 +1462,28 @@ class StockTransferItem(TenantOwned, Base):
     @property
     def product_name(self):
         return self.product.name if self.product else None
+
+
+class StockReservation(TenantOwned, Base):
+    """حجز صريح لمسودة أمر بيع: يُخصم من «متاح للبيع» ويُحرَّر عند التأكيد/الإلغاء.
+
+    ملاحظة التصميم: تأكيد أمر البيع يخصم المخزون فورًا في هذا النظام، لذا الحجز
+    يخص مسودات البيع الموعودة للعميل قبل تأكيدها (ATP = الرصيد − الحجوزات)."""
+
+    __tablename__ = "stock_reservations"
+    __table_args__ = (UniqueConstraint("sales_order_id", "product_id", name="uq_reservation_order_product"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    product_id = Column(Integer, ForeignKey("products.id", ondelete="CASCADE"), nullable=False, index=True)
+    warehouse_id = Column(Integer, ForeignKey("warehouses.id", ondelete="CASCADE"), nullable=False, index=True)
+    sales_order_id = Column(Integer, ForeignKey("sales_orders.id", ondelete="CASCADE"), nullable=False, index=True)
+    quantity = Column(Numeric(12, 3), nullable=False)
+    created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    product = relationship("Product")
+    warehouse = relationship("Warehouse")
+    sales_order = relationship("SalesOrder")
 
 
 class ChartAccount(TenantOwned, Base):

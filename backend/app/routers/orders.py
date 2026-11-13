@@ -640,6 +640,7 @@ def create_sales_order(payload: schemas.SalesOrderCreate, request: Request, db: 
     audit(db, user, 'create', 'sales_order', order, f"{len(order.items)} بند · {order.total_amount}")
     db.commit()
     db.refresh(order)
+    order.reserved = False
     return order
 
 
@@ -667,12 +668,27 @@ def list_sales_orders(
         query = query.filter(models.SalesOrder.rep_id == rep_id)
     rows = paginate(query, response, skip, limit, models.SalesOrder.id.desc())
     attach_settlement(db, "customer", rows)
+    if rows:  # علم الحجز للمسودات (م3) — استعلام واحد لكل الصفحة
+        reserved_ids = set(
+            db.query(models.StockReservation.sales_order_id)
+            .filter(models.StockReservation.sales_order_id.in_([o.id for o in rows]))
+            .all()
+        )
+        reserved_ids = {r[0] for r in reserved_ids}
+        for o in rows:
+            o.reserved = o.id in reserved_ids
     return rows
 
 
 @sales.get("/{order_id}", response_model=schemas.SalesOrderOut)
 def get_sales_order(order_id: int, db: Session = Depends(get_db)):
     order = _order_or_404(db, models.SalesOrder, order_id, "Sales order")
+    order.reserved = (
+        db.query(models.StockReservation.id)
+        .filter(models.StockReservation.sales_order_id == order.id)
+        .first()
+        is not None
+    )
     attach_settlement(db, "customer", order)
     return order
 
@@ -692,6 +708,8 @@ def confirm_sales_order(order_id: int, request: Request, db: Session = Depends(g
     check_credit_limit(db, order.customer_id, Decimal(str(order.total_amount)), perms=getattr(request.state, "permissions", None))
     apply_sale_stock(db, order, allow_expired=allow_expired)
     order.status = "confirmed"  # type: ignore
+    # الحجز يُستهلك بالمطابقة — المخزون خرج فعليًا فلا يظل محسوبًا على «متاح للبيع»
+    _release_reservations(db, order.id)
 
     # Accounting: Debit Customer (gross), Credit Sales Revenue (net), Credit VAT output (tax)
     from ..accounting import VAT_OUTPUT_CODE, seed_default_coa, link_party_coa
@@ -874,9 +892,77 @@ def cancel_sales_order(order_id: int, db: Session = Depends(get_db), user: model
     order = _locked_order_or_404(db, models.SalesOrder, order_id, "Sales order")
     _require_draft(order, "cancel")
     order.status = "cancelled"  # type: ignore
+    db.query(models.StockReservation).filter(models.StockReservation.sales_order_id == order.id).delete(synchronize_session=False)
     audit(db, user, 'cancel', 'sales_order', order, None)
     db.commit()
     db.refresh(order)
+    return order
+
+
+def _release_reservations(db: Session, order_id: int) -> None:
+    """تحرير حجوزات أمر بيع (عند التأكيد — المخزون خرج فعلًا — أو الإلغاء)."""
+    db.query(models.StockReservation).filter(models.StockReservation.sales_order_id == order_id).delete(synchronize_session=False)
+
+
+@sales.post("/{order_id}/reserve", response_model=schemas.SalesOrderOut)
+def reserve_sales_order(order_id: int, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    """حجز مخزون مسودة أمر بيع: يُخصم من «متاح للبيع» حتى التأكيد أو التحرير.
+
+    الحجز يحرس الكمية في مخزن الفاتورة: لا حجز أكبر من المتاح فعليًا
+    (الرصيد − حجوزات غيره). التأكيد يستهلك الحجز، والإلغاء يحرره."""
+    order = _locked_order_or_404(db, models.SalesOrder, order_id, "Sales order")
+    _require_draft(order, "reserve")
+    items: dict = {}
+    for it in order.items:
+        items[it.product_id] = items.get(it.product_id, 0) + it.quantity
+    # المتاح للحجز = الرصيد − حجوزات الأوامر الأخرى على المخزن نفسه
+    reserved_others: dict = {}
+    res_rows = (
+        db.query(models.StockReservation.product_id, func.coalesce(func.sum(models.StockReservation.quantity), 0))
+        .filter(
+            models.StockReservation.warehouse_id == order.warehouse_id,
+            models.StockReservation.sales_order_id != order.id,
+            models.StockReservation.product_id.in_(list(items)),
+        )
+        .group_by(models.StockReservation.product_id)
+        .all()
+    )
+    for pid, q in res_rows:
+        reserved_others[pid] = Decimal(str(q))
+    products = {pid: _locked_product(db, pid) for pid in sorted(items)}
+    shortages = []
+    for pid, qty in items.items():
+        available = stock.available(db, pid, order.warehouse_id) - reserved_others.get(pid, Decimal("0"))
+        if available < qty:
+            shortages.append(stock.shortage_message(db, products[pid], order.warehouse_id, qty))
+    if shortages:
+        db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, "Insufficient stock to reserve: " + "; ".join(shortages))
+    db.query(models.StockReservation).filter(models.StockReservation.sales_order_id == order.id).delete(synchronize_session=False)
+    for pid, qty in items.items():
+        db.add(models.StockReservation(  # type: ignore
+            company_id=db.info["company_id"],
+            product_id=pid, warehouse_id=order.warehouse_id,
+            sales_order_id=order.id, quantity=qty, created_by=user.id,
+        ))
+    audit(db, user, "create", "stock_reservation", order, f"حجز مخزون {len(items)} صنف")
+    db.commit()
+    db.refresh(order)
+    order.reserved = True
+    return order
+
+
+@sales.delete("/{order_id}/reserve", response_model=schemas.SalesOrderOut)
+def release_sales_order_reservation(order_id: int, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    """تحرير حجز مخزون أمر البيع (يدويًا قبل التأكيد/الإلغاء)."""
+    order = _locked_order_or_404(db, models.SalesOrder, order_id, "Sales order")
+    n = db.query(models.StockReservation).filter(models.StockReservation.sales_order_id == order.id).delete(synchronize_session=False)
+    if n == 0:
+        raise HTTPException(409, "لا حجوزات على هذا الأمر")
+    audit(db, user, "cancel", "stock_reservation", order, "تحرير الحجز")
+    db.commit()
+    db.refresh(order)
+    order.reserved = False
     return order
 
 

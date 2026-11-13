@@ -18,6 +18,7 @@ export default function WarehouseBalances() {
 
   const rows = products.data ?? [];
   const [minEdits, setMinEdits] = useState<Record<number, string>>({});
+  const [maxEdits, setMaxEdits] = useState<Record<number, string>>({});
   const saveMin = async (productId: number) => {
     const raw = minEdits[productId];
     if (raw === undefined) return;
@@ -27,6 +28,18 @@ export default function WarehouseBalances() {
         min_level: raw === "" ? null : raw,
       });
       setMinEdits((m) => { const n = { ...m }; delete n[productId]; return n; });
+      products.reload();
+    } catch (e) { alert((e as Error).message); }
+  };
+  const saveMax = async (productId: number) => {
+    const raw = maxEdits[productId];
+    if (raw === undefined) return;
+    try {
+      await api.post(`/products/${productId}/min-level`, {
+        warehouse_id: Number(warehouseId),
+        max_level: raw === "" ? null : raw,
+      });
+      setMaxEdits((m) => { const n = { ...m }; delete n[productId]; return n; });
       products.reload();
     } catch (e) { alert((e as Error).message); }
   };
@@ -119,6 +132,7 @@ export default function WarehouseBalances() {
                   <th>{t("warehouseBalances.productName")}</th>
                   <th className="num">{t("warehouseBalances.qty")}</th>
                   <th className="num" title={t("حد الطلب الأدنى لهذا المخزن — يتجاوز العام للمنتج عند ضبطه")}>{t("حد أدنى (خاص)")}</th>
+                  <th className="num" title={t("مع الحد الأقصى: اقتراح الشراء يطلب حتى امتلاء المخزن لهذا الصنف")}>{t("حد أقصى (خاص)")}</th>
                   <th className="num">{t("warehouseBalances.costPrice")}</th>
                   <th className="num">{t("warehouseBalances.salePrice")}</th>
                   <th className="num">{t("warehouseBalances.costValue")}</th>
@@ -142,6 +156,15 @@ export default function WarehouseBalances() {
                           onBlur={() => saveMin(p.id)}
                         />
                       </td>
+                      <td className="num">
+                        <input
+                          dir="ltr" type="number" min="0" step="1" style={{ width: 76, textAlign: "end" }}
+                          value={maxEdits[p.id] ?? (p.warehouse_max_level != null ? String(p.warehouse_max_level) : "")}
+                          placeholder="—"
+                          onChange={(e) => setMaxEdits((m) => ({ ...m, [p.id]: e.target.value }))}
+                          onBlur={() => saveMax(p.id)}
+                        />
+                      </td>
                       <td className="num">{money(p.cost_price)}</td>
                       <td className="num">{money(p.sale_price)}</td>
                       <td className="num">{money(q * Number(p.cost_price))}</td>
@@ -152,6 +175,7 @@ export default function WarehouseBalances() {
                 <tr style={{ fontWeight: 700, background: "#f7f9fb" }}>
                   <td colSpan={2}>{t("warehouseBalances.total")}</td>
                   <td className="num">{num(totalQty)}</td>
+                  <td className="num">—</td>
                   <td className="num">—</td>
                   <td className="num">—</td>
                   <td className="num">{money(totalCost)}</td>

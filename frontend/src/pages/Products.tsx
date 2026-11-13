@@ -16,7 +16,7 @@ export default function Products() {
   const [editing, setEditing] = useState<Product | "new" | null>(null);
   const [history, setHistory] = useState<Product | null>(null);
 
-  const products = usePagedList<Product>("/products", { search: search.trim(), low_stock: lowOnly, is_active: showInactive ? undefined : true });
+  const products = usePagedList<Product>("/products", { search: search.trim(), low_stock: lowOnly, is_active: showInactive ? undefined : true, with_availability: true });
   const warehouses = useFetch(() => api.get<Warehouse[]>("/warehouses?limit=500"), "wh");
   const suppliers = useFetch(() => api.get<Party[]>("/suppliers?limit=500"), "sup");
   const rows = products.data ?? [];
@@ -314,6 +314,8 @@ export default function Products() {
                 <th style={{ width: 56 }}>{t("صورة")}</th>
                 <th>{t("products.sku")}</th>
                 <th>{t("products.name")}</th>
+                <th className="num" title={t("الرصيد − الحجوزات الصريحة لمسودات البيع")}>{t("الرصيد")}</th>
+                <th className="num" title={t("متاح للبيع الآن — الحجوزات مستبعدة")}>{t("متاح للبيع")}</th>
                 <th>{t("كود المورد")}</th>
                 <th>{t("اسم المورد")}</th>
                 <th>{t("الوحدة")}</th>
@@ -339,6 +341,11 @@ export default function Products() {
                     >
                       {p.name}
                       {!p.is_active && <span className="badge badge-off" style={{ marginInlineStart: 8 }}>inactive</span>}
+                    </td>
+                    <td className="num">{num(p.quantity)}</td>
+                    <td className="num" style={{ fontWeight: 700, color: (p.available_to_promise ?? p.quantity) <= 0 ? "var(--danger)" : undefined }}>
+                      {num(p.available_to_promise ?? p.quantity)}
+                      {(p.reserved ?? 0) > 0 && <span className="muted" style={{ fontSize: 11, display: "block" }}>🔒 {num(p.reserved)}</span>}
                     </td>
                     <td dir="ltr" style={{ fontSize: 12 }}>{sup?.code ?? "—"}</td>
                     <td>{sup?.name ?? ""}</td>

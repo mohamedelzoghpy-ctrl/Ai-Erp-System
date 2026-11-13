@@ -3,7 +3,7 @@ import { api, qs } from "../api";
 import { dayLabel, money, num } from "../format";
 import { useAction, useFetch } from "../hooks";
 import { useI18n } from "../i18n";
-import type { AgingReport, BalancesReport, DayTotal, InventoryValuationRow, LowStockItem, ProfitSummary, PurchasesSummary, SalesRep, SalesSummary } from "../types";
+import type { AgingReport, BalancesReport, DayTotal, InventoryValuationRow, LowStockItem, ProfitSummary, PurchasesSummary, SalesRep, SalesSummary, StockAnalyticsReport } from "../types";
 import { Alert, Empty, Loading, PageHeader } from "../ui";
 
 /** YYYY-MM-DD in the browser's local calendar (what the user sees), not UTC. */
@@ -133,6 +133,112 @@ export function ReportsPayables() {
       <PageHeader title={t("تقرير مستحقات الموردين")} />
       <Alert>{r.download.error}</Alert>
       <BalancesTab key="payables" kind="payables" onExport={r.exportFile} busy={r.download.busy} />
+    </>
+  );
+}
+
+/** تحليلات المخزون (م3): الدوران + الراكد + تصنيف ABC — فترة المبيعات وحد الركود قابلان للضبط. */
+export function ReportsStockAnalytics() {
+  const { t } = useI18n();
+  const [days, setDays] = useState(30);
+  const [deadDays, setDeadDays] = useState(90);
+  const [deadOnly, setDeadOnly] = useState(false);
+  const analytics = useFetch(
+    () => api.get<StockAnalyticsReport>(`/reports/stock-analytics?days=${days}&dead_days=${deadDays}`),
+    `stock-analytics-${days}-${deadDays}`,
+  );
+  const download = useAction();
+  const rows = (analytics.data?.rows ?? []).filter((r) => !deadOnly || r.is_dead);
+  return (
+    <>
+      <PageHeader title={t("تحليلات المخزون")}>
+        <button
+          className="btn"
+          disabled={download.busy}
+          onClick={() => void download.run(() => api.download(`/reports/stock-analytics/xlsx?days=${days}&dead_days=${deadDays}`, "stock-analytics.xlsx"))}
+        >
+          ⬇ {t("common.export")}
+        </button>
+      </PageHeader>
+      <Alert>{analytics.error || download.error}</Alert>
+      <div className="card card-pad range-bar">
+        <label className="range-field">
+          <span className="field-label">{t("فترة المبيعات")}</span>
+          <select value={days} onChange={(e) => setDays(Number(e.target.value))} aria-label={t("فترة المبيعات")}>
+            <option value={30}>{t("آخر 30 يوماً")}</option>
+            <option value={60}>60 {t("يومًا")}</option>
+            <option value={90}>{t("آخر 90 يوماً")}</option>
+            <option value={180}>180 {t("يومًا")}</option>
+          </select>
+        </label>
+        <label className="range-field">
+          <span className="field-label">{t("حد الركود (بلا بيع)")}</span>
+          <select value={deadDays} onChange={(e) => setDeadDays(Number(e.target.value))} aria-label={t("حد الركود (بلا بيع)")}>
+            <option value={30}>30 {t("يومًا")}</option>
+            <option value={60}>60 {t("يومًا")}</option>
+            <option value={90}>90 {t("يومًا")}</option>
+            <option value={180}>180 {t("يومًا")}</option>
+          </select>
+        </label>
+        <label className="range-field" style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+          <input type="checkbox" checked={deadOnly} onChange={(e) => setDeadOnly(e.target.checked)} />
+          <span className="field-label">{t("الراكد فقط")}</span>
+        </label>
+      </div>
+      {analytics.loading && !analytics.data ? (
+        <Loading />
+      ) : analytics.data ? (
+        <>
+          <div className="card card-pad" style={{ display: "flex", gap: 24, flexWrap: "wrap", marginBottom: 14 }}>
+            <Kpi label={t("قيمة المخزون")} value={money(analytics.data.summary.total_value)} />
+            <Kpi label={t("مبيعات الفترة")} value={money(analytics.data.summary.sold_value_period)} sub={`${days} ${t("يومًا")}`} />
+            <Kpi label={t("الأصناف الراكدة")} value={String(analytics.data.summary.dead_count)} sub={`${t("قيمة الراكد")} ${money(analytics.data.summary.dead_value)}`} />
+            <Kpi label={t("قيمة فئة A")} value={money(analytics.data.summary.class_a_value)} sub="80%" />
+          </div>
+          <div className="card table-wrap">
+            {rows.length > 0 ? (
+              <table>
+                <thead>
+                  <tr>
+                    <th>{t("products.sku")}</th>
+                    <th>{t("products.name")}</th>
+                    <th className="num">{t("الرصيد")}</th>
+                    <th className="num">{t("قيمة المخزون")}</th>
+                    <th className="num">{t("مبيعات الفترة")}</th>
+                    <th className="num">{t("الدوران")}</th>
+                    <th>{t("آخر بيع")}</th>
+                    <th className="num">{t("أيام بلا بيع")}</th>
+                    <th>ABC</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((r) => (
+                    <tr key={r.product_id} style={r.is_dead ? { background: "rgba(185,28,28,.05)" } : undefined}>
+                      <td dir="ltr">{r.sku}</td>
+                      <td>{r.name}{r.is_dead && <span className="badge badge-off" style={{ marginInlineStart: 6 }}>💀 {t("راكد")}</span>}</td>
+                      <td className="num">{num(r.stock_qty)}</td>
+                      <td className="num">{money(r.stock_value)}</td>
+                      <td className="num">{num(r.sold_qty)} · {money(r.sold_value)}</td>
+                      <td className="num">{r.turnover != null ? num(r.turnover) : "—"}</td>
+                      <td>{r.last_sale ? dayLabel(r.last_sale) : "—"}</td>
+                      <td className="num">{r.days_idle ?? "—"}</td>
+                      <td>
+                        <span className={`badge ${r.abc_class === "A" ? "badge-ok" : r.abc_class === "B" ? "badge-warn" : "badge-off"}`}>
+                          {r.abc_class ?? "—"}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <Empty>{t("لا أصناف مطابقة")}</Empty>
+            )}
+          </div>
+        </>
+      ) : (
+        <Loading />
+      )}
     </>
   );
 }

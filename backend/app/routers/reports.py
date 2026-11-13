@@ -883,26 +883,195 @@ def payables_aging_xlsx(db: Session = Depends(get_db), _: models.User = Depends(
     return _aging_xlsx(accounts.build_aging(db, "supplier"), "أعمار ديون الموردين", "المورد", "report-payables-aging.xlsx")
 
 
+# ---------------------------------------------------------------- تحليلات المخزون (م3)
+@router.get("/stock-analytics")
+def stock_analytics(
+    days: int = Query(30, ge=1, le=365),
+    dead_days: int = Query(90, ge=1, le=730),
+    warehouse_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_manager),
+):
+    """تحليلات المخزون: المبيعات والدوران خلال الفترة + الأصناف الراكدة + تصنيف ABC للقيمة.
+
+    - sold_qty/value: من فواتير مؤكدة (بما فيها POS) داخل الفترة — بتكلفة لحظة البيع.
+    - last_sale: آخر بيع مؤكد على الإطلاق (لحساب الركود).
+    - ABC: تراكم قيمة المخزون 80/15/5 على الأصناف ذات قيمة.
+    - dead: عليه رصيد ولا بيع خلال dead_days يومًا (أو لم يُبع أصلًا)."""
+    from ..accounting import local_today
+    company_id = db.info["company_id"]
+    today = local_today()
+    period_start = today - timedelta(days=days)
+
+    SO, SOI = models.SalesOrder, models.SalesOrderItem
+    sales_q = (
+        db.query(
+            SOI.product_id,
+            func.coalesce(func.sum(SOI.quantity), 0).label("qty"),
+            func.coalesce(func.sum(SOI.quantity * SOI.unit_cost), 0).label("value"),
+            func.max(SO.created_at).label("last_sale"),
+        )
+        .join(SO, SO.id == SOI.order_id)
+        .filter(SO.company_id == company_id, SO.status == "confirmed")
+    )
+    if warehouse_id:
+        sales_q = sales_q.filter(SO.warehouse_id == warehouse_id)
+    sales_all = sales_q.group_by(SOI.product_id).all()
+    sales_in_period = {
+        pid: (float(q or 0), float(v or 0))
+        for pid, q, v, _last in (
+            sales_q.filter(func.coalesce(SO.updated_at, SO.created_at) >= datetime.combine(period_start, time.min, tzinfo=timezone.utc))
+            .group_by(SOI.product_id).all()
+        )
+    }
+    sales_all_map = {
+        pid: {"qty": float(q or 0), "last_sale": last}
+        for pid, q, _v, last in sales_all
+    }
+
+    stock_q = (
+        db.query(models.Product.id, models.Product.sku, models.Product.name, models.Product.unit,
+                 models.Product.cost_price, func.coalesce(func.sum(models.ProductStock.quantity), 0))
+        .join(models.ProductStock, models.ProductStock.product_id == models.Product.id, isouter=True)
+        .filter(models.Product.company_id == company_id, models.Product.is_active.is_(True))
+    )
+    if warehouse_id:
+        stock_q = stock_q.filter(models.ProductStock.warehouse_id == warehouse_id)
+    stock_rows = stock_q.group_by(
+        models.Product.id, models.Product.sku, models.Product.name, models.Product.unit, models.Product.cost_price
+    ).order_by(models.Product.sku).all()
+
+    # ABC على قيمة المخزون الحالية (الأصناف ذات قيمة فقط) — تراكم 80/15/5
+    valued = sorted(
+        (r for r in stock_rows if float(r[5] or 0) > 0 and float(r[4] or 0) > 0),
+        key=lambda r: float(r[4]) * float(r[5]),
+        reverse=True,
+    )
+    total_value = sum(float(r[4]) * float(r[5]) for r in valued)
+    abc: dict = {}
+    cumulative = 0.0
+    for r in valued:
+        share = float(r[4]) * float(r[5]) / total_value if total_value > 0 else 0.0
+        cumulative += share
+        abc[r[0]] = "A" if cumulative <= 0.80 else ("B" if cumulative <= 0.95 else "C")
+
+    rows = []
+    dead_count = 0
+    dead_value = 0.0
+    for pid, sku, name, unit, cost, qty in stock_rows:
+        qty = float(qty or 0)
+        sold_qty, sold_value = sales_in_period.get(pid, (0.0, 0.0))
+        last_sale = sales_all_map.get(pid, {}).get("last_sale")
+        if last_sale is not None:
+            last_sale_date = last_sale.astimezone(timezone.utc).date() if last_sale.tzinfo else last_sale.date()
+            days_idle = (today - last_sale_date).days
+        else:
+            days_idle = None
+        is_dead = qty > 0 and (days_idle is None or days_idle > dead_days)
+        if is_dead:
+            dead_count += 1
+            dead_value += qty * float(cost or 0)
+        rows.append({
+            "product_id": pid,
+            "sku": sku,
+            "name": name,
+            "unit": unit,
+            "stock_qty": qty,
+            "stock_value": round(qty * float(cost or 0), 2),
+            "sold_qty": sold_qty,
+            "sold_value": round(sold_value, 2),
+            "turnover": round(sold_qty / qty, 3) if qty > 0 else None,
+            "last_sale": last_sale.isoformat() if last_sale else None,
+            "days_idle": days_idle,
+            "abc_class": abc.get(pid),
+            "is_dead": is_dead,
+        })
+    return {
+        "days": days,
+        "dead_days": dead_days,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "summary": {
+            "total_value": round(sum(r["stock_value"] for r in rows), 2),
+            "dead_count": dead_count,
+            "dead_value": round(dead_value, 2),
+            "sold_value_period": round(sum(r["sold_value"] for r in rows), 2),
+            "class_a_value": round(sum(r["stock_value"] for r in rows if r["abc_class"] == "A"), 2),
+        },
+        "rows": rows,
+    }
+
+
+@router.get("/stock-analytics/xlsx")
+def stock_analytics_xlsx(
+    days: int = Query(30, ge=1, le=365),
+    dead_days: int = Query(90, ge=1, le=730),
+    warehouse_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_manager),
+):
+    r = stock_analytics(days, dead_days, warehouse_id, db, _)
+    tables = [(
+        "تحليلات المخزون",
+        ["الكود", "الصنف", "الرصيد", "قيمة المخزون", "مبيعات الفترة", "قيمة المبيعات", "الدوران", "آخر بيع", "أيام بلا بيع", "ABC", "راكد؟"],
+        [[
+            ("text", row["sku"]), ("text", row["name"]), ("int", row["stock_qty"]), ("money", row["stock_value"]),
+            ("int", row["sold_qty"]), ("money", row["sold_value"]),
+            ("text", str(row["turnover"]) if row["turnover"] is not None else "—"),
+            ("text", (row["last_sale"] or "—")[:10]), ("text", row["days_idle"] if row["days_idle"] is not None else "—"),
+            ("text", row["abc_class"] or "—"), ("text", "نعم" if row["is_dead"] else ""),
+        ] for row in r["rows"]],
+    ), (
+        "الملخص",
+        ["البند", "القيمة"],
+        [
+            [("text", f"قيمة المخزون الإجمالية"), ("money", r["summary"]["total_value"])],
+            [("text", f"مبيعات الفترة ({r['days']} يوم)"), ("money", r["summary"]["sold_value_period"])],
+            [("text", f"الأصناف الراكدة (بلا بيع {r['dead_days']} يوم)"), ("int", r["summary"]["dead_count"])],
+            [("text", "قيمة الراكد"), ("money", r["summary"]["dead_value"])],
+            [("text", "قيمة فئة A"), ("money", r["summary"]["class_a_value"])],
+        ],
+    )]
+    return Response(
+        content=exports.build_tables_xlsx("تحليلات المخزون", "", tables),
+        media_type=exports.XLSX_MIME,
+        headers={"Content-Disposition": 'attachment; filename="stock-analytics.xlsx"', "Cache-Control": "no-store"},
+    )
+
+
 # ---------------------------------------------------------------- اقتراحات الشراء
 def _purchase_suggestion_rows(db: Session, warehouse_id: Optional[int] = None, supplier_id: Optional[int] = None) -> List[Dict[str, Any]]:
-    """ما ينبغي طلبه الآن: الهدف (حد المخزن الخاص أو العام) − المتاح، بتكلفة المتوسط المرجح."""
+    """ما ينبغي طلبه الآن: الهدف (الأقصى ثم الأدنى لكل مخزن، أو العام) − المتاح، بتكلفة المتوسط المرجح.
+
+    المتاح يخصم الحجوزات الصريحة (مسودات البيع المحجوزة) — وعدنا بها فلا تُقترح للبيع من جديد."""
     PS = models.ProductStock
     products = db.query(models.Product).filter(models.Product.is_active.is_(True)).all()
     supplier_names = dict(db.query(models.Supplier.id, models.Supplier.name).all())
     warehouse_mins: dict = {}
+    warehouse_maxs: dict = {}
     compared: Dict[int, float] = {}
+    reserved_map: Dict[int, float] = {}
+    res_q = db.query(models.StockReservation.product_id, func.coalesce(func.sum(models.StockReservation.quantity), 0))
     if warehouse_id:
-        warehouse_mins = {
-            pid: float(mn) for pid, mn in db.query(PS.product_id, PS.min_level)
-            .filter(PS.warehouse_id == warehouse_id, PS.min_level.isnot(None)).all()
-        }
-        compared = dict(db.query(PS.product_id, PS.quantity).filter(PS.warehouse_id == warehouse_id).all())
+        res_q = res_q.filter(models.StockReservation.warehouse_id == warehouse_id)
+    for pid, q in res_q.group_by(models.StockReservation.product_id).all():
+        reserved_map[pid] = float(q or 0)
+    if warehouse_id:
+        pairs = db.query(PS.product_id, PS.min_level, PS.max_level, PS.quantity).filter(PS.warehouse_id == warehouse_id).all()
+        warehouse_mins = {pid: float(mn) for pid, mn, _mx, _q in pairs if mn is not None}
+        warehouse_maxs = {pid: float(mx) for pid, _mn, mx, _q in pairs if mx is not None}
+        compared = {pid: float(q) for pid, _mn, _mx, q in pairs}
     rows: List[Dict[str, Any]] = []
     for p in products:
         if supplier_id and p.supplier_id != supplier_id:
             continue
         available = float(compared.get(p.id, 0)) if warehouse_id else float(p.quantity or 0)
-        target = warehouse_mins.get(p.id) if (warehouse_id and p.id in warehouse_mins) else float(p.reorder_level or 0)
+        available -= reserved_map.get(p.id, 0)
+        if warehouse_id and p.id in warehouse_maxs:
+            target, policy = warehouse_maxs[p.id], "max"
+        elif warehouse_id and p.id in warehouse_mins:
+            target, policy = warehouse_mins[p.id], "min"
+        else:
+            target, policy = float(p.reorder_level or 0), "reorder"
         suggested = max(target - available, 0.0)
         if suggested <= 0:
             continue
@@ -913,6 +1082,7 @@ def _purchase_suggestion_rows(db: Session, warehouse_id: Optional[int] = None, s
             "unit": p.unit,
             "available": available,
             "target": target,
+            "policy": policy,
             "suggested_qty": suggested,
             "cost_price": float(p.cost_price or 0),
             "estimated_cost": round(suggested * float(p.cost_price or 0), 2),

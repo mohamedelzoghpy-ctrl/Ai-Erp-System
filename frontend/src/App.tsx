@@ -9,7 +9,7 @@ import WarehouseBalances from "./pages/WarehouseBalances";
 import Eta from "./pages/Eta";
 import PriceLists from "./pages/PriceLists";
 import LowStock from "./pages/LowStock";
-import { ReportsInventory, ReportsPayables, ReportsProfit, ReportsPurchases, ReportsReceivables, ReportsSales } from "./pages/Reports";
+import { ReportsInventory, ReportsPayables, ReportsProfit, ReportsPurchases, ReportsReceivables, ReportsSales, ReportsStockAnalytics } from "./pages/Reports";
 import { Taxes } from "./pages/Taxes";
 import Lots from "./pages/Lots";
 import Quality from "./pages/Quality";
@@ -173,6 +173,7 @@ export default function App() {
         <Route path="reports/profit" element={<Guard perm="reports.sales.profit"><ReportsProfit /></Guard>} />
         <Route path="reports/purchases" element={<Guard perm="reports.purchasing.summary"><ReportsPurchases /></Guard>} />
         <Route path="reports/inventory" element={<Guard perm="reports.inventory.valuation"><ReportsInventory /></Guard>} />
+        <Route path="reports/analytics" element={<Guard perm="reports.inventory.stock_analytics"><ReportsStockAnalytics /></Guard>} />
         <Route path="reports/receivables" element={<Guard perm="reports.sales.receivables"><ReportsReceivables /></Guard>} />
         <Route path="reports/payables" element={<Guard perm="reports.purchasing.payables"><ReportsPayables /></Guard>} />
         <Route path="taxes" element={<Guard perm="taxes.vat.view"><Taxes /></Guard>} />

@@ -37,6 +37,7 @@ CATALOG: Dict[str, dict] = {
                 ("price_increase", "تعديل سعر البيع (زيادة فقط)", False, False),
                 ("credit_exceed", "تجاوز حد العميل الائتماني", False, False),
                 ("confirm", "تأكيد أمر بيع", False, False),
+                ("reserve", "حجز مخزون أمر بيع", False, False),
                 ("cancel", "إلغاء أمر بيع", False, False),
                 ("pdf", "طباعة أمر البيع PDF", False, False),
                 ("quotation_pdf", "طباعة عرض السعر", False, False),
@@ -605,6 +606,8 @@ CATALOG: Dict[str, dict] = {
                 ("valuation_export", "تصدير تقييم المخزون", False, False),
                 ("low_stock", "الأصناف المنخفضة", False, False),
                 ("low_stock_export", "تصدير الأصناف المنخفضة", False, False),
+                ("stock_analytics", "تحليلات المخزون (دوران/راكد/ABC)", False, False),
+                ("stock_analytics_export", "تصدير تحليلات المخزون", False, False),
             ]),
             "purchasing": ("تقارير المشتريات", [
                 ("payables", "الذمم الدائنة", False, False),

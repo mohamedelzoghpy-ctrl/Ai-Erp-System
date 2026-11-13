@@ -261,11 +261,16 @@ class ProductUpdate(BaseModel):
 
 class ProductOut(ProductBase, ORMModel):
     warehouse_min_level: Optional[float] = None  # حد المخزن الخاص (مع stock_warehouse_id)
+    warehouse_max_level: Optional[float] = None  # حد أقصى (min-max) لنفس المخزن
     id: int
     quantity: float  # total over all warehouses
     warehouse_quantity: Optional[float] = None  # only when the list was asked for one warehouse (?stock_warehouse_id=)
     image_uploaded: bool = False
     created_at: datetime
+    # حسابات التوفر (م3): متاح للبيع = الرصيد − الحجوزات الصريحة · بانتظار التسليم = المؤكدة غير المسلّمة
+    available_to_promise: Optional[float] = None
+    reserved: Optional[float] = None
+    awaiting_delivery: Optional[float] = None
     # حقل حساس: يُقنَّع (None) لمن لا يملك inventory.product.cost_view
     cost_price: Optional[Decimal] = None
 
@@ -281,6 +286,7 @@ class ProductStockOut(BaseModel):
     warehouse_name: str
     quantity: float
     min_level: Optional[float] = None  # حد الطلب الأدنى الخاص بالمخزن (NULL = يستخدم العام)
+    max_level: Optional[float] = None  # حد أقصى (min-max): يقود اقتراحات الشراء عند ضبطه
 
 
 class StockAdjustment(BaseModel):
@@ -452,6 +458,7 @@ class SalesOrderOut(ORMModel):
     paid_amount: Optional[Decimal] = None
     balance_due: Optional[Decimal] = None
     payment_status: Optional[str] = None
+    reserved: Optional[bool] = None  # مسودة محجوزة مخزونها صراحةً (م3)
 
 
 # ---------- Auth / users ----------

@@ -607,6 +607,7 @@ function OrderDetail({
         <div>
           <span className="muted">{t("الحالة: ")}</span>
           <StatusBadge status={order.status} />
+          {order.reserved && <span className="badge badge-warn" style={{ marginInlineStart: 6 }}>🔒 {t("محجوز")}</span>}
         </div>
         {order.rep_name !== undefined && (
           <div>
@@ -695,6 +696,31 @@ function OrderDetail({
               >
                 ✅ {cfg.commit.label}
               </button>
+              {order.reserved ? (
+                <button
+                  className="btn"
+                  title={t("تحرير الحجز — تعود الكمية إلى «متاح للبيع»")}
+                  disabled={busy}
+                  onClick={() => void run(async () => {
+                    await api.del(`/sales-orders/${order.id}/reserve`);
+                    onChanged();
+                  })}
+                >
+                  🔓 {t("تحرير الحجز")}
+                </button>
+              ) : (
+                <button
+                  className="btn btn-success"
+                  title={t("حجز الكميات للمسودة — تُخصم من «متاح للبيع» حتى التأكيد أو التحرير")}
+                  disabled={busy}
+                  onClick={() => void run(async () => {
+                    await api.post(`/sales-orders/${order.id}/reserve`, {});
+                    onChanged();
+                  })}
+                >
+                  🔒 {t("حجز المخزون")}
+                </button>
+              )}
               <button
                 className="btn btn-success"
                 title={t("نسخة رسمية من بيان الأسعار — بدون أي خصم من الأرصدة")}

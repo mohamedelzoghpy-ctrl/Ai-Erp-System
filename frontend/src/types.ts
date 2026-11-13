@@ -97,6 +97,11 @@ export interface Product {
   image_uploaded?: boolean; // صورة مرفوعة من الجهاز تُستخدم عبر /products/{id}/image
   warehouse_quantity?: number; // in one warehouse, when asked with stock_warehouse_id
   warehouse_min_level?: number | null;
+  warehouse_max_level?: number | null; // حد أقصى (min-max) يقود اقتراحات الشراء
+  // حسابات التوفر (مع with_availability=true أو بطاقة الصنف)
+  available_to_promise?: number | null; // الرصيد − الحجوزات
+  reserved?: number | null; // الحجوزات الصريحة لمسودات البيع
+  awaiting_delivery?: number | null; // المؤكدة غير المسلّمة
 }
 
 export interface StockMovement {
@@ -139,6 +144,7 @@ export interface Order {
   customer_id?: number; // sales orders
   warehouse_id: number;
   status: OrderStatus;
+  reserved?: boolean | null; // مسودة بيع محجوزة مخزونها صراحةً
   notes: string | null;
   total_amount: string;
   created_at: string;
@@ -160,6 +166,36 @@ export interface LowStockItem {
   image_uploaded?: boolean;
   supplier_name?: string | null;
   warehouse_id: number | null;
+}
+
+export interface StockAnalyticsRow {
+  product_id: number;
+  sku: string;
+  name: string;
+  unit: string;
+  stock_qty: number;
+  stock_value: number;
+  sold_qty: number;
+  sold_value: number;
+  turnover: number | null; // مبيعات الفترة ÷ الرصيد الحالي
+  last_sale: string | null;
+  days_idle: number | null;
+  abc_class: "A" | "B" | "C" | null;
+  is_dead: boolean;
+}
+
+export interface StockAnalyticsReport {
+  days: number;
+  dead_days: number;
+  generated_at: string;
+  summary: {
+    total_value: number;
+    dead_count: number;
+    dead_value: number;
+    sold_value_period: number;
+    class_a_value: number;
+  };
+  rows: StockAnalyticsRow[];
 }
 
 export interface InventoryValuationRow {

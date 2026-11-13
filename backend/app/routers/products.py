@@ -6,6 +6,7 @@ import re as _re
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -119,6 +120,37 @@ def create_product(payload: schemas.ProductCreate, db: Session = Depends(get_db)
     return product
 
 
+def _availability_map(db: Session, product_ids: list) -> dict:
+    """حسابات التوفر (م3) — استعلامان مجمّعان للصفحة بلا N+1:
+    reserved: مجموع الحجوزات الصريحة لمسودات البيع · awaiting: المؤكدة غير المسلّمة.
+    متاح للبيع = الرصيد − الحجوزات (التأكيد يخصم المخزون فورًا في هذا النظام)."""
+    if not product_ids:
+        return {}
+    reserved = dict(
+        db.query(models.StockReservation.product_id, func.coalesce(func.sum(models.StockReservation.quantity), 0))
+        .filter(models.StockReservation.product_id.in_(product_ids))
+        .group_by(models.StockReservation.product_id)
+        .all()
+    )
+    awaiting = dict(
+        db.query(
+            models.SalesOrderItem.product_id,
+            func.coalesce(func.sum(models.SalesOrderItem.quantity - func.coalesce(models.SalesOrderItem.delivered_quantity, 0)), 0),
+        )
+        .join(models.SalesOrder, models.SalesOrder.id == models.SalesOrderItem.order_id)
+        .filter(models.SalesOrder.status == "confirmed", models.SalesOrderItem.product_id.in_(product_ids))
+        .group_by(models.SalesOrderItem.product_id)
+        .all()
+    )
+    return {
+        pid: {
+            "reserved": float(reserved.get(pid, 0) or 0),
+            "awaiting_delivery": float(awaiting.get(pid, 0) or 0),
+        }
+        for pid in product_ids
+    }
+
+
 @router.get("", response_model=List[schemas.ProductOut])
 def list_products(
     response: Response,
@@ -128,6 +160,7 @@ def list_products(
     low_stock: bool = False,
     is_active: Optional[bool] = None,
     stock_warehouse_id: Optional[int] = None,
+    with_availability: bool = False,
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),
@@ -151,15 +184,24 @@ def list_products(
     rows = paginate(query, response, skip, limit, models.Product.id)
     if stock_warehouse_id is not None and rows:
         pairs = (
-            db.query(models.ProductStock.product_id, models.ProductStock.quantity, models.ProductStock.min_level)
+            db.query(models.ProductStock.product_id, models.ProductStock.quantity, models.ProductStock.min_level, models.ProductStock.max_level)
             .filter(models.ProductStock.warehouse_id == stock_warehouse_id, models.ProductStock.product_id.in_([p.id for p in rows]))
             .all()
         )
-        have = {pid: q for pid, q, _mn in pairs}
-        mins = {pid: float(mn) for pid, _q, mn in pairs if mn is not None}
+        have = {pid: q for pid, q, _mn, _mx in pairs}
+        mins = {pid: float(mn) for pid, _q, mn, _mx in pairs if mn is not None}
+        maxs = {pid: float(mx) for pid, _q, _mn, mx in pairs if mx is not None}
         for p in rows:
             p.warehouse_quantity = have.get(p.id, 0)
             p.warehouse_min_level = mins.get(p.id)
+            p.warehouse_max_level = maxs.get(p.id)
+    if with_availability and rows:
+        avail = _availability_map(db, [p.id for p in rows])
+        for p in rows:
+            info = avail.get(p.id, {"reserved": 0, "awaiting_delivery": 0})
+            p.reserved = info["reserved"]
+            p.awaiting_delivery = info["awaiting_delivery"]
+            p.available_to_promise = float(p.quantity or 0) - info["reserved"]
     return rows
 
 
@@ -416,7 +458,12 @@ def list_adjustment_reasons(db: Session = Depends(get_db), _: models.User = Depe
 
 @router.get("/{product_id}", response_model=schemas.ProductOut)
 def get_product(product_id: int, db: Session = Depends(get_db)):
-    return _product_or_404(db, product_id)
+    product = _product_or_404(db, product_id)
+    info = _availability_map(db, [product.id]).get(product.id, {"reserved": 0, "awaiting_delivery": 0})
+    product.reserved = info["reserved"]
+    product.awaiting_delivery = info["awaiting_delivery"]
+    product.available_to_promise = float(product.quantity or 0) - info["reserved"]
+    return product
 
 
 REVALUATION_CODE = "5295"  # فروق تقييم المخزون (expense) — يُبذر عند أول حاجة
@@ -720,16 +767,27 @@ def set_min_level(
         min_level = _D(str(min_level))
         if min_level < 0:
             raise HTTPException(422, "الحد الأدنى لا يكون سالبًا")
+    max_level = payload.get("max_level")
+    if max_level is not None:
+        from decimal import Decimal as _D
+        max_level = _D(str(max_level))
+        if max_level < 0:
+            raise HTTPException(422, "الحد الأقصى لا يكون سالبًا")
+        if min_level is not None and max_level < min_level:
+            raise HTTPException(422, "الحد الأقصى لا يقل عن الحد الأدنى")
     row = db.query(models.ProductStock).filter(
         models.ProductStock.product_id == product_id, models.ProductStock.warehouse_id == warehouse.id
     ).first()
     if row is None:
-        row = models.ProductStock(product_id=product_id, warehouse_id=warehouse.id, quantity=0, min_level=min_level)
+        row = models.ProductStock(product_id=product_id, warehouse_id=warehouse.id, quantity=0, min_level=min_level, max_level=max_level)  # type: ignore
         db.add(row)
     else:
-        row.min_level = min_level
+        if "min_level" in payload:
+            row.min_level = min_level
+        if "max_level" in payload:
+            row.max_level = max_level
     audit(db, user, "update", "product_min_level", product,
-          f"حد أدنى لـ«{warehouse.name}»: {'إلغاء الخاص' if min_level is None else min_level}")
+          f"حدود «{warehouse.name}»: أدنى {'إلغاء' if min_level is None else min_level} · أقصى {'إلغاء' if max_level is None else max_level}")
     db.commit()
     rows = db.query(models.ProductStock).filter(models.ProductStock.product_id == product_id).all()
     return [
@@ -738,6 +796,7 @@ def set_min_level(
             warehouse_name=r.warehouse.name if r.warehouse else str(r.warehouse_id),
             quantity=float(r.quantity),
             min_level=float(r.min_level) if r.min_level is not None else None,
+            max_level=float(r.max_level) if r.max_level is not None else None,
         )
         for r in rows
     ]
@@ -753,7 +812,7 @@ def product_stock(product_id: int, db: Session = Depends(get_db)):
         .order_by(models.ProductStock.warehouse_id)
         .all()
     )
-    return [schemas.ProductStockOut(warehouse_id=r.warehouse_id, warehouse_name=r.warehouse.name, quantity=r.quantity, min_level=float(r.min_level) if r.min_level is not None else None) for r in rows]  # type: ignore
+    return [schemas.ProductStockOut(warehouse_id=r.warehouse_id, warehouse_name=r.warehouse.name, quantity=r.quantity, min_level=float(r.min_level) if r.min_level is not None else None, max_level=float(r.max_level) if r.max_level is not None else None) for r in rows]  # type: ignore
 
 
 @router.get("/{product_id}/movements", response_model=List[schemas.StockMovementOut])
