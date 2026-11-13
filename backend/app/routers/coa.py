@@ -242,7 +242,11 @@ def seed_coa(
     if not company_id:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "No active company selected")
     created = seed_default_coa(db, company_id)
+    # البذرة flush-only — الـendpoint يملك الـcommit الوحيد (قاعدة الذرية)
+    db.commit()
     return {"created": created}
+
+
 @router.post("/backfill-links")
 def backfill_links(
     db: Session = Depends(deps.get_db),

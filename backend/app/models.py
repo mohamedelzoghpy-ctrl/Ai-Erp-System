@@ -1778,6 +1778,11 @@ class JournalEntry(TenantOwned, Base):
 
 class JournalItem(TenantOwned, Base):
     __tablename__ = "journal_items"
+    # حماية الدفاتر على مستوى القاعدة: بند القيد طرف واحد غير سالب —
+    # (توازن القيد الكامل يُحرس بمشغّل Postgres في ترحيلة acc2026111401)
+    __table_args__ = (
+        CheckConstraint("debit >= 0 AND credit >= 0 AND (debit = 0 OR credit = 0)", name="ck_journal_item_sides"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     entry_id = Column(Integer, ForeignKey("journal_entries.id", ondelete="CASCADE"), nullable=False, index=True)

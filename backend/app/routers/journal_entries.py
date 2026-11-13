@@ -95,16 +95,21 @@ def create_journal_entry(
         and user_role(user) not in ("admin", "manager")
         and sum((i["debit"] for i in items), Decimal("0")) > Decimal(str(threshold))
     )
-    je = AccountingEngine.create_entry(
-        db=db,
-        company_id=company_id,
-        user_id=user.id,
-        description=payload.description,
-        reference=payload.reference,
-        items=items,
-        date=payload.date,
-        status="pending_approval" if needs_approval else "posted",
-    )
+    try:
+        je = AccountingEngine.create_entry(
+            db=db,
+            company_id=company_id,
+            user_id=user.id,
+            description=payload.description,
+            reference=payload.reference,
+            items=items,
+            date=payload.date,
+            status="pending_approval" if needs_approval else "posted",
+        )
+    except ValueError as exc:
+        # بند بطرفين أو قيد غير متوازن — مدخل مستخدم فيُرد 422 لا 500
+        db.rollback()
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
     db.refresh(je)
     audit(db, user, "create", "journal_entry", je,
           f"Ref: {je.reference or '—'}" + (" · بانتظار الاعتماد" if needs_approval else ""))

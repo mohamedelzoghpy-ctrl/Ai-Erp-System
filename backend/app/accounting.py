@@ -90,7 +90,7 @@ def seed_default_cost_centers(db, company_id: int) -> int:
     cc = models.CostCenter(company_id=company_id, code="CC-GEN", name="عام (General)", is_active=True)
     db.add(cc)
     db.flush()
-    db.commit()
+    # بلا commit هنا — البذرة جزء من معاملة المستدعي (قاعدة الذرية: endpoint واحد commit واحد)
     return 1
 
 
@@ -109,7 +109,7 @@ def seed_default_fiscal_year(db, company_id: int) -> int:
     )
     db.add(fy)
     db.flush()
-    db.commit()
+    # بلا commit هنا — البذرة جزء من معاملة المستدعي (قاعدة الذرية: endpoint واحد commit واحد)
     return 1
 
 
@@ -212,6 +212,12 @@ class AccountingEngine:
         for item in items:
             item["debit"] = Decimal(str(item.get("debit") or 0))
             item["credit"] = Decimal(str(item.get("credit") or 0))
+            if item["debit"] > 0 and item["credit"] > 0:
+                # البند بطرف واحد إلزاميًا — محروس أيضًا بـCHECK على مستوى القاعدة (acc2026111401)
+                raise ValueError(
+                    f"Journal item carries both debit and credit: {item.get('notes') or item.get('account_id')} — "
+                    "split it into two items"
+                )
         total_debit = sum((item.get("debit", Decimal("0")) for item in items), Decimal("0"))
         total_credit = sum((item.get("credit", Decimal("0")) for item in items), Decimal("0"))
         if total_debit != total_credit:
@@ -452,5 +458,5 @@ def seed_default_coa(db, company_id: int) -> int:
         by_code[code] = acc
         created += 1
 
-    db.commit()
+    # بلا commit هنا — البذرة جزء من معاملة المستدعي (قاعدة الذرية: endpoint واحد commit واحد)
     return created
