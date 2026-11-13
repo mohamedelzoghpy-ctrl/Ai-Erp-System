@@ -63,7 +63,16 @@ def list_backups(_: models.User = Depends(require_platform_admin)):
                 head = json.loads(fh.read(400) or "{}")
         except Exception:
             head = {}
-        out.append({"name": f.name, "size": f.stat().st_size, "generated_at": head.get("generated_at")})
+        # النسخ القديمة قد تفتقد generated_at في الرأس — الرقم مضمّن في اسم الملف دائمًا،
+        # وmtime احتياط أخير. Date دائمًا موجود.
+        generated = head.get("generated_at")
+        if not generated:
+            m = re.match(r"backup-(\d{8})-(\d{6})\.json\.gz", f.name)
+            if m:
+                generated = datetime.strptime(m.group(1) + m.group(2), "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc).isoformat()
+            else:
+                generated = datetime.fromtimestamp(f.stat().st_mtime, timezone.utc).isoformat()
+        out.append({"name": f.name, "size": f.stat().st_size, "generated_at": generated})
     return out
 
 
