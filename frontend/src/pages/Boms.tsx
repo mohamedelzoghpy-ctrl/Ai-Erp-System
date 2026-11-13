@@ -5,7 +5,7 @@ import { useAction, useFetch } from "../hooks";
 import type { Bom, Product, WorkCenter } from "../types";
 import { ActiveBadge, Alert, Empty, Field, Loading, Modal, PageHeader } from "../ui";
 
-type ItemRow = { component_id: number | ""; qty_per_output: string; scrap_pct: string; notes: string };
+type ItemRow = { component_id: number | ""; qty_per_output: string; scrap_pct: string; substitute_product_id: number | ""; notes: string };
 type OperationRow = { name: string; work_center_id: number | ""; run_minutes_per_unit: string; notes: string };
 
 function BomForm({ initial, products, onClose, onSaved }: {
@@ -25,8 +25,8 @@ function BomForm({ initial, products, onClose, onSaved }: {
   const [notes, setNotes] = useState(initial?.notes ?? "");
   const [items, setItems] = useState<ItemRow[]>(
     initial?.items?.length
-      ? initial.items.map((it) => ({ component_id: it.component_id, qty_per_output: String(it.qty_per_output), scrap_pct: String(it.scrap_pct), notes: it.notes ?? "" }))
-      : [{ component_id: "", qty_per_output: "1", scrap_pct: "0", notes: "" }]
+      ? initial.items.map((it) => ({ component_id: it.component_id, qty_per_output: String(it.qty_per_output), scrap_pct: String(it.scrap_pct), substitute_product_id: ((it as any).substitute_product_id ?? "") as number | "", notes: it.notes ?? "" }))
+      : [{ component_id: "", qty_per_output: "1", scrap_pct: "0", substitute_product_id: "" as number | "", notes: "" }]
   );
   const [operations, setOperations] = useState<OperationRow[]>(
     initial?.operations?.length
@@ -38,7 +38,7 @@ function BomForm({ initial, products, onClose, onSaved }: {
   const setItem = (idx: number, patch: Partial<ItemRow>) =>
     setItems((rows) => rows.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
 
-  const addItem = () => setItems((rows) => [...rows, { component_id: "", qty_per_output: "1", scrap_pct: "0", notes: "" }]);
+  const addItem = () => setItems((rows) => [...rows, { component_id: "", qty_per_output: "1", scrap_pct: "0", substitute_product_id: "", notes: "" }]);
   const removeItem = (idx: number) => setItems((rows) => rows.filter((_, i) => i !== idx));
 
   const setOperation = (idx: number, patch: Partial<OperationRow>) =>
@@ -62,6 +62,7 @@ function BomForm({ initial, products, onClose, onSaved }: {
           component_id: r.component_id,
           qty_per_output: r.qty_per_output,
           scrap_pct: r.scrap_pct || "0",
+          substitute_product_id: r.substitute_product_id === "" ? null : r.substitute_product_id,
           notes: r.notes.trim() || null,
         })),
         // مسار التشغيل: مراحل مرتبة تُرحَّل لأوامر الإنتاج (صرف مرحلي + تكلفة عمالة)
@@ -123,6 +124,7 @@ function BomForm({ initial, products, onClose, onSaved }: {
                 <th>المكوّن (خامة)</th>
                 <th className="num">الكمية لكل وحدة</th>
                 <th className="num">الفاقد %</th>
+                <th>البديل عند النقص</th>
                 <th>ملاحظات</th>
                 <th />
               </tr>
@@ -140,6 +142,14 @@ function BomForm({ initial, products, onClose, onSaved }: {
                   </td>
                   <td className="num"><input type="number" min="0.001" step="0.001" value={row.qty_per_output} onChange={(e) => setItem(idx, { qty_per_output: e.target.value })} required style={{ width: 110 }} /></td>
                   <td className="num"><input type="number" min="0" max="100" step="0.01" value={row.scrap_pct} onChange={(e) => setItem(idx, { scrap_pct: e.target.value })} style={{ width: 90 }} /></td>
+                  <td>
+                    <select value={String(row.substitute_product_id)} onChange={(e) => setItem(idx, { substitute_product_id: e.target.value === "" ? "" : Number(e.target.value) })} style={{ width: 150 }}>
+                      <option value="">بلا بديل</option>
+                      {products.filter((p) => p.id !== row.component_id).map((p) => (
+                        <option key={p.id} value={p.id}>{p.name}</option>
+                      ))}
+                    </select>
+                  </td>
                   <td><input value={row.notes} onChange={(e) => setItem(idx, { notes: e.target.value })} maxLength={200} /></td>
                   <td className="actions">
                     {items.length > 1 && (

@@ -11,6 +11,7 @@ export default function ProductionFloor() {
   const orders = useFetch(() => api.get<ProductionOrder[]>("/production-orders?status=in_progress&limit=1000"), "floor-orders");
   const [produceFor, setProduceFor] = useState<ProductionOrder | null>(null);
   const [produceQty, setProduceQty] = useState("");
+  const [operatorName, setOperatorName] = useState(window.localStorage.getItem("mozad-floor-operator") ?? "");
   const act = useAction();
 
   // تحديث دوري حتى يرى العامل الأوامر الجديدة بدون إعادة تحميل الصفحة
@@ -24,7 +25,8 @@ export default function ProductionFloor() {
     e.preventDefault();
     if (!produceFor) return;
     void act.run(async () => {
-      await api.post(`/production-orders/${produceFor.id}/produce`, { qty: Number(produceQty) });
+      await api.post(`/production-orders/${produceFor.id}/produce`, { qty: Number(produceQty), operator_name: operatorName.trim() || null });
+      window.localStorage.setItem("mozad-floor-operator", operatorName.trim());
       setProduceFor(null);
       setProduceQty("");
       orders.reload();
@@ -83,6 +85,9 @@ export default function ProductionFloor() {
             <p className="muted" style={{ marginTop: 0, fontSize: 13 }}>
               المنتج: <b>{produceFor.product_name}</b> · المخطط: <b>{num(produceFor.qty_planned)}</b> · المنتج حتى الآن: <b>{num(produceFor.qty_produced)}</b> · المتبقي: <b>{num(produceFor.qty_planned - produceFor.qty_produced - produceFor.qty_scrapped)}</b>
             </p>
+            <Field label="اسم المشغّل" hint="يُحفظ على الجهاز للدفعات القادمة">
+              <input value={operatorName} onChange={(e) => setOperatorName(e.target.value)} placeholder="اسم العامل على الخط" />
+            </Field>
             <Field label="كمية الدفعة المنتجة">
               <input type="number" min="1" max={produceFor.qty_planned - produceFor.qty_produced - produceFor.qty_scrapped} step="1" value={produceQty} onChange={(e) => setProduceQty(e.target.value)} required autoFocus />
             </Field>

@@ -905,6 +905,7 @@ class BomItemIn(BaseModel):
     scrap_pct: Decimal = Field(default=Decimal("0"), ge=0, le=100, max_digits=5, decimal_places=2)
     operation_seq: Optional[int] = None  # مرحلة الصرف (NULL = الصرف المجمّع عند بدء التشغيل)
     notes: Optional[str] = Field(default=None, max_length=200)
+    substitute_product_id: Optional[int] = None
 
 
 class BomCreate(BaseModel):
@@ -922,6 +923,7 @@ class BomCreate(BaseModel):
 class BomItemOut(ORMModel):
     id: int
     component_id: int
+    substitute_product_id: Optional[int] = None
     component_name: Optional[str] = None
     component_code: Optional[str] = None
     component_unit: Optional[str] = None
@@ -982,6 +984,16 @@ class ProductionCostOut(ORMModel):
     created_at: datetime
 
 
+class ByProductOut(ORMModel):
+    id: int
+    order_id: int
+    batch_id: Optional[int] = None
+    product_id: int
+    product_name: Optional[str] = None
+    qty: Decimal
+    unit_value: Decimal
+
+
 class ProductionOrderOut(ORMModel):
     id: int
     code: str
@@ -1009,6 +1021,7 @@ class ProductionOrderOut(ORMModel):
     parent_order_id: Optional[int] = None
     notes: Optional[str] = None
     sales_order_id: Optional[int] = None
+    byproducts: List[ByProductOut] = []
     consumptions: List[ProductionConsumptionOut] = []
     costs: List[ProductionCostOut] = []
     costs_total: Decimal = Decimal("0")
@@ -1025,6 +1038,7 @@ class ProductionBatchOut(ORMModel):
     cost: Decimal
     qc_status: Literal["pending", "passed", "rejected"]
     qc_attempt: int = 1
+    operator_name: Optional[str] = None
     produced_at: datetime
     notes: Optional[str] = None
 
@@ -1050,6 +1064,8 @@ class ProductionOrderOperationOut(ORMModel):
     qty_scrapped: float
     issued: bool
     completed_at: Optional[datetime] = None
+    started_at: Optional[datetime] = None
+    operator_name: Optional[str] = None
 
 
 class BatchQcIn(BaseModel):
@@ -1060,6 +1076,7 @@ class BatchQcIn(BaseModel):
 class OperationProgressIn(BaseModel):
     qty_done: float = Field(gt=0)  # الكمية المكتملة في هذه المرحلة
     qty_scrapped: float = Field(default=0, ge=0)
+    operator_name: Optional[str] = Field(default=None, max_length=100)
 
 
 class WorkCenterIn(BaseModel):
@@ -1160,8 +1177,15 @@ class ReconcileApplyIn(BaseModel):
     counter_account_id: Optional[int] = None  # إلزامي في وضع journal
 
 
+class ByProductIn(BaseModel):
+    product_id: int
+    qty: float = Field(gt=0)
+
+
 class ProductionProduceIn(BaseModel):
     qty: float = Field(gt=0)  # كمية الدفعة المنتجة
+    operator_name: Optional[str] = Field(default=None, max_length=100)  # مشغّل الدفعة (شاشة الطابق)
+    byproducts: List[ByProductIn] = []  # منتجات ثانوية تُضاف للمخزن وتخفّض WIP بقيمتها
 
 
 class BomCopyIn(BaseModel):

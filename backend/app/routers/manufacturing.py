@@ -72,7 +72,16 @@ def _bom_out(db: Session, bom: models.Bom) -> models.Bom:
     return bom
 
 
+def db_byproducts(po: models.ProductionOrder) -> list:
+    """صفوف المنتجات الثانوية للأمر بأسماء المنتجات."""
+    rows = po.byproducts_rel
+    for r in rows:
+        r.product_name = r.product.name if r.product else None  # type: ignore[attr-defined]
+    return rows
+
+
 def _po_out(po: models.ProductionOrder) -> models.ProductionOrder:
+    po.byproducts = db_byproducts(po)  # type: ignore[attr-defined]
     po.product_name = po.product.name if po.product else None  # type: ignore[attr-defined]
     po.raw_warehouse_name = po.raw_warehouse.name if po.raw_warehouse else None  # type: ignore[attr-defined]
     po.output_warehouse_name = po.output_warehouse.name if po.output_warehouse else None  # type: ignore[attr-defined]
@@ -194,7 +203,11 @@ def _wip_residual(db: Session, order: models.ProductionOrder) -> Decimal:
     batches_total = db.query(
         func.coalesce(func.sum(models.ProductionBatch.cost), 0)
     ).filter(models.ProductionBatch.order_id == order.id).scalar()
-    return (_total_cost(order) - dec(batches_total) - dec(order.scrap_cost)).quantize(Decimal("0.01"))
+    # قيمة المنتجات الثانوية خُصمت من WIP بقيد مستقل — تُحسب هنا حتى لا يرحّلها الانحراف مرتين
+    # (بالمجموع في بايثون: SQLite يخزن Numeric كنص وحاصل ضرب SQL بين نصين غير موثوق)
+    bp_rows = db.query(models.ProductionByProduct).filter(models.ProductionByProduct.order_id == order.id).all()
+    bp_total = sum((dec(r.qty) * dec(r.unit_value) for r in bp_rows), Decimal("0"))
+    return (_total_cost(order) - dec(batches_total) - dec(order.scrap_cost) - bp_total).quantize(Decimal("0.01"))
 
 
 def _post_variance(db: Session, po: models.ProductionOrder, user: models.User, amount: Decimal, description: str) -> None:
@@ -312,6 +325,7 @@ def create_bom(payload: schemas.BomCreate, db: Session = Depends(get_db), user: 
             component_id=item.component_id,  # type: ignore
             qty_per_output=item.qty_per_output,  # type: ignore
             scrap_pct=item.scrap_pct,  # type: ignore
+            substitute_product_id=item.substitute_product_id,  # type: ignore
             operation_seq=item.operation_seq,  # type: ignore
             notes=item.notes,  # type: ignore
         ))
@@ -388,7 +402,8 @@ def copy_bom(
     for it in src_bom.items:
         db.add(models.BomItem(
             company_id=company_id, bom_id=new_bom.id, component_id=it.component_id,
-            qty_per_output=it.qty_per_output, scrap_pct=it.scrap_pct, operation_seq=it.operation_seq, notes=it.notes,
+            qty_per_output=it.qty_per_output, scrap_pct=it.scrap_pct, substitute_product_id=it.substitute_product_id,
+            operation_seq=it.operation_seq, notes=it.notes,
         ))
     for op in src_bom.operations:
         db.add(models.BomOperation(
@@ -592,6 +607,7 @@ def update_bom(bom_id: int, payload: schemas.BomCreate, db: Session = Depends(ge
             component_id=item.component_id,  # type: ignore
             qty_per_output=item.qty_per_output,  # type: ignore
             scrap_pct=item.scrap_pct,  # type: ignore
+            substitute_product_id=item.substitute_product_id,  # type: ignore
             operation_seq=item.operation_seq,  # type: ignore
             notes=item.notes,  # type: ignore
         ))
@@ -1038,34 +1054,64 @@ def _issue_requirements(db: Session, po: models.ProductionOrder, requirements, w
     """صرف المتطلبات من المخزن (أقفال المنتجات بترتيب ثابت لمنع deadlock) + سطور الاستهلاك + قيد WIP."""
     company_id = db.info["company_id"]
     movable = [(component, required, unit_cost) for component, required, unit_cost, has_own_bom in requirements if not has_own_bom]
+
+    def _choose_source(component: models.Product, required: Decimal) -> tuple:
+        """الخامة الفعلية للصرف: الأساسية إن كفت، وإلا البديل المعرّف على بند القائمة إن توفر."""
+        item = db.query(models.BomItem).filter(
+            models.BomItem.bom_id == po.bom_id, models.BomItem.component_id == component.id
+        ).first()
+        if item is not None and item.substitute_product_id:
+            sub = db.get(models.Product, item.substitute_product_id)
+            if sub is not None and sub.company_id == company_id:
+                primary_avail = stock_available(db, component.id, po.raw_warehouse_id)
+                if primary_avail < required:
+                    sub_avail = stock_available(db, sub.id, po.raw_warehouse_id)
+                    if sub_avail >= required:
+                        return sub, dec(sub.cost_price)
+        return component, None
+
+    # قرار البديل قبل الأقفال (all-or-nothing على المصدر المختار)
+    chosen: list = []
+    for component, required, unit_cost in movable:
+        actual, actual_cost = _choose_source(component, required)
+        chosen.append((component, actual, required, actual_cost if actual_cost is not None else unit_cost))
+    substitutions = [
+        {"component_id": comp.id, "component_name": comp.name, "substitute_id": act.id, "substitute_name": act.name, "qty": q3(req)}
+        for comp, act, req, _uc in chosen if act.id != comp.id
+    ]
+    if substitutions:
+        audit(db, user, "update", "production_order", po,
+              "صرف بخامة بديلة: " + "، ".join(f"{s['component_name']} ← {s['substitute_name']} ({s['qty']})" for s in substitutions))
+
     locked: dict = {}
-    for pid in sorted({c.id for c, _r, _u in movable}):
+    for pid in sorted({act.id for _c, act, _r, _u in chosen}):
         row = db.query(models.Product).filter(models.Product.id == pid).with_for_update().first()
         if row is None:
             raise HTTPException(422, f"المكوّن {pid} غير موجود")
         locked[pid] = row
     # صرف كل الخامات مرة واحدة (all-or-nothing): move_stock يرفع 409 عند نقص أي خامة
-    for component, required, _unit_cost in movable:
-        move_stock(db, locked[component.id], po.raw_warehouse_id, -required, "production_issue", reference=po.code)
-    for component, required, unit_cost in movable:
+    for component, actual, required, _unit_cost in chosen:
+        reason = "production_issue_substitute" if actual.id != component.id else "production_issue"
+        move_stock(db, locked[actual.id], po.raw_warehouse_id, -required, reason, reference=po.code)
+    for component, actual, required, unit_cost in chosen:
         db.add(models.ProductionConsumption(
             company_id=company_id,  # type: ignore
             order_id=po.id,  # type: ignore
-            component_id=component.id,  # type: ignore
+            component_id=actual.id,  # type: ignore — المُستهلك فعلاً (أساسي أو بديل)
             qty=required,  # type: ignore
             unit_cost=unit_cost,  # type: ignore
         ))
     # تخصيص اللوطات FIFO — يوثّق أي لوط استُهلك لأي مكوّن (التتبع العكسي)
-    for component, required, _unit_cost in movable:
-        for lot_id, lot_qty in _allocate_lots(db, company_id, po.raw_warehouse_id, component.id, required):
+    for component, actual, required, _unit_cost in chosen:
+        for lot_id, lot_qty in _allocate_lots(db, company_id, po.raw_warehouse_id, actual.id, required):
             db.add(models.ConsumptionLot(
                 company_id=company_id,  # type: ignore
                 order_id=po.id,  # type: ignore
-                component_id=component.id,  # type: ignore
+                component_id=actual.id,  # type: ignore
                 lot_id=lot_id,  # type: ignore
                 qty=lot_qty,  # type: ignore
             ))
-    total_cost = sum((required * unit_cost for _c, required, unit_cost in movable), Decimal("0"))
+    total_cost = sum((required * unit_cost for _c, _a, required, unit_cost in chosen), Decimal("0"))
     if total_cost > 0:
         AccountingEngine.create_entry(
             db=db,
@@ -1405,6 +1451,10 @@ def operation_progress(
                     reference=po.code,
                 )
 
+    if (payload.operator_name or "").strip():
+        op.operator_name = payload.operator_name.strip()  # type: ignore
+    if op.started_at is None:
+        op.started_at = datetime.now(timezone.utc)  # type: ignore
     op.qty_done = dec(op.qty_done) + qty_done  # type: ignore
     op.qty_scrapped = dec(op.qty_scrapped) + qty_scrapped  # type: ignore
     if dec(op.qty_done) + dec(op.qty_scrapped) >= planned:
@@ -1454,24 +1504,51 @@ def produce_batch(
     unit_cost = (total_cost / planned) if planned else Decimal("0")
     batch_cost = (unit_cost * qty).quantize(Decimal("0.01"))
 
-    # متوسط مرجح لتكلفة المنتج
+    # المنتجات الثانوية: قيمتها (بسعر تكلفتها) تخفّض ما يمتصه المنتج الرئيسي من WIP
+    byproduct_rows: list = []
+    bp_value = Decimal("0")
+    for bp in (payload.byproducts or []):
+        bp_product = db.get(models.Product, bp.product_id)
+        if bp_product is None or bp_product.company_id != company_id:
+            raise HTTPException(422, f"منتج ثانوي غير موجود: {bp.product_id}")
+        bp_qty = q3(bp.qty)
+        unit_value = dec(bp_product.cost_price).quantize(Decimal("0.01"))
+        byproduct_rows.append((bp_product, bp_qty, unit_value))
+        bp_value += bp_qty * unit_value
+    bp_applied = min(bp_value, batch_cost).quantize(Decimal("0.01"))
+    effective_batch_cost = (batch_cost - bp_applied).quantize(Decimal("0.01"))
+
+    # متوسط مرجح لتكلفة المنتج (بالتكلفة الفعلية بعد خصم قيمة الثانوي)
     old_qty = dec(product.quantity)
     old_cost = dec(product.cost_price)
     new_total_qty = old_qty + qty
     if new_total_qty > 0:
-        product.cost_price = ((old_qty * old_cost + batch_cost) / new_total_qty).quantize(Decimal("0.01"))  # type: ignore
+        product.cost_price = ((old_qty * old_cost + effective_batch_cost) / new_total_qty).quantize(Decimal("0.01"))  # type: ignore
 
     move_stock(db, product, po.output_warehouse_id, qty, "production_receive", reference=po.code)
 
-    if batch_cost > 0:
+    if effective_batch_cost > 0:
         AccountingEngine.create_entry(
             db=db,
             company_id=company_id,
             user_id=user.id,
             description=f"Production Order {po.code}: إنتاج {q3(qty)}",
             items=[
-                {"account_id": inventory_acc, "debit": batch_cost, "credit": 0},
-                {"account_id": wip_acc, "debit": 0, "credit": batch_cost},
+                {"account_id": inventory_acc, "debit": effective_batch_cost, "credit": 0},
+                {"account_id": wip_acc, "debit": 0, "credit": effective_batch_cost},
+            ],
+            reference=po.code,
+        )
+    # قيمة الثانوي تدخل مخزونها من WIP مباشرة
+    if bp_applied > 0:
+        AccountingEngine.create_entry(
+            db=db,
+            company_id=company_id,
+            user_id=user.id,
+            description=f"Production Order {po.code}: منتجات ثانوية ({q3(qty)})",
+            items=[
+                {"account_id": inventory_acc, "debit": bp_applied, "credit": 0},
+                {"account_id": wip_acc, "debit": 0, "credit": bp_applied},
             ],
             reference=po.code,
         )
@@ -1485,7 +1562,8 @@ def produce_batch(
             order_id=po.id,  # type: ignore
             batch_no=batch_no,  # type: ignore
             qty=qty,  # type: ignore
-            cost=batch_cost,  # type: ignore
+            cost=effective_batch_cost,  # type: ignore
+            operator_name=(payload.operator_name or "").strip() or None,  # type: ignore
         ))
         db.flush()
         # لوط المنتج النهائي بنفس رقم الدفعة: تتبع كامل + بوابة فحص الجودة عند البيع
@@ -1515,6 +1593,18 @@ def produce_batch(
     except IntegrityError:
         db.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, "تسجيل الإنتاج مكرر — أعد المحاولة")
+    # المنتجات الثانوية: حركة مخزون + سجل على الأمر/الدفعة
+    for bp_product, bp_qty, _uv in byproduct_rows:
+        move_stock(db, bp_product, po.output_warehouse_id, bp_qty, "byproduct_receive", reference=batch_no)
+        db.add(models.ProductionByProduct(
+            company_id=company_id,  # type: ignore
+            order_id=po.id,  # type: ignore
+            batch_id=None,  # type: ignore
+            product_id=bp_product.id,  # type: ignore
+            qty=bp_qty,  # type: ignore
+            unit_value=dec(bp_product.cost_price).quantize(Decimal("0.01")),  # type: ignore
+        ))
+    db.flush()  # صفوف الثانوي يجب أن تكون مرئية لحساب residual تحت autoflush=False
     if dec(po.qty_produced) + dec(po.qty_scrapped) >= planned:  # type: ignore
         po.status = "completed"  # type: ignore
         po.completed_at = datetime.now(timezone.utc)  # type: ignore

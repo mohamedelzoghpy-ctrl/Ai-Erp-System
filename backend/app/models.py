@@ -458,6 +458,23 @@ class SalesOrder(TenantOwned, Base):
     items = relationship("SalesOrderItem", back_populates="order", cascade="all, delete-orphan")
 
 
+class ProductionByProduct(TenantOwned, Base):
+    """منتج ثانوي من إنتاج الدفعة (بذور/لب/كرتون) — يُضاف للمخزن وتُخفَّض قيمته من WIP."""
+
+    __tablename__ = "production_byproducts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    order_id = Column(Integer, ForeignKey("production_orders.id", ondelete="CASCADE"), nullable=False, index=True)
+    batch_id = Column(Integer, ForeignKey("production_batches.id", ondelete="CASCADE"), nullable=True, index=True)
+    product_id = Column(Integer, ForeignKey("products.id", ondelete="CASCADE"), nullable=False, index=True)
+    qty = Column(Numeric(12, 3), nullable=False)
+    unit_value = Column(Numeric(12, 2), nullable=False, default=0, server_default="0")  # قيمة الوحدة المحتسبة وقت الإنتاج
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    order = relationship("ProductionOrder", back_populates="byproducts_rel")
+    product = relationship("Product")
+
+
 class SalesOrderItem(TenantOwned, Base):
     __tablename__ = "sales_order_items"
 
@@ -802,11 +819,14 @@ class BomItem(TenantOwned, Base):
     component_id = Column(Integer, ForeignKey("products.id"), nullable=False, index=True)  # المكوّن (خامة)
     qty_per_output = Column(Numeric(12, 3), nullable=False)  # كمية المكوّن لكل وحدة ناتجة (تسمح بكسور مثل 0.5 كجم)
     scrap_pct = Column(Numeric(5, 2), nullable=False, default=0, server_default="0")  # نسبة الفاقد %
+    # الخامة البديلة عند نقص الأساسية (تُصرف بنفس الكمية عند توفرها)
+    substitute_product_id = Column(Integer, ForeignKey("products.id", ondelete="SET NULL"), nullable=True)
     operation_seq = Column(Integer, nullable=True)  # مرحلة الصرف (NULL = الصرف المجمّع التقليدي)
     notes = Column(String(200), nullable=True)
 
     bom = relationship("Bom", back_populates="items")
-    component = relationship("Product")
+    component = relationship("Product", foreign_keys=[component_id])
+    substitute_product = relationship("Product", foreign_keys=[substitute_product_id])
 
 
 class ProductionOrder(TenantOwned, Base):
@@ -848,6 +868,7 @@ class ProductionOrder(TenantOwned, Base):
     subcontractor = relationship("Supplier")
     consumptions = relationship("ProductionConsumption", back_populates="order", cascade="all, delete-orphan")
     costs = relationship("ProductionCost", back_populates="order", cascade="all, delete-orphan")
+    byproducts_rel = relationship("ProductionByProduct", back_populates="order")
     batches = relationship("ProductionBatch", back_populates="order", cascade="all, delete-orphan")
     production_line = relationship("ProductionLine")
     item_snapshots = relationship("ProductionOrderItem", back_populates="order", cascade="all, delete-orphan")
@@ -875,6 +896,9 @@ class ProductionOrderOperation(TenantOwned, Base):
     qty_scrapped = Column(Numeric(12, 3), nullable=False, default=0, server_default="0")
     issued = Column(Boolean, nullable=False, default=False, server_default="false")  # هل صُرفت خامات هذه المرحلة؟
     completed_at = Column(DateTime(timezone=True), nullable=True)
+    # مشغّل العملية (اسم حر — بدون ربط HR) + لحظة أول تقدم
+    operator_name = Column(String(100), nullable=True)
+    started_at = Column(DateTime(timezone=True), nullable=True)
 
     order = relationship("ProductionOrder", back_populates="operations")
     work_center = relationship("WorkCenter")
@@ -928,6 +952,8 @@ class ProductionBatch(TenantOwned, Base):
     qc_status = Column(String(20), nullable=False, default="pending", server_default="pending", index=True)  # pending | passed | rejected
     # محاولة الفحص الحالية (إعادة الفحص تزيدها) — قياسات كل محاولة تُحفظ في batch_qc_results
     qc_attempt = Column(Integer, nullable=False, default=1, server_default="1")
+    # مشغّل الدفعة (من شاشة الطابق)
+    operator_name = Column(String(100), nullable=True)
     produced_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     notes = Column(String(200), nullable=True)
 
