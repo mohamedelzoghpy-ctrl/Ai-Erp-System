@@ -150,6 +150,27 @@ def _create(kind: str, payload: schemas.ReturnCreate, db: Session, user: models.
     if payload.refund_amount > total:
         raise HTTPException(422, "refund_amount cannot exceed the return total")
     ret.total_amount = total
+    # الضريبة وحصة الخصم من المستند الأصلي بنسبة المرتجع — إصلاح تدقيق 2026-11-14:
+    # الإشعار الدائن يعكس ضريبة 2130/1145 وحصة الطرف كما في فاتورة الأصل (لا مرتجع بلا ضريبة صامت)
+    if kind == "sales":
+        # أساس التوزيع = إجمالي بنود الأصل الخام (قبل الخصم) — order.subtotal صافٍ بعد الخصم
+        order_gross = sum((Decimal(str(it.quantity)) * it.unit_price for it in order.items), Decimal("0"))
+        order_discount = Decimal(str(order.discount_amount or 0))
+        discount_share = (order_discount * total / order_gross) if order_gross > 0 and order_discount else Decimal("0")
+        tax_rate = Decimal(str(order.tax_rate or 0))
+        net_after = total - discount_share
+        tax = (net_after * tax_rate / Decimal("100")).quantize(Decimal("0.01"))
+    else:
+        order_gross = sum((Decimal(str(it.quantity)) * it.unit_cost for it in order.items), Decimal("0"))
+        order_discount = Decimal(str(order.discount_amount or 0))
+        discount_share = (order_discount * total / order_gross) if order_gross > 0 and order_discount else Decimal("0")
+        order_net = order_gross - order_discount
+        tax_rate = (Decimal(str(order.tax_amount or 0)) / order_net * Decimal("100")).quantize(Decimal("0.01")) if order_net > 0 else Decimal("0")
+        net_after = total - discount_share
+        tax = (Decimal(str(order.tax_amount or 0)) * net_after / order_net).quantize(Decimal("0.01")) if order_net > 0 else Decimal("0")
+    ret.discount_share = discount_share
+    ret.tax_rate = tax_rate
+    ret.tax_amount = tax
     ret.refund_amount = payload.refund_amount
     db.add(ret)
     db.flush()
@@ -177,17 +198,27 @@ def _create(kind: str, payload: schemas.ReturnCreate, db: Session, user: models.
     if party is not None:
         link_party_coa(db, party, company_id, is_customer=(kind == "sales"))
     try:
+        net_after = total - discount_share
+        gross = net_after + tax
         if kind == "sales":
             revenue_acc = db.query(models.ChartAccount).filter(models.ChartAccount.company_id == company_id, models.ChartAccount.code == "4101").first()
             if revenue_acc and party and party.chart_account_id:
                 from ..accounting import AccountingEngine
+                # عكس فاتورة البيع: مدين الإيراد (الصافي بعد حصة الخصم) + مدين ضريبة المخرجات 2130
+                # / دائن العميل بالإجمالي — كما في قيد الأصل بالضبط
+                items = [
+                    {"account_id": revenue_acc.id, "debit": net_after, "credit": 0},
+                    {"account_id": party.chart_account_id, "debit": 0, "credit": gross},
+                ]
+                if tax > 0:
+                    vat_out_acc = db.query(models.ChartAccount).filter(models.ChartAccount.company_id == company_id, models.ChartAccount.code == "2130").first()
+                    if vat_out_acc is None or vat_out_acc.is_group:
+                        raise HTTPException(409, "حساب ضريبة المخرجات (2130) غير موجود — حدّث شجرة الحسابات")
+                    items.insert(1, {"account_id": vat_out_acc.id, "debit": tax, "credit": 0})
                 AccountingEngine.create_entry(
                     db=db, company_id=company_id, user_id=user.id,
                     description=f"Sales Return {c['prefix']}-{ret.id}",
-                    items=[
-                        {"account_id": revenue_acc.id, "debit": total, "credit": 0},
-                        {"account_id": party.chart_account_id, "debit": 0, "credit": total},
-                    ],
+                    items=items,
                     reference=f"{c['prefix']}-{ret.id}", date=ret.created_at.date() if hasattr(ret, "created_at") and ret.created_at else None,
                 )
             # Goods are back in stock: relieve the COGS recorded on the original sale.
@@ -196,13 +227,20 @@ def _create(kind: str, payload: schemas.ReturnCreate, db: Session, user: models.
             inventory_acc = db.query(models.ChartAccount).filter(models.ChartAccount.company_id == company_id, models.ChartAccount.code == "1101").first()
             if inventory_acc and party and party.chart_account_id:
                 from ..accounting import AccountingEngine
+                # عكس استلام الشراء: مدين المورد بالإجمالي / دائن المخزون (الصافي) + دائن مدخلات 1145
+                items = [
+                    {"account_id": party.chart_account_id, "debit": gross, "credit": 0},
+                    {"account_id": inventory_acc.id, "debit": 0, "credit": net_after},
+                ]
+                if tax > 0:
+                    vat_in_acc = db.query(models.ChartAccount).filter(models.ChartAccount.company_id == company_id, models.ChartAccount.code == "1145").first()
+                    if vat_in_acc is None or vat_in_acc.is_group:
+                        raise HTTPException(409, "حساب ضريبة المدخلات (1145) غير موجود — حدّث شجرة الحسابات")
+                    items.insert(1, {"account_id": vat_in_acc.id, "debit": 0, "credit": tax})
                 AccountingEngine.create_entry(
                     db=db, company_id=company_id, user_id=user.id,
                     description=f"Purchase Return {c['prefix']}-{ret.id}",
-                    items=[
-                        {"account_id": party.chart_account_id, "debit": total, "credit": 0},
-                        {"account_id": inventory_acc.id, "debit": 0, "credit": total},
-                    ],
+                    items=items,
                     reference=f"{c['prefix']}-{ret.id}", date=None,
                 )
         # المردود النقدي: قيد صندوق إلزامي (بيع: صادر — شراء: وارد)
@@ -381,7 +419,16 @@ def _register(router: APIRouter, kind: str) -> None:
 
     @router.get("/{return_id}", response_model=schemas.ReturnOut)
     def get_return(return_id: int, db: Session = Depends(get_db)):
-        r = db.get(c["ret"], return_id)
+        # Session.get يتجاوز فلتر العزل التلقائي — تصفية صريحة بالشركة (تدقيق 2026-11-14)
+        company_id = db.info.get("company_id")
+        r = (
+            db.query(c["ret"]).filter(
+                c["ret"].id == return_id,
+                c["ret"].company_id == company_id,  # type: ignore[attr-defined]
+            ).first()
+            if company_id is not None
+            else db.get(c["ret"], return_id)
+        )
         if r is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, f"Return {return_id} not found")
         return r

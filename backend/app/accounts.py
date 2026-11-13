@@ -29,11 +29,15 @@ def _dec(value) -> Decimal:
 
 
 def _credits(db: Session, kind: str, ids: Optional[Iterable[int]] = None) -> Dict[int, Decimal]:
-    """Net value of returns per party: goods returned minus the cash handed back at the time.
+    """Net value of returns per party: gross effect (total − discount share + tax, matching the
+    credit-note JE) minus the cash handed back at the time.
     It lowers the balance exactly like a payment does, so it is counted with the payments everywhere."""
     ret = models.SalesReturn if kind == "customer" else models.PurchaseReturn
     col = ret.customer_id if kind == "customer" else ret.supplier_id
-    q = db.query(col, func.sum(ret.total_amount - ret.refund_amount)).group_by(col)
+    q = db.query(
+        col,
+        func.sum(ret.total_amount - ret.discount_share + ret.tax_amount - ret.refund_amount),
+    ).group_by(col)
     if ids is not None:
         q = q.filter(col.in_(list(ids) or [0]))
     return {pid: _dec(v) for pid, v in q.all()}
@@ -80,9 +84,11 @@ def _local_day(value: datetime) -> date:
 
 
 def _return_entries(entries: list, r, typ: str, prefix: str) -> None:
-    """A return lowers the balance by its total; any cash handed back at the time is shown as a separate line."""
+    """A return lowers the balance by its gross effect (total − discount share + tax, matching
+    the credit-note JE); any cash handed back at the time is shown as a separate line."""
     day = _local_day(r.created_at)
-    entries.append((day, 0, r.id, typ, f"{prefix}-{r.id}", "مرتجع", ZERO, _dec(r.total_amount)))
+    gross = _dec(getattr(r, "gross_amount", None) or r.total_amount)
+    entries.append((day, 0, r.id, typ, f"{prefix}-{r.id}", "مرتجع", ZERO, gross))
     if _dec(r.refund_amount) > 0:
         entries.append((day, 1, r.id, typ, f"{prefix}-{r.id}", f"رد نقدي ({METHOD_LABEL.get(r.method, r.method)})", _dec(r.refund_amount), ZERO))
 

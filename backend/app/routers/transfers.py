@@ -24,7 +24,16 @@ INVENTORY_ACC_CODE = "1101"
 
 
 def _get(db: Session, transfer_id: int) -> models.StockTransfer:
-    t = db.get(models.StockTransfer, transfer_id)
+    # Session.get يتجاوز فلتر العزل التلقائي — التصفية الصريحة بالشركة خط الدفاع (تدقيق 2026-11-14)
+    company_id = db.info.get("company_id")
+    t = (
+        db.query(models.StockTransfer).filter(
+            models.StockTransfer.id == transfer_id,
+            models.StockTransfer.company_id == company_id,  # type: ignore[attr-defined]
+        ).first()
+        if company_id is not None
+        else db.get(models.StockTransfer, transfer_id)
+    )
     if t is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Transfer {transfer_id} not found")
     return t

@@ -43,7 +43,16 @@ def _out(p: models.Payment) -> models.Payment:
 
 
 def _get_or_404(db: Session, payment_id: int) -> models.Payment:
-    p = db.get(models.Payment, payment_id)
+    # Session.get يتجاوز فلتر العزل التلقائي — التصفية الصريحة بالشركة خط الدفاع (تدقيق 2026-11-14)
+    company_id = db.info.get("company_id")
+    p = (
+        db.query(models.Payment).filter(
+            models.Payment.id == payment_id,
+            models.Payment.company_id == company_id,  # type: ignore[attr-defined]
+        ).first()
+        if company_id is not None
+        else db.get(models.Payment, payment_id)
+    )
     if p is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Payment {payment_id} not found")
     return p

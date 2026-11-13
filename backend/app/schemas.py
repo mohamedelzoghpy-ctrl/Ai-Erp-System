@@ -1837,6 +1837,9 @@ class ReturnOut(ORMModel):
     rep_id: Optional[int] = None
     rep_name: Optional[str] = None
     total_amount: Decimal
+    tax_rate: Decimal = Decimal("0")
+    tax_amount: Decimal = Decimal("0")
+    discount_share: Decimal = Decimal("0")
     refund_amount: Decimal
     method: str
     notes: Optional[str] = None

@@ -413,6 +413,14 @@ class SalesOrder(TenantOwned, Base):
     """Order sold to a customer. Stock decreases when status becomes 'confirmed'."""
 
     __tablename__ = "sales_orders"
+    # مزامنة أوفلاين: (شركة × مندوب × مرجع العميل) فريد — يمنع تكرار الأوامر على المزامنات المتزامنة
+    __table_args__ = (
+        Index(
+            "uq_sales_order_client_ref", "company_id", "rep_id", "client_ref", unique=True,
+            sqlite_where=text("client_ref IS NOT NULL"),
+            postgresql_where=text("client_ref IS NOT NULL"),
+        ),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False, index=True)
@@ -1217,6 +1225,11 @@ class SalesReturn(TenantOwned, Base):
     customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
     warehouse_id = Column(Integer, ForeignKey("warehouses.id"), nullable=False)
     total_amount = Column(Numeric(14, 2), nullable=False)
+    # الضريبة وحصة الخصم: عكس الإقرار الضريبي على المرتجع المرتبط بأمر (2130 / توزيع الخصم) —
+    # أثر رصيد الطرف = total − discount_share + tax − refund (يطابق قيد الإشعار الدائن)
+    tax_rate = Column(Numeric(5, 2), nullable=False, default=0, server_default="0")
+    tax_amount = Column(Numeric(14, 2), nullable=False, default=0, server_default="0")
+    discount_share = Column(Numeric(14, 2), nullable=False, default=0, server_default="0")
     refund_amount = Column(Numeric(14, 2), nullable=False, default=0, server_default="0")  # cash given back now
     method = Column(String(20), nullable=False, default="cash", server_default="cash")
     notes = Column(Text, nullable=True)
@@ -1228,6 +1241,15 @@ class SalesReturn(TenantOwned, Base):
     customer = relationship("Customer")
     rep = relationship("SalesRep")
     items = relationship("SalesReturnItem", back_populates="ret", cascade="all, delete-orphan")
+
+    @property
+    def gross_amount(self) -> Decimal:
+        """أثر المرتجع على رصيد العميل: الإجمالي − حصة الخصم + الضريبة (يطابق قيد الإشعار الدائن)."""
+        return (
+            Decimal(str(self.total_amount or 0))
+            - Decimal(str(self.discount_share or 0))
+            + Decimal(str(self.tax_amount or 0))
+        ).quantize(Decimal("0.01"))
 
     kind = "sales"
 
@@ -1276,6 +1298,10 @@ class PurchaseReturn(TenantOwned, Base):
     supplier_id = Column(Integer, ForeignKey("suppliers.id"), nullable=True, index=True)
     warehouse_id = Column(Integer, ForeignKey("warehouses.id"), nullable=False)
     total_amount = Column(Numeric(14, 2), nullable=False)
+    # الضريبة وحصة الخصم: عكس مدخلات 1145 وحصة المورد على المرتجع المرتبط بأمر مستلم
+    tax_rate = Column(Numeric(5, 2), nullable=False, default=0, server_default="0")
+    tax_amount = Column(Numeric(14, 2), nullable=False, default=0, server_default="0")
+    discount_share = Column(Numeric(14, 2), nullable=False, default=0, server_default="0")
     refund_amount = Column(Numeric(14, 2), nullable=False, default=0, server_default="0")  # cash received back now
     method = Column(String(20), nullable=False, default="cash", server_default="cash")
     notes = Column(Text, nullable=True)
@@ -1285,6 +1311,15 @@ class PurchaseReturn(TenantOwned, Base):
     order = relationship("PurchaseOrder")
     supplier = relationship("Supplier")
     items = relationship("PurchaseReturnItem", back_populates="ret", cascade="all, delete-orphan")
+
+    @property
+    def gross_amount(self) -> Decimal:
+        """أثر المرتجع على رصيد المورد: الإجمالي − حصة الخصم + الضريبة (يطابق قيد الإشعار المدين)."""
+        return (
+            Decimal(str(self.total_amount or 0))
+            - Decimal(str(self.discount_share or 0))
+            + Decimal(str(self.tax_amount or 0))
+        ).quantize(Decimal("0.01"))
 
     kind = "purchase"
 
@@ -2911,6 +2946,14 @@ class CrmActivity(TenantOwned, Base):
     """نشاط متابعة على عميل محتمل (مكالمة/اجتماع/ملاحظة)."""
 
     __tablename__ = "crm_activities"
+    # مزامنة أوفلاين: (شركة × مرجع العميل) فريد — يمنع تكرار الأنشطة على المزامنات المتزامنة
+    __table_args__ = (
+        Index(
+            "uq_crm_activity_client_ref", "company_id", "client_ref", unique=True,
+            sqlite_where=text("client_ref IS NOT NULL"),
+            postgresql_where=text("client_ref IS NOT NULL"),
+        ),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     lead_id = Column(Integer, ForeignKey("crm_leads.id", ondelete="CASCADE"), nullable=False, index=True)

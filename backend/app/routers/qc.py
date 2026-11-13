@@ -325,6 +325,11 @@ def release_batch_qc(
     """اعتماد الجودة والإفراج عن الدفعة (QC Release / Reject):
     - passed: تُعتمد الدفعة ويُسمح بصرفها واستخدامها في أوامر البيع.
     - rejected: تُرفض الدفعة وتُحجز من المخزون مع خصم قيمتها ونقلها إلى حساب الهالك."""
+    # بوابة الدور: هذا المسار يستدعي دالة مسار التصنيع مباشرة فيتخطى Depends(require_manager)
+    # الخاص بها — الفرض اليدوي هنا يمنع موظفًا بصلاحية QC وحدها من شطب مخزون (تدقيق 2026-11-14)
+    from ..deps import user_role
+    if user_role(user) not in ("admin", "manager"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "اعتماد/رفض فحص الدفعة يتطلب مديرًا — نفس قاعدة مسار التصنيع")
     batch = _batch_or_404(db, batch_id)
     if batch.qc_status != "pending":
         raise HTTPException(status.HTTP_409_CONFLICT, f"الدفعة مفحوصة بالفعل وحالتها: {batch.qc_status}")
