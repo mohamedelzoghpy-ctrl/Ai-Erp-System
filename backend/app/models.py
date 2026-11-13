@@ -2806,5 +2806,8 @@ class CrmActivity(TenantOwned, Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     # معرف فريد من تطبيق المندوب — يضمن عدم تكرار الأنشطة المرفوعة أوفلاين
     client_ref = Column(String(64), nullable=True)
+    # مهمة مجدولة: due_at للاستحقاق و done_at عند الإتمام (NULL = مفتوحة)
+    due_at = Column(DateTime(timezone=True), nullable=True)
+    done_at = Column(DateTime(timezone=True), nullable=True)
 
     lead = relationship("CrmLead", back_populates="activities")

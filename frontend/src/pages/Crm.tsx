@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { api } from "../api";
 import { useFetch, usePagedList } from "../hooks";
 import { useI18n } from "../i18n";
@@ -46,6 +46,7 @@ type CrmFunnelOut = {
   avg_days_to_win?: number | null;
 };
 type CrmSourceRow = { source: string; count: number; won_count: number; lost_count: number; open_count: number; won_value: string; win_rate_pct?: number | null };
+type CrmTaskOut = { id: number; lead_id: number; lead_name?: string | null; lead_code?: string | null; body: string; due_at?: string | null; done_at?: string | null; created_at: string };
 
 /** تحويل ISO إلى صيغة datetime-local للإدخال. */
 const dtLocal = (iso?: string | null) => iso ? new Date(iso).toLocaleString("sv-SE").replace(" ", "T").slice(0, 16) : "";
@@ -85,7 +86,7 @@ export default function Crm() {
   const reps = useFetch(() => api.get<{ id: number; name: string; code: string }[]>("/reps"), "crm-reps");
   const [stage, setStage] = useState<string>("");
   const [search, setSearch] = useState("");
-  const [view, setView] = useState<"table" | "kanban" | "analytics">("kanban");
+  const [view, setView] = useState<"table" | "kanban" | "analytics" | "tasks">("kanban");
   const [followUp, setFollowUp] = useState<"" | "today" | "overdue">("");
   const leads = usePagedList<Lead>("/crm/leads", { status: stage || undefined, search: search || undefined, follow_up: followUp || undefined });
   const board = useFetch(() => api.get<Lead[]>("/crm/leads?limit=200"), "crm-board");
@@ -102,6 +103,16 @@ export default function Crm() {
   const [quoteLead, setQuoteLead] = useState<Lead | null>(null);
   const [quoteRows, setQuoteRows] = useState<{ product_id: number | ""; quantity: string; unit_price: string }[]>([{ product_id: "", quantity: "1", unit_price: "" }]);
   const [quoteBusy, setQuoteBusy] = useState(false);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [bulkAction, setBulkAction] = useState<"" | "assign_rep" | "set_stage" | "set_follow_up">("");
+  const [bulkValue, setBulkValue] = useState<string>("");
+  const [bulkReason, setBulkReason] = useState("");
+  const [importOpen, setImportOpen] = useState(false);
+  const [importPreview, setImportPreview] = useState<{ planned: any[]; errors: any[]; duplicates: number } | null>(null);
+  const [importBusy, setImportBusy] = useState(false);
+  const [importResult, setImportResult] = useState<{ created: number; skipped: any[]; errors: any[] } | null>(null);
+  const importPreviewFile = useRef<File | null>(null);
+  const tasks = useFetch(() => api.get<CrmTaskOut[]>("/crm/tasks?status=open"), "crm-tasks");
   const products = useFetch(() => api.get<{ id: number; name: string; sale_price: string }[]>("/products?limit=500"), "crm-products");
   const warehouseList = useFetch(() => api.get<{ id: number; name: string }[]>("/warehouses"), "crm-warehouses");
   const funnel = useFetch(() => api.get<CrmFunnelOut>("/crm/reports/funnel"), "crm-funnel");
@@ -302,6 +313,8 @@ export default function Crm() {
           <button className={`btn btn-sm${view === "kanban" ? " btn-primary" : ""}`} onClick={() => setView("kanban")}>📋 {t("خط البيع")}</button>
           <button className={`btn btn-sm${view === "table" ? " btn-primary" : ""}`} onClick={() => setView("table")}>📄 {t("جدول")}</button>
           <button className={`btn btn-sm${view === "analytics" ? " btn-primary" : ""}`} onClick={() => setView("analytics")}>📊 {t("تحليلات")}</button>
+          <button className={`btn btn-sm${view === "tasks" ? " btn-primary" : ""}`} onClick={() => setView("tasks")}>✅ {t("المهام")}{(tasks.data ?? []).length > 0 ? ` (${(tasks.data ?? []).length})` : ""}</button>
+          <button className="btn btn-sm" onClick={() => { setImportOpen(true); setImportPreview(null); setImportResult(null); }}>📥 {t("استيراد Excel")}</button>
         </span>
         <select value={followUp} onChange={(e) => setFollowUp(e.target.value as "" | "today" | "overdue")}>
           <option value="">{t("كل المواعيد")}</option>
@@ -323,6 +336,65 @@ export default function Crm() {
       {note && (
         <div dir="rtl" style={{ marginBottom: 10, padding: "8px 12px", borderRadius: 8, fontSize: 13, background: "var(--ok-bg)", color: "var(--ok)" }}>
           {note}
+        </div>
+      )}
+
+      {selected.size > 0 && view === "table" && (
+        <div className="card card-pad" style={{ marginBottom: 10, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
+          <b>{t("المحدد")}: {selected.size}</b>
+          <select value={bulkAction} onChange={(e) => { setBulkAction(e.target.value as any); setBulkValue(""); }}>
+            <option value="">{t("اختر إجراء…")}</option>
+            <option value="assign_rep">{t("إسناد لمندوب")}</option>
+            <option value="set_stage">{t("تغيير مرحلة")}</option>
+            <option value="set_follow_up">{t("تحديد متابعة")}</option>
+          </select>
+          {bulkAction === "assign_rep" && (
+            <select value={bulkValue} onChange={(e) => setBulkValue(e.target.value)}>
+              <option value="">{t("اختر مندوبًا…")}</option>
+              {(reps.data ?? []).map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+            </select>
+          )}
+          {bulkAction === "set_stage" && (
+            <>
+              <select value={bulkValue} onChange={(e) => setBulkValue(e.target.value)}>
+                <option value="">{t("اختر مرحلة…")}</option>
+                {STAGES.map((s) => <option key={s.key} value={s.key}>{(STAGE_LABELS as any)[s.key]}</option>)}
+              </select>
+              {bulkValue === "lost" && <input placeholder={t("سبب الفقد")} value={bulkReason} onChange={(e) => setBulkReason(e.target.value)} />}
+            </>
+          )}
+          {bulkAction === "set_follow_up" && (
+            <input type="datetime-local" dir="ltr" value={bulkValue} onChange={(e) => setBulkValue(e.target.value)} />
+          )}
+          <button
+            className="btn btn-primary btn-sm"
+            disabled={!bulkAction || (bulkAction !== "set_follow_up" && !bulkValue) || (bulkAction === "set_follow_up" && !bulkValue)}
+            onClick={() => {
+              void (async () => {
+                try {
+                  const res = await api.post<{ updated: number; skipped: any[] }>("/crm/leads/bulk", {
+                    ids: [...selected],
+                    action: bulkAction,
+                    assigned_rep_id: bulkAction === "assign_rep" ? Number(bulkValue) : undefined,
+                    status: bulkAction === "set_stage" ? bulkValue : undefined,
+                    lost_reason: bulkAction === "set_stage" ? bulkReason.trim() || undefined : undefined,
+                    next_follow_up_at: bulkAction === "set_follow_up" && bulkValue ? new Date(bulkValue).toISOString() : undefined,
+                  });
+                  setNote(`${t("حدّث")} ${res.updated} ${t("قائد")}${res.skipped.length ? ` — ${t("تجاهل")} ${res.skipped.length}` : ""}`);
+                  setSelected(new Set());
+                  setBulkAction("");
+                  setBulkValue("");
+                  leads.reload();
+                  board.reload();
+                } catch (err) {
+                  setError((err as Error).message);
+                }
+              })();
+            }}
+          >
+            {t("تنفيذ")}
+          </button>
+          <button className="btn btn-sm" onClick={() => setSelected(new Set())}>{t("إلغاء التحديد")}</button>
         </div>
       )}
 
@@ -365,6 +437,7 @@ export default function Crm() {
           <table>
             <thead>
               <tr>
+                <th><input type="checkbox" checked={leads.data?.length ? selected.size === leads.data.length : false} onChange={(e) => setSelected(e.target.checked ? new Set(leads.data?.map((l) => l.id) ?? []) : new Set())} /></th>
                 <th>{t("الكود")}</th>
                 <th>{t("الاسم")}</th>
                 <th>{t("الشركة / النشاط")}</th>
@@ -380,6 +453,11 @@ export default function Crm() {
             <tbody>
               {leads.data.map((l) => (
                 <tr key={l.id} style={l.converted_customer_id ? { opacity: 0.7 } : undefined}>
+                  <td><input type="checkbox" checked={selected.has(l.id)} onChange={(e) => {
+                    const ns = new Set(selected);
+                    if (e.target.checked) ns.add(l.id); else ns.delete(l.id);
+                    setSelected(ns);
+                  }} /></td>
                   <td className="num-center" dir="ltr">{l.code}</td>
                   <td>{l.name}</td>
                   <td>{l.company_name ?? "—"}</td>
@@ -485,6 +563,130 @@ export default function Crm() {
         </div>
       )}
       <Pager list={leads} style={view !== "table" ? { display: "none" } : undefined} />
+
+      {view === "tasks" && (
+        <div className="card card-pad">
+          <h3 style={{ margin: "0 0 10px", fontSize: 15 }}>✅ {t("المهام المفتوحة — مرتبة بالاستحقاق")}</h3>
+          <Alert>{tasks.error}</Alert>
+          {tasks.loading && !tasks.data ? <Loading /> : (tasks.data ?? []).length > 0 ? (
+            <div className="table-wrap">
+              <table>
+                <thead><tr><th>{t("المهمة")}</th><th>{t("القائد")}</th><th className="num">{t("الاستحقاق")}</th><th className="actions" /></tr></thead>
+                <tbody>
+                  {(tasks.data ?? []).map((tk) => {
+                    const overdue = tk.due_at && new Date(tk.due_at).getTime() < Date.now();
+                    return (
+                      <tr key={tk.id}>
+                        <td>{tk.body}</td>
+                        <td>{tk.lead_name} <small className="muted" dir="ltr">{tk.lead_code}</small></td>
+                        <td className="num" style={overdue ? { color: "#b42318", fontWeight: 700 } : undefined}>
+                          {tk.due_at ? dtLocal(tk.due_at) : "—"}
+                        </td>
+                        <td className="actions">
+                          <button className="btn btn-sm" onClick={() => {
+                            void (async () => {
+                              try {
+                                await api.post(`/crm/activities/${tk.id}/complete`);
+                                tasks.reload();
+                              } catch (err) { setError((err as Error).message); }
+                            })();
+                          }}>✔ {t("إتمام")}</button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : <Empty>{t("لا مهام مفتوحة — أنشئ مهمة من نشاط القائد بنوع «مهمة» وموعد استحقاق.")}</Empty>}
+        </div>
+      )}
+
+      {importOpen && (
+        <Modal title={`📥 ${t("استيراد عملاء محتملين من Excel")}`} onClose={() => setImportOpen(false)} wide>
+          <Alert>{error}</Alert>
+          {importResult && (
+            <div className="hint" style={{ marginBottom: 10 }}>
+              ✅ {t("أُنشئ")} {importResult.created} {t("قائد")}
+              {importResult.skipped.length ? ` — ${t("تخطي")} ${importResult.skipped.length} ${t("مكرر")}` : ""}
+              {importResult.errors.length ? ` — ${t("أخطاء")} ${importResult.errors.length}` : ""}
+            </div>
+          )}
+          <p className="muted" style={{ fontSize: 13, margin: "0 0 10px" }}>
+            {t("الأعمدة: الاسم*، الشركة، الهاتف، المصدر (توصية/سوشيال/هاتف/معرض/زائر)، القيمة المتوقعة، ملاحظات — الصف الأول عناوين. التكرارات برقم الهاتف تُتخطى تلقائيًا.")}
+          </p>
+          <input type="file" accept=".xlsx" onChange={(e) => {
+            const file = (e.target as HTMLInputElement).files?.[0];
+            if (!file) return;
+            setImportBusy(true);
+            void (async () => {
+              try {
+                importPreviewFile.current = file;
+                const fd = new FormData();
+                fd.append("file", file);
+                const res = await api.uploadForm<{ planned: any[]; errors: any[]; duplicates: number }>(`/crm/leads/import/xlsx?preview=true`, fd);
+                setImportPreview(res);
+              } catch (err) {
+                setError((err as Error).message);
+              } finally {
+                setImportBusy(false);
+              }
+            })();
+          }} />
+          {importBusy && <Loading />}
+          {importPreview && (
+            <div className="table-wrap" style={{ marginTop: 10 }}>
+              <table>
+                <thead><tr><th>#</th><th>{t("الاسم")}</th><th>{t("الهاتف")}</th><th className="num">{t("القيمة")}</th><th>{t("ملاحظة")}</th></tr></thead>
+                <tbody>
+                  {importPreview.planned.map((p) => (
+                    <tr key={p.row} style={p.duplicate ? { background: "#fee4e2" } : undefined}>
+                      <td>{p.row}</td>
+                      <td>{p.name}</td>
+                      <td dir="ltr">{p.phone ?? "—"}</td>
+                      <td className="num">{money(p.expected_value)}</td>
+                      <td>{p.duplicate ? t("⚠️ تكرار — سيُتخطى") : "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {importPreview.errors.length > 0 && (
+                <div style={{ color: "#b42318", fontSize: 12, padding: 6 }}>
+                  {importPreview.errors.map((e: any) => `صف ${e.row}: ${e.error}`).join(" · ")}
+                </div>
+              )}
+            </div>
+          )}
+          <div className="form-actions" style={{ marginTop: 12 }}>
+            <button
+              className="btn btn-primary"
+              disabled={!importPreview || importBusy}
+              onClick={() => {
+                void (async () => {
+                  setImportBusy(true);
+                  try {
+                    if (!importPreviewFile.current) return;
+                    const fd = new FormData();
+                    fd.append("file", importPreviewFile.current);
+                    const res = await api.uploadForm<{ created: number; skipped: any[]; errors: any[] }>("/crm/leads/import/xlsx?preview=false", fd);
+                    setImportResult(res);
+                    setImportPreview(null);
+                    leads.reload();
+                    board.reload();
+                  } catch (err) {
+                    setError((err as Error).message);
+                  } finally {
+                    setImportBusy(false);
+                  }
+                })();
+              }}
+            >
+              {importBusy ? t("جارٍ الاستيراد…") : t("استيراد الآن")}
+            </button>
+            <button className="btn" onClick={() => setImportOpen(false)}>{t("إغلاق")}</button>
+          </div>
+        </Modal>
+      )}
 
       {dupMatches !== null && (
         <Modal title={t("⚠️ رقم هاتف موجود مسبقًا")} onClose={() => setDupMatches(null)}>

@@ -1908,7 +1908,24 @@ class CostCenterOut(CostCenterBase, ORMModel):
 # ---------- CRM (العملاء المحتملون) ----------
 LeadSource = Literal["walk_in", "phone", "social", "referral", "exhibition", "other"]
 LeadStatus = Literal["new", "contacted", "qualified", "won", "lost"]
-ActivityKind = Literal["note", "call", "meeting", "system"]
+
+
+# ---------- CRM م4: عمليات جماعية + استيراد ----------
+class CrmBulkIn(BaseModel):
+    ids: List[int] = Field(min_length=1, max_length=500)
+    action: Literal["assign_rep", "set_stage", "set_follow_up"]
+    assigned_rep_id: Optional[int] = None
+    status: Optional[LeadStatus] = None
+    lost_reason: Optional[str] = Field(default=None, max_length=200)
+    next_follow_up_at: Optional[datetime] = None
+
+
+class CrmBulkOut(BaseModel):
+    updated: int
+    skipped: List[dict] = []
+
+
+ActivityKind = Literal["note", "call", "meeting", "system", "task"]
 
 
 class CrmLeadBase(BaseModel):
@@ -1956,6 +1973,18 @@ class CrmLeadOut(CrmLeadBase, ORMModel):
 class CrmActivityCreate(BaseModel):
     kind: ActivityKind = "note"
     body: str = Field(min_length=1)
+    due_at: Optional[datetime] = None   # للمهام: تاريخ الاستحقاق
+
+
+class CrmTaskOut(ORMModel):
+    id: int
+    lead_id: int
+    lead_name: Optional[str] = None
+    lead_code: Optional[str] = None
+    body: str
+    due_at: Optional[datetime] = None
+    done_at: Optional[datetime] = None
+    created_at: datetime
 
 
 class CrmActivityOut(ORMModel):
@@ -1965,6 +1994,8 @@ class CrmActivityOut(ORMModel):
     body: str
     created_by: Optional[int] = None
     created_at: datetime
+    due_at: Optional[datetime] = None
+    done_at: Optional[datetime] = None
 
 # ---------- Fiscal Years ----------
 class FiscalYearBase(BaseModel):

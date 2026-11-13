@@ -12,13 +12,13 @@ from ..deps import get_current_user, require_manager
 router = APIRouter(prefix="/attachments", tags=["attachments"], dependencies=[Depends(get_current_user)])
 
 MAX_SIZE = 5 * 1024 * 1024  # 5MB لكل مرفق
-ALLOWED_TYPES = {"payment", "journal_entry", "fixed_asset"}
+ALLOWED_TYPES = {"payment", "journal_entry", "fixed_asset", "crm_lead"}
 ALLOWED_MIME_PREFIXES = ("image/", "application/pdf")
 
 
 def _verify_entity(db: Session, company_id: int, entity_type: str, entity_id: int) -> None:
     """التأكد أن الكيان الهدف موجود ضمن الشركة (لا مرفقات على كيانات وهمية/أجنبية)."""
-    model = {"payment": models.Payment, "journal_entry": models.JournalEntry, "fixed_asset": models.FixedAsset}.get(entity_type)
+    model = {"payment": models.Payment, "journal_entry": models.JournalEntry, "fixed_asset": models.FixedAsset, "crm_lead": models.CrmLead}.get(entity_type)
     if model is None:
         raise HTTPException(422, f"نوع الكيان غير مدعوم: {entity_type}")
     obj = db.query(model).filter(model.id == entity_id, model.company_id == company_id).first()

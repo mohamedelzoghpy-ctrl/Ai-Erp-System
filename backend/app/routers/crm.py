@@ -2,9 +2,9 @@
 from decimal import Decimal
 from typing import List, Optional
 
-from datetime import timedelta as _td
+from datetime import datetime, timedelta as _td, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
@@ -324,6 +324,166 @@ def crm_sources(db: Session = Depends(get_db)):
     return out
 
 
+@router.post("/activities/{activity_id}/complete", response_model=schemas.CrmActivityOut)
+def toggle_task_complete(
+    activity_id: int,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(require_permission_or_role("crm.lead.update", "admin", "manager")),
+):
+    """إتمام/إعادة فتح مهمة مجدولة."""
+    row = db.get(models.CrmActivity, activity_id)
+    if row is None or row.company_id != db.info["company_id"]:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "النشاط غير موجود")
+    if row.kind != "task":
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "الإتمام للمهام فقط")
+    row.done_at = None if row.done_at else datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(row)
+    audit(db, user, "update", "crm_task", row, f"مهمة #{row.id}: {'أُتمت' if row.done_at else 'أُعيد فتحها'}")
+    return row
+
+
+@router.get("/tasks", response_model=List[schemas.CrmTaskOut])
+def list_tasks(
+    status_filter: Optional[str] = Query("open", pattern="^(open|done|all)$", alias="status"),
+    lead_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+):
+    """المهام المجدولة عبر كل القادة — open الافتراضي (المستحقة والمتأخرة والمستقبلية غير المتمة)."""
+    company_id = db.info["company_id"]
+    q = (
+        db.query(models.CrmActivity, models.CrmLead)
+        .join(models.CrmLead, models.CrmActivity.lead_id == models.CrmLead.id)
+        .filter(
+            models.CrmActivity.company_id == company_id,
+            models.CrmActivity.kind == "task",
+            models.CrmLead.company_id == company_id,
+        )
+    )
+    if status_filter == "open":
+        q = q.filter(models.CrmActivity.done_at.is_(None))
+    elif status_filter == "done":
+        q = q.filter(models.CrmActivity.done_at.isnot(None))
+    if lead_id:
+        q = q.filter(models.CrmActivity.lead_id == lead_id)
+    rows = q.order_by(models.CrmActivity.due_at.is_(None), models.CrmActivity.due_at.asc()).limit(200).all()
+    return [schemas.CrmTaskOut(
+        id=a.id, lead_id=a.lead_id, lead_name=l.name, lead_code=l.code,
+        body=a.body, due_at=a.due_at, done_at=a.done_at, created_at=a.created_at,
+    ) for a, l in rows]
+
+
+@router.post("/leads/bulk", response_model=schemas.CrmBulkOut)
+def bulk_update_leads(
+    payload: schemas.CrmBulkIn,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(require_permission_or_role("crm.lead.update", "admin", "manager")),
+):
+    """عمليات جماعية: إسناد لمندوب / تغيير مرحلة / تحديد متابعة — مع سجل نظامي لكل قائد."""
+    company_id = db.info["company_id"]
+    if payload.action == "assign_rep":
+        rep = db.get(models.SalesRep, payload.assigned_rep_id or 0)
+        if rep is None or rep.company_id != company_id:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "المندوب غير موجود")
+    if payload.action == "set_stage" and payload.status == "lost" and not (payload.lost_reason or "").strip():
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "سبب الفقد مطلوب عند النقل إلى مفقود")
+    updated, skipped = 0, []
+    for lid in payload.ids:
+        lead = db.get(models.CrmLead, lid)
+        if lead is None or lead.company_id != company_id:
+            skipped.append({"id": lid, "reason": "غير موجود"})
+            continue
+        if lead.converted_customer_id is not None and payload.action == "set_stage":
+            skipped.append({"id": lid, "reason": "مُحوَّل بالفعل"})
+            continue
+        old_status = lead.status
+        if payload.action == "assign_rep":
+            lead.assigned_rep_id = payload.assigned_rep_id
+            note = f"أُسند إلى {rep.name} (جماعي)"
+        elif payload.action == "set_stage":
+            lead.status = payload.status
+            if payload.status == "lost":
+                lead.lost_reason = (payload.lost_reason or "").strip()
+            note = f"تغيّرت المرحلة جماعياً: {STAGE_AR.get(old_status, old_status)} ← {STAGE_AR.get(payload.status, payload.status)}"
+        else:  # set_follow_up
+            lead.next_follow_up_at = payload.next_follow_up_at
+            note = "حدّد موعد متابعة جماعي"
+        db.add(models.CrmActivity(company_id=company_id, lead_id=lead.id, kind="system", body=note, created_by=user.id))
+        updated += 1
+    db.commit()
+    audit(db, user, "update", "crm_lead", None, f"عملية جماعية {payload.action} على {updated} قائد")
+    return schemas.CrmBulkOut(updated=updated, skipped=skipped)
+
+
+_SOURCE_AR_TO_KEY = {"زائر": "walk_in", "مباشر": "walk_in", "هاتف": "phone", "اتصال": "phone", "سوشيال": "social", "توصية": "referral", "معرض": "exhibition", "أخرى": "other", "other": "other", "walk_in": "walk_in", "phone": "phone", "social": "social", "referral": "referral", "exhibition": "exhibition"}
+
+
+@router.post("/leads/import/xlsx")
+async def import_leads_xlsx(
+    preview: bool = Query(False),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    user: models.User = Depends(require_permission_or_role("crm.lead.create", "admin", "manager")),
+):
+    """استيراد قادة من Excel: الأعمدة (الاسم*، الشركة، الهاتف، البريد، المصدر، القيمة المتوقعة، ملاحظات).
+    preview=true يعيد الجدول المُحلل مع كشف التكرار دون إنشاء."""
+    import openpyxl
+    import io as _io
+    company_id = db.info["company_id"]
+    content = await file.read()
+    try:
+        wb = openpyxl.load_workbook(_io.BytesIO(content), data_only=True)
+    except Exception:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "ملف Excel غير صالح")
+    ws = wb.active
+    rows_iter = ws.iter_rows(values_only=True)
+    header = [str(c).strip() if c is not None else "" for c in next(rows_iter, [])]
+    col = {name: i for i, name in enumerate(header)}
+    plan, errors = [], []
+    for idx, row in enumerate(rows_iter, start=2):
+        if row is None or all(c is None or str(c).strip() == "" for c in row):
+            continue
+        get = lambda key: (str(row[col[key]]).strip() if key in col and col[key] < len(row) and row[col[key]] is not None else "")
+        name = get("الاسم") or get("name")
+        if not name:
+            errors.append({"row": idx, "error": "الاسم مطلوب"})
+            continue
+        phone = get("الهاتف") or get("phone")
+        source_raw = get("المصدر") or get("source")
+        source = _SOURCE_AR_TO_KEY.get(source_raw.lower() if source_raw else "", "walk_in")
+        value_raw = get("القيمة المتوقعة") or get("expected_value")
+        try:
+            expected = str(round(float(value_raw or 0), 2))
+        except ValueError:
+            errors.append({"row": idx, "error": f"قيمة غير صالحة: {value_raw}"})
+            continue
+        dup = bool(phone) and bool(_phone_duplicates(db, company_id, phone))
+        plan.append({
+            "row": idx, "name": name[:150],
+            "company_name": (get("الشركة") or get("company_name"))[:150] or None,
+            "phone": phone[:50] or None,
+            "email": (get("البريد") or get("email"))[:150] or None,
+            "source": source,
+            "expected_value": expected,
+            "notes": (get("ملاحظات") or get("notes"))[:500] or None,
+            "duplicate": dup,
+        })
+    if preview:
+        return {"planned": plan, "errors": errors, "duplicates": sum(1 for p in plan if p["duplicate"])}
+    created, skipped = 0, []
+    for p in plan:
+        if p["duplicate"]:
+            skipped.append({"row": p["row"], "reason": "تكرار هاتف"})
+            continue
+        code = unique_code(db, models.CrmLead, company_id, p["name"], "LEAD", max_length=50)
+        db.add(models.CrmLead(company_id=company_id, code=code, created_by=user.id, **{k: v for k, v in p.items() if k in ("name", "company_name", "phone", "email", "source", "expected_value", "notes")}))
+        db.flush()  # يجب أن يرى السطر التالي الكود الجديد عند توليده (autoflush=False في الاختبار)
+        created += 1
+    db.commit()
+    audit(db, user, "create", "crm_lead", None, f"استيراد Excel: {created} قائد، تخطي {len(skipped)} مكرر، أخطاء {len(errors)}")
+    return {"created": created, "skipped": skipped, "errors": errors}
+
+
 @router.get("/leads/{obj_id}/activities", response_model=List[schemas.CrmActivityOut])
 def list_activities(
     response: Response,
@@ -347,12 +507,15 @@ def add_activity(
     user: models.User = Depends(require_permission_or_role("crm.lead.activity", "admin", "manager")),
 ):
     lead = _get_lead(db, obj_id)
+    if payload.kind == "task" and payload.due_at is None:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "المهمة تتطلب موعد استحقاق")
     activity = models.CrmActivity(
         company_id=db.info["company_id"],
         lead_id=lead.id,
         kind=payload.kind,
         body=payload.body.strip(),
         created_by=user.id,
+        due_at=payload.due_at,
     )
     db.add(activity)
     db.commit()
