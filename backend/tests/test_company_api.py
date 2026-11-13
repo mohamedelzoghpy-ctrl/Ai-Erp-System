@@ -491,8 +491,8 @@ def test_company_license_expiry_blocks_usage_and_renewal_restores(monkeypatch):
         assert resp.json()["license_until"] == yesterday
 
         assert client.get("/auth/me", headers=co_headers).status_code == 200  # self يمر
-        # العقد الجديد (2026-11-14): مدير الشركة يتجاوز حظر الرخصة — يدخل ويجدد بكلمة السر المحفوظة
-        assert client.get("/company/branches", headers=co_headers).status_code == 200
+        # مدير الشركة (admin) لا يتجاوز الرخصة — الحجب يشمل الجميع (مالك التطبيق فقط يتجاوز)
+        assert client.get("/company/branches", headers=co_headers).status_code == 403
         # ومدير المنصة يتجاوز ويستطيع العمل على الشركة المنتهية
         assert client.get("/platform/companies", headers=platform_headers).status_code == 200
 

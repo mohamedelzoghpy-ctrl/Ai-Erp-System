@@ -1,5 +1,6 @@
-"""إنفورسمنت الترخيص: حظر الدخول والاستخدام عند انتهاء الرخصة — إلا أدمن الشركة (يدخل ويجدد بكلمة السر المحفوظة)."""
-from datetime import date, datetime, timedelta, timezone
+"""إنفورسمنت الترخيص: حظر الدخول والاستخدام عند انتهاء الرخصة لكل مستخدمي الشركة العميل —
+مالك التطبيق (platform admin) فقط يتجاوز ويجدد بكلمة السر المحفوظة."""
+from datetime import date, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -33,7 +34,6 @@ def env(tmp_path, monkeypatch):
     tok = client.post("/auth/login", data={"username": "platform", "password": "long-password-123"}).json()["access_token"]
     client.headers["Authorization"] = f"Bearer {tok}"
 
-    # شركة تجريبية بأدمن وموظف
     r = client.post("/platform/companies", json={
         "name": "شركة الترخيص", "code": "lic-co", "admin_username": "licadmin", "admin_password": "licadmin-pass-123",
     })
@@ -42,7 +42,6 @@ def env(tmp_path, monkeypatch):
     lic_admin = TestClient(app)
     ltok = client.post("/auth/login", data={"username": "licadmin", "password": "licadmin-pass-123"}).json()["access_token"]
     lic_admin.headers["Authorization"] = f"Bearer {ltok}"
-    # موظف في الشركة — يحتاج فرعًا ومخزنًا (متطلب إنشاء الموظفين)
     branch = lic_admin.post("/company/branches", json={"name": "فرع الترخيص"}).json()
     warehouse = lic_admin.post("/warehouses", json={"name": "مخزن الترخيص", "code": "LW1", "branch_id": branch["id"]}).json()
     r = lic_admin.post("/auth/users", json={
@@ -71,81 +70,76 @@ def set_license(platform_client, company_id, when: date):
     }))
 
 
-def test_expired_company_blocks_staff_login_but_allows_admin(env):
+def test_expired_company_blocks_everyone_including_company_admin(env):
     client, lic_admin, company_id = env
-    yesterday = date.today() - timedelta(days=1)
-    set_license(client, company_id, yesterday)
-
-    # الموظف: الدخول محجوب برسالة الترخيص
+    set_license(client, company_id, date.today() - timedelta(days=1))
+    # الموظف محجوب
     r = client.post("/auth/login", data={"username": "licstaff", "password": "licstaff-pass-123"})
     assert r.status_code == 403 and "انتهت رخصة" in r.json()["detail"]
-
-    # أدمن الشركة: يدخل عادي
+    # أدمن الشركة العميل محجوب أيضاً — هو ليس مالك التطبيق
     r = client.post("/auth/login", data={"username": "licadmin", "password": "licadmin-pass-123"})
-    assert r.status_code == 200 and "access_token" in r.json()
-
-
-def test_gate_blocks_staff_api_but_admin_works_after_expiry(env):
-    client, lic_admin, company_id = env
-    # توكن الموظف قبل انتهاء الرخصة (جلسة قائمة)
-    pre_token = staff_token(client)
-    staff_headers = {"Authorization": f"Bearer {pre_token}"}
-    assert client.get("/sync/bootstrap", headers=staff_headers).status_code == 200  # صلاحية أساسية للموظف
-
-    set_license(client, company_id, date.today() - timedelta(days=1))
-
-    # الجلسة القائمة للموظف: كل مسارات العمل محجوبة برسالة الترخيص (حتى صلاحياته الأساسية)
-    r = client.get("/sync/bootstrap", headers=staff_headers)
     assert r.status_code == 403 and "انتهت رخصة" in r.json()["detail"]
 
-    # أدمن الشركة: يعمل بالكامل (يستطيع التجديد)
-    r = lic_admin.get("/products")
+
+def test_gate_blocks_all_company_users_but_platform_admin_passes(env):
+    client, lic_admin, company_id = env
+    admin_token = lic_admin.headers["Authorization"].split(" ", 1)[1]
+    staff_pre = staff_token(client)
+    set_license(client, company_id, date.today() - timedelta(days=1))
+    # جلسة أدمن الشركة القائمة: محجوبة
+    r = client.get("/company/branches", headers={"Authorization": f"Bearer {admin_token}"})
+    assert r.status_code == 403 and "انتهت رخصة" in r.json()["detail"]
+    # جلسة الموظف القائمة: محجوبة حتى صلاحياتها الأساسية
+    r = client.get("/sync/bootstrap", headers={"Authorization": f"Bearer {staff_pre}"})
+    assert r.status_code == 403 and "انتهت رخصة" in r.json()["detail"]
+    # مالك التطبيق (platform admin) يتجاوز: يبدّل لشركة العميل ويعمل عليها
+    ok(client.post("/auth/switch-company", json={"company_id": company_id}))
+    assert client.get("/company/branches").status_code == 200
+
+
+def test_platform_owner_renews_with_saved_password_unblocks_everything(env):
+    client, lic_admin, company_id = env
+    set_license(client, company_id, date.today() - timedelta(days=1))
+    # تجديد من مالك التطبيق بكلمة السر المحفوظة
+    new_until = (date.today() + timedelta(days=365)).isoformat()
+    res = ok(client.put(f"/platform/companies/{company_id}/license", json={
+        "license_password": RENEW_KEY, "license_until": new_until,
+    }))
+    assert res["license_until"] == new_until
+    # الموظف وأدمن الشركة يعودون للدخول
+    r = client.post("/auth/login", data={"username": "licstaff", "password": "licstaff-pass-123"})
+    assert r.status_code == 200
+    r = client.post("/auth/login", data={"username": "licadmin", "password": "licadmin-pass-123"})
     assert r.status_code == 200
 
 
-def test_self_renew_with_saved_password_unblocks_everything(env):
+def test_wrong_renew_password_rejected_and_logged(env):
     client, lic_admin, company_id = env
-    set_license(client, company_id, date.today() - timedelta(days=1))
-
-    # كلمة سر خاطئة → 403
-    r = lic_admin.patch("/company/license", json={
+    r = client.put(f"/platform/companies/{company_id}/license", json={
         "license_password": "wrong-key", "license_until": (date.today() + timedelta(days=30)).isoformat(),
     })
     assert r.status_code == 403 and "غير صحيحة" in r.json()["detail"]
 
-    # الموظف ما زال محجوبًا قبل التجديد
-    r = client.post("/auth/login", data={"username": "licstaff", "password": "licstaff-pass-123"})
-    assert r.status_code == 403
 
-    # التجديد الصحيح بكلمة السر المحفوظة
-    new_until = (date.today() + timedelta(days=30)).isoformat()
-    res = ok(lic_admin.patch("/company/license", json={"license_password": RENEW_KEY, "license_until": new_until}))
-    assert res["license_until"] == new_until
-
-    # الموظف يعود للدخول والعمل، والأدمن مستمر
-    r = client.post("/auth/login", data={"username": "licstaff", "password": "licstaff-pass-123"})
-    assert r.status_code == 200
-    stok = r.json()["access_token"]
-    assert client.get("/sync/bootstrap", headers={"Authorization": f"Bearer {stok}"}).status_code == 200
-
-
-def test_renew_self_restricted_to_admin_role(env):
+def test_company_scope_renew_is_platform_admin_only(env):
+    """PATCH /company/license — بعد تبديل المالك لشركة العميل؛ أدمن الشركة مرفوض."""
     client, lic_admin, company_id = env
-    stok = staff_token(client)
-    staff_client = TestClient(app)
-    staff_client.headers["Authorization"] = f"Bearer {stok}"
-    r = staff_client.patch("/company/license", json={
+    # أدمن الشركة (غير مالك التطبيق) → مرفوض
+    r = lic_admin.patch("/company/license", json={
         "license_password": RENEW_KEY, "license_until": (date.today() + timedelta(days=30)).isoformat(),
     })
-    assert r.status_code == 403
+    assert r.status_code == 403 and "مالك التطبيق" in r.json()["detail"]
+    # مالك التطبيق بعد التبديل → نجاح
+    ok(client.post("/auth/switch-company", json={"company_id": company_id}))
+    new_until = (date.today() + timedelta(days=60)).isoformat()
+    res = ok(client.patch("/company/license", json={"license_password": RENEW_KEY, "license_until": new_until}))
+    assert res["license_until"] == new_until
 
 
 def test_null_license_never_blocks(env):
-    client, _lic_admin, company_id = env
-    # شركة الـ setup بلا license_until → الدخول والعمل طبيعيان
+    client, lic_admin, company_id = env
     r = client.post("/auth/login", data={"username": "platform", "password": "long-password-123"})
     assert r.status_code == 200
-    # رخصة مستقبلية أيضًا لا تحجب
     set_license(client, company_id, date.today() + timedelta(days=7))
     r = client.post("/auth/login", data={"username": "licadmin", "password": "licadmin-pass-123"})
     assert r.status_code == 200

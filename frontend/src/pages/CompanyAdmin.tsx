@@ -25,7 +25,7 @@ function fmtSize(bytes: number): string {
 
 export default function CompanyAdmin({ platform = false, onSaved }: { platform?: boolean; onSaved?: () => void }) {
   const navigate = useNavigate();
-  const { isAdmin } = useAuth();
+  const { isAdmin, isPlatformAdmin } = useAuth();
   const currentCompany = useFetch(() => api.get<Company>("/company"), "current-company");
   const branches = useFetch(() => api.get<Branch[]>("/company/branches"), "company-branches");
   const currentDepartments = useFetch(() => (!platform ? api.get<Department[]>("/company/departments") : Promise.resolve([])), "company-departments");
@@ -530,7 +530,7 @@ export default function CompanyAdmin({ platform = false, onSaved }: { platform?:
     <div className="company-admin-page">
       <PageHeader title={platform ? "إدارة الشركات" : "الفروع وإعدادات الشركة"} />
 
-      {(() => {
+      {isPlatformAdmin && (() => {
         const lu = currentCompany.data?.license_until ?? null;
         const daysLeft = lu ? Math.ceil((new Date(lu + "T23:59:59").getTime() - Date.now()) / 86400000) : null;
         const expired = daysLeft !== null && daysLeft < 0;
@@ -554,8 +554,9 @@ export default function CompanyAdmin({ platform = false, onSaved }: { platform?:
               )}
             </div>
             {lu && <p className="muted" style={{ fontSize: 13, margin: "6px 0 0" }}>
-              تنتهي رخصة الشركة في: <b>{new Date(lu + "T00:00:00").toLocaleDateString("ar-EG", { year: "numeric", month: "long", day: "numeric" })}</b>
-              {expired && <span style={{ color: "#b42318" }}> — جميع العمليات متوقفة للمستخدمين، ويمكنك التجديد أدناه.</span>}
+              رخصة «{currentCompany.data?.name}» تنتهي في: <b>{new Date(lu + "T00:00:00").toLocaleDateString("ar-EG", { year: "numeric", month: "long", day: "numeric" })}</b>
+              {expired && <span style={{ color: "#b42318" }}> — جميع العمليات متوقفة لكل مستخدمي الشركة، ويمكنك التجديد أدناه.</span>}
+              {!expired && !platform && <span> — للتجديد: بدّل لهذه الشركة من قائمة تبديل الشركة ثم أدخل كلمة السر.</span>}
             </p>}
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end", marginTop: 10 }}>
               <div>

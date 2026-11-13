@@ -186,19 +186,18 @@ def login(request: Request, form: OAuth2PasswordRequestForm = Depends(), db: Ses
             status.HTTP_403_FORBIDDEN,
             "User is not assigned to a company; contact the platform administrator",
         )
-    # حظر الدخول عند انتهاء رخصة الشركة — إلا لمدير الشركة نفسه (يدخل للتجديد) ومدير المنصة
+    # حظر الدخول عند انتهاء رخصة الشركة — مالك التطبيق (platform admin) فقط يتجاوز للتجديد
     _company = db.get(models.Company, membership.company_id)
     from ..exports import LOCAL_TZ
     if (
         _company is not None
         and _company.license_until is not None
         and datetime.now(LOCAL_TZ).date() > _company.license_until
-        and membership.role != "admin"
         and not user.is_platform_admin
     ):
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
-            f"انتهت رخصة استخدام البرنامج بتاريخ {_company.license_until.isoformat()} — يرجى التجديد من مزوّد البرنامج. مدير الشركة يمكنه الدخول والتجديد بكلمة سر التجديد.",
+            f"انتهت رخصة استخدام البرنامج بتاريخ {_company.license_until.isoformat()} — يرجى التواصل مع مزوّد البرنامج للتجديد",
         )
     db.info["company_id"] = membership.company_id
     with _failures_lock:

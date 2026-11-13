@@ -1134,12 +1134,9 @@ def renew_own_company_license(
 ):
     """تجديد ذاتي لرخصة الشركة: مدير الشركة + كلمة سر التجديد المحفوظة (LICENSE_RENEWAL_PASSWORD).
 
-    يعمل حتى وانتهت الرخصة — البوابة المركزية تعفي دور admin من حظر الترخيص."""
-    from ..deps import user_role
-    from ..exports import LOCAL_TZ
-    from datetime import datetime as _dt
-    if user_role(actor) != "admin" and not actor.is_platform_admin:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "التجديد متاح لمدير الشركة فقط")
+    يعمل حتى وانتهت الرخصة — مالك التطبيق (platform admin) هو من يجدد بعد التبديل لشركة العميل."""
+    if not actor.is_platform_admin:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "التجديد متاح لمالك التطبيق فقط")
     company_id = db.info["company_id"]
     company = db.get(models.Company, company_id)
     if company is None:

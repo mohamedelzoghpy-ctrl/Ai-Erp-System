@@ -22,6 +22,7 @@ vi.mock("./api", () => ({
   getToken: vi.fn(() => "fake-token"),
   setToken: vi.fn(),
   setUnauthorizedHandler: vi.fn(),
+  setLicenseExpiredHandler: vi.fn(),
 }));
 
 function Probe({ codes }: { codes: string[] }) {
