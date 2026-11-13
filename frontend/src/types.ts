@@ -90,6 +90,8 @@ export interface Product {
   quantity: number; // total over all warehouses
   reorder_level: number;
   qc_required?: boolean; // مادة حساسة: بوابة فحص جودة الاستلام PO_QC_GATE
+  serial_tracking?: boolean; // تتبع أرقام تسلسلية (استلام يسجل + بيع يربط)
+  warranty_months?: number | null; // مدة الضمان بالشهور
   is_active: boolean;
   warehouse_id: number | null;
   supplier_id: number | null;
@@ -166,6 +168,20 @@ export interface LowStockItem {
   image_uploaded?: boolean;
   supplier_name?: string | null;
   warehouse_id: number | null;
+}
+
+export interface SerialRow {
+  id: number;
+  product_id: number;
+  warehouse_id: number;
+  warehouse_name?: string | null;
+  serial: string;
+  status: "in_stock" | "sold";
+  source_ref?: string | null;
+  sale_ref?: string | null;
+  received_at?: string | null;
+  sold_at?: string | null;
+  warranty_end?: string | null;
 }
 
 export interface StockAnalyticsRow {
@@ -735,14 +751,15 @@ export interface StocktakeLine {
   product_id: number;
   sku: string | null;
   product_name: string | null;
-  system_qty: number;
+  system_qty: number | null; // مخفي في الجرد الأعمي حتى الاعتماد
   counted_qty: number | null;
   difference: number | null;
 }
 
 export interface Stocktake {
   id: number;
-  status: "open" | "applied" | "cancelled";
+  status: "open" | "review" | "applied" | "cancelled";
+  mode: "open" | "blind";
   warehouse_id: number | null;
   warehouse_name: string | null;
   notes: string | null;

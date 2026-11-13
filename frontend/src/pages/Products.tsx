@@ -4,7 +4,7 @@ import { useAuth } from "../auth";
 import { useI18n } from "../i18n";
 import { dateTime, money, num, reasonLabel } from "../format";
 import { useAction, useFetch, usePagedList } from "../hooks";
-import type { Party, Product, StockMovement, ProductStockRow, Warehouse } from "../types";
+import type { Party, Product, SerialRow, StockMovement, ProductStockRow, Warehouse } from "../types";
 import { Alert, Empty, Field, Loading, Modal, PageHeader, Pager, ProductThumb } from "../ui";
 
 export default function Products() {
@@ -15,6 +15,7 @@ export default function Products() {
   const [showInactive, setShowInactive] = useState(false);
   const [editing, setEditing] = useState<Product | "new" | null>(null);
   const [history, setHistory] = useState<Product | null>(null);
+  const [serials, setSerials] = useState<Product | null>(null);
 
   const products = usePagedList<Product>("/products", { search: search.trim(), low_stock: lowOnly, is_active: showInactive ? undefined : true, with_availability: true });
   const warehouses = useFetch(() => api.get<Warehouse[]>("/warehouses?limit=500"), "wh");
@@ -381,6 +382,11 @@ export default function Products() {
                       <button className="btn btn-sm" onClick={() => setHistory(p)}>
                         {t("الحركات")}
                       </button>
+                      {p.serial_tracking && (
+                        <button className="btn btn-sm" onClick={() => setSerials(p)}>
+                          🔢 {t("الأرقام")}
+                        </button>
+                      )}
                     </td>
                   </tr>
                 );
@@ -407,6 +413,7 @@ export default function Products() {
         />
       )}
       {history && <MovementsModal product={history} onClose={() => setHistory(null)} />}
+      {serials && <SerialsModal product={serials} onClose={() => setSerials(null)} />}
     </>
   );
 }
@@ -440,6 +447,8 @@ function ProductForm({
     quantity: "0",
     reorder_level: String(initial?.reorder_level ?? 0),
     qc_required: initial?.qc_required ?? false,
+    serial_tracking: initial?.serial_tracking ?? false,
+    warranty_months: initial?.warranty_months != null ? String(initial.warranty_months) : "",
     warehouse_id: initial?.warehouse_id ? String(initial.warehouse_id) : "",
     supplier_id: initial?.supplier_id ? String(initial.supplier_id) : "",
     is_active: initial?.is_active ?? true,
@@ -482,6 +491,8 @@ function ProductForm({
       sale_price: f.sale_price || "0",
       reorder_level: Number(f.reorder_level) || 0,
       qc_required: f.qc_required,
+      serial_tracking: f.serial_tracking,
+      warranty_months: f.warranty_months === "" ? null : Number(f.warranty_months),
       is_active: f.is_active,
       warehouse_id: f.warehouse_id ? Number(f.warehouse_id) : null,
       supplier_id: f.supplier_id ? Number(f.supplier_id) : null,
@@ -543,6 +554,17 @@ function ProductForm({
               {t("مادة حساسة تطلب فحصًا")}
             </label>
           </Field>
+          <Field label={t("الأرقام التسلسلية")} hint={t("موبايلات/أجهزة: الاستلام يُسجّل الأرقام والبيع يربط رقمًا محددًا — ويمكنك تتبع الضمان برقم الجهاز.")}>
+            <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <input type="checkbox" checked={f.serial_tracking} onChange={(e) => set("serial_tracking", e.target.checked)} />
+              {t("تتبع الأرقام التسلسلية")}
+            </label>
+          </Field>
+          {f.serial_tracking && (
+            <Field label={t("مدة الضمان (شهور)")} hint={t("اختياري — يحسب نهاية الضمان من تاريخ الاستلام في تقرير الضمان.")}>
+              <input type="number" min="0" max="120" step="1" value={f.warranty_months} onChange={(e) => set("warranty_months", e.target.value)} />
+            </Field>
+          )}
           <Field label={t("المخزن")}>
             <select value={f.warehouse_id} onChange={(e) => set("warehouse_id", e.target.value)}>
               <option value="">{t("— بدون —")}</option>
@@ -656,6 +678,98 @@ function MovementsModal({ product, onClose }: { product: Product; onClose: () =>
       ) : (
         <Empty>{t("لا توجد حركات لهذا المنتج.")}</Empty>
       )}
+    </Modal>
+  );
+}
+
+/** إدارة الأرقام التسلسلية لصنف متتبع: القائمة بالحالات + إضافة أرقام (رصيد افتتاحي/جهاز موجود). */
+function SerialsModal({ product, onClose }: { product: Product; onClose: () => void }) {
+  const { t } = useI18n();
+  const warehouses = useFetch(
+    () => api.get<Warehouse[]>("/warehouses?is_active=true&limit=500").then((ws) => ws.filter((w) => !w.is_transit)),
+    "serials-wh",
+  );
+  const [wh, setWh] = useState("");
+  const [text, setText] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const serials = useFetch(
+    () => api.get<SerialRow[]>(`/products/${product.id}/serials${statusFilter ? `?status=${statusFilter}` : ""}`),
+    `serials-${product.id}-${statusFilter}`,
+  );
+  const { busy, error, run } = useAction();
+
+  const add = () => {
+    const list = text.split(/[\n,،\s]+/).map((s) => s.trim()).filter(Boolean);
+    if (list.length === 0 || !wh) return;
+    void run(async () => {
+      await api.post(`/products/${product.id}/serials`, { serials: list, warehouse_id: Number(wh) });
+      setText("");
+      serials.reload();
+    });
+  };
+
+  return (
+    <Modal title={`🔢 ${t("الأرقام التسلسلية")} — ${product.name}`} onClose={onClose} wide>
+      <Alert>{error || serials.error}</Alert>
+      <div className="grid-2">
+        <Field label={t("المخزن")} hint={t("أين تُسجَّل الأرقام الجديدة")}>
+          <select value={wh} onChange={(e) => setWh(e.target.value)}>
+            <option value="">— {t("— اختر —")} —</option>
+            {(warehouses.data ?? []).map((w) => (
+              <option key={w.id} value={w.id}>{w.name}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label={t("الحالة")}>
+          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+            <option value="">{t("common.all")}</option>
+            <option value="in_stock">{t("متاح")}</option>
+            <option value="sold">{t("مباع")}</option>
+          </select>
+        </Field>
+      </div>
+      <Field label={t("إضافة أرقام")} hint={t("رقم في كل سطر (أو مفصولة بفواصل) — فريدة لكل صنف.")}>
+        <textarea rows={3} value={text} onChange={(e) => setText(e.target.value)} placeholder={"IMEI-111\nIMEI-222"} />
+      </Field>
+      <div className="actions" style={{ marginBottom: 10 }}>
+        <button className="btn btn-primary" disabled={busy || !wh || !text.trim()} onClick={add}>
+          {busy ? t("جارٍ الحفظ…") : t("تسجيل الأرقام")}
+        </button>
+      </div>
+      <div className="table-wrap" style={{ maxHeight: "40vh", overflow: "auto" }}>
+        {serials.loading && !serials.data ? (
+          <Loading />
+        ) : serials.data && serials.data.length > 0 ? (
+          <table>
+            <thead>
+              <tr>
+                <th>{t("الرقم")}</th>
+                <th>{t("المخزن")}</th>
+                <th>{t("الحالة")}</th>
+                <th>{t("المرجع")}</th>
+                <th>{t("نهاية الضمان")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {serials.data.map((s) => (
+                <tr key={s.id}>
+                  <td dir="ltr" style={{ fontWeight: 600 }}>{s.serial}</td>
+                  <td>{s.warehouse_name ?? "—"}</td>
+                  <td>
+                    <span className={`badge ${s.status === "in_stock" ? "badge-ok" : "badge-off"}`}>
+                      {s.status === "in_stock" ? t("متاح") : t("مباع")}
+                    </span>
+                  </td>
+                  <td dir="ltr" style={{ fontSize: 12 }}>{s.sale_ref ?? s.source_ref ?? "—"}</td>
+                  <td>{s.warranty_end ?? "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <Empty>{t("لا أرقام مسجلة بعد")}</Empty>
+        )}
+      </div>
     </Modal>
   );
 }

@@ -57,6 +57,8 @@ def test_stocktake_accepts_fractional_counts():
         line = [l for l in saved.json()["lines"] if l["product_id"] == product["id"]][0]
         assert line["counted_qty"] == 1.5
 
+        submitted = client.post(f"/stocktakes/{sid}/submit")
+        assert submitted.status_code == 200, submitted.text
         applied = client.post(f"/stocktakes/{sid}/apply")
         assert applied.status_code == 200, applied.text
         # الفرق -8.5 نُرحّل للرصيد فعلاً

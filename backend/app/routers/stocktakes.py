@@ -17,9 +17,25 @@ router = APIRouter(prefix="/stocktakes", tags=["stock-take"])
 
 def _out(s: models.Stocktake, detail: bool = False) -> schemas.StocktakeOut:
     counted = [l for l in s.lines if l.counted_qty is not None]
+    # الجرد الأعمي: أرصدة النظام والفروق مخفية حتى الاعتماد (العد بلا تلويث)
+    mask = s.mode == "blind" and s.status == "open"  # type: ignore
+    lines = None
+    if detail:
+        lines = [
+            schemas.StocktakeLineOut(
+                product_id=l.product_id,
+                sku=l.sku,
+                product_name=l.product_name,
+                system_qty=None if mask else l.system_qty,
+                counted_qty=l.counted_qty,
+                difference=None if mask else l.difference,
+            )
+            for l in s.lines
+        ]
     return schemas.StocktakeOut(
         id=s.id,  # type: ignore
         status=s.status,  # type: ignore
+        mode=s.mode,  # type: ignore
         warehouse_id=s.warehouse_id,  # type: ignore
         warehouse_name=s.warehouse.name if s.warehouse else None,
         notes=s.notes,  # type: ignore
@@ -28,8 +44,8 @@ def _out(s: models.Stocktake, detail: bool = False) -> schemas.StocktakeOut:
         applied_at=s.applied_at,  # type: ignore
         lines_total=len(s.lines),
         lines_counted=len(counted),
-        lines_with_difference=sum(1 for l in counted if l.difference != 0),
-        lines=[schemas.StocktakeLineOut.model_validate(l) for l in s.lines] if detail else None,
+        lines_with_difference=0 if mask else sum(1 for l in counted if l.difference != 0),
+        lines=lines,
     )
 
 
@@ -56,10 +72,10 @@ def create(payload: schemas.StocktakeCreate, db: Session = Depends(get_db), user
     ]
     if not products:
         raise HTTPException(status.HTTP_409_CONFLICT, "No active products to count in this warehouse")
-    s = models.Stocktake(warehouse_id=payload.warehouse_id, notes=payload.notes, created_by=user.id, username=user.username)  # type: ignore
+    s = models.Stocktake(warehouse_id=payload.warehouse_id, notes=payload.notes, created_by=user.id, username=user.username, mode=payload.mode)  # type: ignore
     s.lines = [models.StocktakeLine(product_id=p.id, system_qty=held.get(p.id, 0)) for p in products]  # type: ignore
     db.add(s)
-    audit(db, user, "create", "stocktake", s, f"{len(products)} صنف")
+    audit(db, user, "create", "stocktake", s, f"{len(products)} صنف" + (" · جرد أعمي" if payload.mode == "blind" else ""))
     db.commit()
     db.refresh(s)
     return _out(s)
@@ -112,12 +128,46 @@ def add_line(stocktake_id: int, payload: schemas.StocktakeAddLine, db: Session =
     return _out(s, detail=True)
 
 
+@router.post("/{stocktake_id}/submit", response_model=schemas.StocktakeOut)
+def submit_for_review(stocktake_id: int, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    """رفع الجرد للاعتماد: open → review — الفروق تُراجَع قبل أي تعديل مخزون."""
+    s = _get(db, stocktake_id, lock=True)
+    if s.created_by != user.id and user_role(user) not in ("admin", "manager"):  # type: ignore
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only the creator or a manager can submit this stock-take")
+    if s.status != "open":  # type: ignore
+        raise HTTPException(status.HTTP_409_CONFLICT, f"Stock-take is {s.status}")
+    if not any(l.counted_qty is not None for l in s.lines):  # type: ignore
+        raise HTTPException(status.HTTP_409_CONFLICT, "Nothing counted yet")
+    s.status = "review"  # type: ignore
+    audit(db, user, "update", "stocktake", s, "رفع لاعتماد الفروق")
+    db.commit()
+    db.refresh(s)
+    return _out(s, detail=True)
+
+
+@router.post("/{stocktake_id}/review-reject", response_model=schemas.StocktakeOut)
+def review_reject(stocktake_id: int, reason: Optional[str] = None, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    """إعادة الجرد للعد (review → open) — تعديل مطلوب قبل الاعتماد."""
+    if user_role(user) not in ("admin", "manager"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only a manager or admin can send a stock-take back")
+    s = _get(db, stocktake_id, lock=True)
+    if s.status != "review":  # type: ignore
+        raise HTTPException(status.HTTP_409_CONFLICT, f"Stock-take is {s.status}")
+    s.status = "open"  # type: ignore
+    if reason:
+        s.notes = ((s.notes or "") + f" · أُعيد للعد: {reason}").strip(" ·")  # type: ignore
+    audit(db, user, "update", "stocktake", s, f"أعيد للعد: {reason or '—'}")
+    db.commit()
+    db.refresh(s)
+    return _out(s, detail=True)
+
+
 @router.post("/{stocktake_id}/apply", response_model=schemas.StocktakeOut)
 def apply(stocktake_id: int, db: Session = Depends(get_db), user: models.User = Depends(require_manager)):
-    """Adds (counted - system at sheet time) to each counted product's *current* stock, so sales made during the count are kept."""
+    """اعتماد الفروق وتطبيقها (review فقط): (المعدود − النظام عند فتح الورقة) يُضاف للرصيد الحالي."""
     s = _get(db, stocktake_id, lock=True)
-    if s.status != "open":  # type: ignore
-        raise HTTPException(status.HTTP_409_CONFLICT, f"Stock-take is already {s.status}")
+    if s.status != "review":  # type: ignore
+        raise HTTPException(status.HTTP_409_CONFLICT, f"الاعتماد يتطلب جردًا مرفوعًا للمراجعة (الحالة: {s.status})")
     counted = [l for l in s.lines if l.counted_qty is not None]
     if not counted:
         raise HTTPException(status.HTTP_409_CONFLICT, "Nothing counted yet")
@@ -220,20 +270,47 @@ def cancel(stocktake_id: int, db: Session = Depends(get_db), user: models.User =
 def sheet_xlsx(stocktake_id: int, db: Session = Depends(get_db), _: models.User = Depends(get_current_user)):
     """Count sheet to print: the counted column is blank while open and filled in afterwards."""
     s = _get(db, stocktake_id)
+    blind = s.mode == "blind" and s.status == "open"  # type: ignore
     rows = [
         [
             ("text", l.sku or ""),
             ("text", l.product_name or ""),
-            ("int", l.system_qty),
+            ("text", "—" if blind else str(l.system_qty)),
             ("text", "" if l.counted_qty is None else str(l.counted_qty)),
-            ("text", "" if l.difference is None else f"{l.difference:+}"),
+            ("text", "—" if blind else ("" if l.difference is None else f"{l.difference:+}")),
         ]
         for l in s.lines
     ]
     scope = s.warehouse.name if s.warehouse else "كل المنتجات"
-    content = exports.build_tables_xlsx(f"ورقة جرد #{s.id}", f"{scope} · {exports.fmt_dt(s.created_at)}", [("الجرد", ["الكود", "المنتج", "كمية النظام", "الكمية المعدودة", "الفرق"], rows)])  # type: ignore
+    title = f"ورقة جرد #{s.id}" + (" (أعمي)" if blind else "")  # type: ignore
+    content = exports.build_tables_xlsx(title, f"{scope} · {exports.fmt_dt(s.created_at)}", [("الجرد", ["الكود", "المنتج", "كمية النظام", "الكمية المعدودة", "الفرق"], rows)])  # type: ignore
     return Response(
         content=content,
         media_type=exports.XLSX_MIME,
         headers={"Content-Disposition": f'attachment; filename="stocktake-{s.id}.xlsx"', "Cache-Control": "no-store"},
+    )
+
+
+@router.get("/{stocktake_id}/pdf")
+def sheet_pdf(stocktake_id: int, db: Session = Depends(get_db), _: models.User = Depends(get_current_user)):
+    """شيت جرد قابل للطباعة (PDF) — في الجرد الأعمي يخفى رصيد النظام والفروق."""
+    s = _get(db, stocktake_id)
+    blind = s.mode == "blind" and s.status == "open"  # type: ignore
+    rows = [
+        [
+            ("text", l.sku or ""),
+            ("text", l.product_name or ""),
+            ("text", "—" if blind else str(l.system_qty)),
+            ("text", "" if l.counted_qty is None else str(l.counted_qty)),
+            ("text", "—" if blind else ("" if l.difference is None else f"{l.difference:+}")),
+        ]
+        for l in s.lines
+    ]
+    scope = s.warehouse.name if s.warehouse else "كل المنتجات"  # type: ignore
+    title = f"ورقة جرد #{s.id}" + (" (أعمي)" if blind else "")  # type: ignore
+    content = exports.build_tables_pdf(title, f"{scope} · {exports.fmt_dt(s.created_at)}", [("الجرد", ["الكود", "المنتج", "كمية النظام", "الكمية المعدودة", "الفرق"], rows)])
+    return Response(
+        content=content,
+        media_type=exports.PDF_MIME,
+        headers={"Content-Disposition": f'attachment; filename="stocktake-{s.id}.pdf"', "Cache-Control": "no-store"},
     )

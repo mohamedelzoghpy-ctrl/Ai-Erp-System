@@ -6,6 +6,7 @@ import re as _re
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
+from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -735,6 +736,71 @@ def create_adjustment_reason(payload: schemas.AdjustmentReasonIn, db: Session = 
     db.refresh(row)
     audit(db, user, "create", "adjustment_reason", row, row.name)
     return row
+
+
+# ---------------- الأرقام التسلسلية (م4) ----------------
+
+class SerialIn(BaseModel):
+    serials: List[str] = Field(min_length=1, max_length=500)
+    warehouse_id: int
+
+
+@router.post("/{product_id}/serials", response_model=List[schemas.SerialOut], status_code=status.HTTP_201_CREATED)
+def add_serials(product_id: int, payload: SerialIn, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    """تسجيل أرقام تسلسلية يدويًا (رصيد افتتاحي/جهاز موجود) — فريدة لكل (شركة × صنف)."""
+    product = _product_or_404(db, product_id)
+    if not product.serial_tracking:
+        raise HTTPException(422, "الصنف لا يتتبع أرقامًا تسلسلية — فعّل التتبع من بيانات الصنف")
+    warehouse = db.query(models.Warehouse).filter(models.Warehouse.id == payload.warehouse_id, models.Warehouse.company_id == db.info["company_id"]).first()
+    if warehouse is None:
+        raise HTTPException(422, "المخزن غير موجود")
+    serials = [s.strip() for s in payload.serials if s.strip()]
+    if not serials:
+        raise HTTPException(422, "لا أرقام صالحة")
+    existing = {
+        s for (s,) in db.query(models.ProductSerial.serial)
+        .filter(
+            models.ProductSerial.company_id == db.info["company_id"],
+            models.ProductSerial.product_id == product_id,
+            models.ProductSerial.serial.in_(serials),
+        )
+        .all()
+    }
+    if existing:
+        raise HTTPException(409, "أرقام مسجلة بالفعل: " + "، ".join(sorted(existing)))
+    rows = [
+        models.ProductSerial(  # type: ignore
+            company_id=db.info["company_id"], product_id=product_id, warehouse_id=warehouse.id,
+            serial=s, status="in_stock", source_ref="يدوي",
+        )
+        for s in serials
+    ]
+    db.add_all(rows)
+    audit(db, user, "create", "product_serial", product, f"{len(serials)} رقم · {warehouse.name}")
+    db.commit()
+    return [
+        schemas.SerialOut.model_validate(r, from_attributes=True) for r in rows
+    ]
+
+
+@router.get("/{product_id}/serials", response_model=List[schemas.SerialOut])
+def list_serials(product_id: int, warehouse_id: Optional[int] = None, status: Optional[str] = None, db: Session = Depends(get_db), _: models.User = Depends(get_current_user)):
+    """سجل الأرقام التسلسلية للصنف — الحالة والاستلام والبيع ونهاية الضمان."""
+    _product_or_404(db, product_id)
+    q = (
+        db.query(models.ProductSerial)
+        .join(models.Warehouse, models.Warehouse.id == models.ProductSerial.warehouse_id)
+        .filter(
+            models.ProductSerial.company_id == db.info["company_id"],
+            models.ProductSerial.product_id == product_id,
+            models.Warehouse.company_id == db.info["company_id"],
+        )
+    )
+    if warehouse_id is not None:
+        q = q.filter(models.ProductSerial.warehouse_id == warehouse_id)
+    if status:
+        q = q.filter(models.ProductSerial.status == status)
+    return [schemas.SerialOut.model_validate(r, from_attributes=True) for r in q.order_by(models.ProductSerial.id.desc()).limit(1000)]
 
 
 @router.post("/{product_id}/min-level", response_model=List[schemas.ProductStockOut])

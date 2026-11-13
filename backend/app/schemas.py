@@ -2,7 +2,7 @@
 
 from datetime import date, date as _date, datetime
 from decimal import Decimal
-from typing import List, Literal, Optional
+from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -232,6 +232,9 @@ class ProductBase(BaseModel):
     pack_name: Optional[str] = Field(default=None, max_length=30)
     # مادة حساسة: مع بوابة PO_QC_GATE يستقبل لوطها «بانتظار الفحص» ولا يُصرف حتى الاعتماد
     qc_required: bool = False
+    # تتبع أرقام تسلسلية: الاستلام يسجل الأرقام والبيع يربط رقمًا محددًا
+    serial_tracking: bool = False
+    warranty_months: Optional[int] = Field(default=None, ge=0, le=120)
     is_active: bool = True
     warehouse_id: Optional[int] = None
     supplier_id: Optional[int] = None
@@ -253,6 +256,8 @@ class ProductUpdate(BaseModel):
     sale_price: Optional[Decimal] = Field(default=None, ge=0)
     reorder_level: Optional[int] = Field(default=None, ge=0)
     qc_required: Optional[bool] = None
+    serial_tracking: Optional[bool] = None
+    warranty_months: Optional[int] = Field(default=None, ge=0, le=120)
     is_active: Optional[bool] = None
     warehouse_id: Optional[int] = None
     supplier_id: Optional[int] = None
@@ -336,6 +341,8 @@ class PurchaseOrderCreate(BaseModel):
     currency_id: Optional[int] = None
     # False = مسودة تُستلم لاحقًا (كليًا عبر /receive أو جزئيًا عبر /receive-partial)
     auto_receive: bool = True
+    # أرقام تسلسلية للاستلام الفوري للأصناف المتتبعة: {product_id: [serials]}
+    serials: Optional[Dict[int, List[str]]] = None
     items: List[PurchaseItemIn] = Field(min_length=1)
 
 
@@ -347,6 +354,8 @@ class PartialReceiveItemIn(BaseModel):
 class PartialReceiveIn(BaseModel):
     """استلام جزئي لأمر شراء مسودة/جزئي — الكميات تُجمع على الاستلامات السابقة."""
     items: List[PartialReceiveItemIn] = Field(min_length=1)
+    # أرقام تسلسلية للأصناف المتتبعة: {product_id: [serials]} — إلزامية بمقدار الكمية المستلمة
+    serials: Optional[Dict[int, List[str]]] = None
 
 
 class PurchaseOrderOut(ORMModel):
@@ -396,6 +405,8 @@ class ProductBarcodeOut(ORMModel):
 class ConfirmOptions(BaseModel):
     """خيارات تأكيد أمر البيع — البيع من لوطات منتهية يتطلب مديرًا."""
     allow_expired: bool = False
+    # أرقام تسلسلية للأصناف المتتبعة: {product_id: [serials]} — الغياب = اختيار آلي من المتاح
+    serials: Optional[Dict[int, List[str]]] = None
 
 
 class SalesItemIn(BaseModel):
@@ -1867,6 +1878,22 @@ class ShiftOut(BaseModel):
 class StocktakeCreate(BaseModel):
     warehouse_id: int
     notes: Optional[str] = None
+    mode: Literal["open", "blind"] = "open"  # blind = العد بلا عرض رصيد النظام (يمنع التلويث)
+
+
+# ---------- الأرقام التسلسلية ----------
+class SerialOut(ORMModel):
+    id: int
+    product_id: int
+    warehouse_id: int
+    serial: str
+    status: str  # in_stock | sold
+    source_ref: Optional[str] = None
+    sale_ref: Optional[str] = None
+    received_at: Optional[datetime] = None
+    sold_at: Optional[datetime] = None
+    warranty_end: Optional[date] = None
+    warehouse_name: Optional[str] = None
 
 
 class StocktakeCount(BaseModel):
@@ -1886,7 +1913,7 @@ class StocktakeLineOut(ORMModel):
     product_id: int
     sku: Optional[str] = None
     product_name: Optional[str] = None
-    system_qty: float
+    system_qty: Optional[float] = None  # تُخفى في الجرد الأعمي حتى الاعتماد
     counted_qty: Optional[float] = None
     difference: Optional[float] = None
 
@@ -1894,6 +1921,7 @@ class StocktakeLineOut(ORMModel):
 class StocktakeOut(BaseModel):
     id: int
     status: str
+    mode: str = "open"
     warehouse_id: Optional[int] = None
     warehouse_name: Optional[str] = None
     notes: Optional[str] = None

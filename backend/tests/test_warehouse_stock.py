@@ -273,6 +273,7 @@ def test_stocktake_counts_one_warehouse_and_adjusts_only_it(api):
     sheet = ok(api.get(f"/stocktakes/{st['id']}"))["lines"]
     assert [(l["product_id"], l["system_qty"]) for l in sheet] == [(p["id"], 4)]  # the shop's quantity, not the total
     ok(api.put(f"/stocktakes/{st['id']}/counts", json={"counts": [{"product_id": p["id"], "counted_qty": 3}]}))
+    ok(api.post(f"/stocktakes/{st['id']}/submit"))
     ok(api.post(f"/stocktakes/{st['id']}/apply"))
     assert by_wh(api, p["id"]) == {w1["id"]: 6, w2["id"]: 3} and total(api, p["id"]) == 9
 

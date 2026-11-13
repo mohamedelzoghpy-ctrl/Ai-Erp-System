@@ -124,6 +124,7 @@ CATALOG: Dict[str, dict] = {
                 ("template", "تنزيل قالب الاستيراد", False, False),
                 ("export", "تصدير الأصناف Excel", False, False),
                 ("cost_view", "عرض تكلفة الصنف (حقل حساس)", False, True),
+                ("serials", "إدارة الأرقام التسلسلية للصنف", False, False),
             ]),
             "warehouse": ("المخازن", [
                 ("view", "عرض المخازن", False, False),
@@ -608,6 +609,7 @@ CATALOG: Dict[str, dict] = {
                 ("low_stock_export", "تصدير الأصناف المنخفضة", False, False),
                 ("stock_analytics", "تحليلات المخزون (دوران/راكد/ABC)", False, False),
                 ("stock_analytics_export", "تصدير تحليلات المخزون", False, False),
+                ("serial_warranty", "تقرير ضمان الأرقام التسلسلية", False, False),
             ]),
             "purchasing": ("تقارير المشتريات", [
                 ("payables", "الذمم الدائنة", False, False),

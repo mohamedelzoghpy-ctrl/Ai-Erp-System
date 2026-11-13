@@ -809,6 +809,12 @@ function PartialReceiveDialog({
   const [qtys, setQtys] = useState<Record<number, string>>(() =>
     Object.fromEntries(order.items.map((it) => [it.id, String(Number((it.quantity - (it.received_quantity ?? 0)).toFixed(3)))])),
   );
+  // أصناف متتبعة بالأرقام التسلسلية: خانة إدخال الأرقام لكل بند (إلزامية بمقدار الكمية)
+  const [serials, setSerials] = useState<Record<number, string>>({});
+  const tracked = useFetch(
+    () => Promise.all(order.items.map((it) => api.get<Product>(`/products/${it.product_id}`))).then((ps) => new Map(ps.filter((p) => p.serial_tracking).map((p) => [p.id, p]))),
+    `tracked-${order.id}`,
+  );
   const lines = order.items
     .map((it) => ({ it, qty: Number(qtys[it.id] ?? "0") }))
     .filter((l) => l.qty > 0)
@@ -819,7 +825,15 @@ function PartialReceiveDialog({
     e.preventDefault();
     if (lines.length === 0 || over) return;
     void run(async () => {
-      await api.post(`/purchase-orders/${order.id}/receive-partial`, { items: lines });
+      const serialMap: Record<number, string[]> = {};
+      for (const [pidS, raw] of Object.entries(serials)) {
+        const list = raw.split(/[\n,،\s]+/).map((s) => s.trim()).filter(Boolean);
+        if (list.length > 0) serialMap[Number(pidS)] = list;
+      }
+      await api.post(`/purchase-orders/${order.id}/receive-partial`, {
+        items: lines,
+        ...(Object.keys(serialMap).length > 0 ? { serials: serialMap } : {}),
+      });
       onDone();
     });
   };
@@ -827,7 +841,7 @@ function PartialReceiveDialog({
   return (
     <Modal title={`${t("استلام جزئي")} — ${t("الفاتورة")} #${order.id}`} onClose={onClose}>
       <form onSubmit={submit}>
-        <Alert>{error}</Alert>
+        <Alert>{error || tracked.error}</Alert>
         <p className="muted" style={{ marginTop: 0 }}>
           {t("استلم الكميات الواصلة فعليًا — يمكن تكرار الاستلام حتى اكتمال الفاتورة. التجاوز فوق المطلوب يحتاج صلاحية خاصة.")}
         </p>
@@ -844,9 +858,13 @@ function PartialReceiveDialog({
             <tbody>
               {order.items.map((it) => {
                 const remaining = Number((it.quantity - (it.received_quantity ?? 0)).toFixed(3));
+                const isTracked = tracked.data?.get(it.product_id) != null;
                 return (
                   <tr key={it.id}>
-                    <td>{it.product_name ?? `#${it.product_id}`}</td>
+                    <td>
+                      {it.product_name ?? `#${it.product_id}`}
+                      {isTracked && <span className="badge badge-warn" style={{ marginInlineStart: 6 }}>🔢 {t("تسلسلي")}</span>}
+                    </td>
                     <td className="num">{num(it.quantity)}</td>
                     <td className="num">{num(it.received_quantity ?? 0)}</td>
                     <td className="num">
@@ -871,6 +889,21 @@ function PartialReceiveDialog({
             </tbody>
           </table>
         </div>
+        {tracked.data && tracked.data.size > 0 && (
+          <>
+            {order.items.filter((it) => tracked.data?.get(it.product_id) != null).map((it) => (
+              <Field key={it.id} label={`🔢 ${t("أرقام ")}${it.product_name ?? it.product_id}`} hint={t("رقم في كل سطر — إلزامية بمقدار كمية الاستلام لهذا الصنف المتتبع.")}>
+                <textarea
+                  rows={2}
+                  dir="ltr"
+                  value={serials[it.id] ?? ""}
+                  aria-label={`${t("أرقام ")}${it.product_name ?? it.product_id}`}
+                  onChange={(e) => setSerials((s) => ({ ...s, [it.product_id]: e.target.value }))}
+                />
+              </Field>
+            ))}
+          </>
+        )}
         <div className="actions">
           <button className="btn btn-primary" disabled={busy || lines.length === 0 || over}>
             {busy ? t("جارٍ الاستلام…") : t("تأكيد الاستلام")}

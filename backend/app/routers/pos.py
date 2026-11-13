@@ -129,6 +129,9 @@ def checkout(payload: schemas.PosCheckout, request: Request, db: Session = Depen
     db.flush()
     apply_sale_stock(db, order, allow_expired=False)  # POS: حجب اللوطات المنتهية دائمًا
     order.status = "confirmed"  # type: ignore
+    # أصناف متتبعة بالأرقام التسلسلية: اختيار آلي (الأقدم أولًا) من مخزن البيع
+    from .orders import _bind_sale_serials
+    _bind_sale_serials(db, order)
 
     # ---- Accounting: a POS sale posts the same journals as a confirmed sales order. ----
     from ..accounting import AccountingEngine, link_bank_coa, link_party_coa, link_safe_coa, seed_default_coa

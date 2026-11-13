@@ -6,7 +6,7 @@ Lifecycle
 Stock is only touched on the transition, inside one transaction, with row locks.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import List, Optional
 
@@ -70,6 +70,74 @@ def _require_draft(order, action: str):
         raise HTTPException(
             status.HTTP_409_CONFLICT, f"Cannot {action}: order is already '{order.status}'"
         )
+
+
+def _register_serials(db: Session, order, received_map: dict, serials_map: Optional[dict], ref: str) -> None:
+    """تسجيل أرقام استلام الأصناف المتتبعة — إلزامي بمقدار الكمية المستلمة (فريدة لكل صنف)."""
+    for pid, qty in received_map.items():
+        product = db.get(models.Product, pid)
+        if product is None or not product.serial_tracking:
+            continue
+        qty_d = Decimal(str(qty))
+        if qty_d != qty_d.to_integral_value():
+            raise HTTPException(422, f"الصنف «{product.name}» متتبع بالأرقام التسلسلية — الكميات تكون وحدات كاملة")
+        qty_i = int(qty_d)
+        provided = [s.strip() for s in ((serials_map or {}).get(pid) or []) if s and s.strip()]
+        if len(provided) != qty_i:
+            raise HTTPException(409, f"الصنف «{product.name}» متتبع بالأرقام التسلسلية — تسجيل {qty_i} رقمًا مطلوب عند الاستلام (وصل {len(provided)})")
+        existing = {
+            s for (s,) in db.query(models.ProductSerial.serial)
+            .filter(
+                models.ProductSerial.company_id == db.info["company_id"],
+                models.ProductSerial.product_id == pid,
+                models.ProductSerial.serial.in_(provided),
+            )
+            .all()
+        }
+        if existing:
+            raise HTTPException(409, f"أرقام مسجلة بالفعل للصنف «{product.name}»: " + "، ".join(sorted(existing)))
+        for s in provided:
+            db.add(models.ProductSerial(  # type: ignore
+                company_id=db.info["company_id"], product_id=pid, warehouse_id=order.warehouse_id,
+                serial=s, status="in_stock", source_ref=ref,
+            ))
+
+
+def _bind_sale_serials(db: Session, order, serials_map: Optional[dict] = None) -> None:
+    """ربط أرقام الأصناف المتتبعة بالبيع: المعطاة تتحقق من توفرها، والمفقودة تُختار آليًا (الأقدم أولًا)."""
+    for item in order.items:
+        product = db.get(models.Product, item.product_id)
+        if product is None or not product.serial_tracking:
+            continue
+        qty_d = Decimal(str(item.quantity))
+        if qty_d != qty_d.to_integral_value():
+            raise HTTPException(422, f"الصنف «{product.name}» متتبع بالأرقام التسلسلية — البيع بوحدات كاملة")
+        qty_i = int(qty_d)
+        provided = [s.strip() for s in ((serials_map or {}).get(item.product_id) or []) if s and s.strip()]
+        if provided and len(provided) != qty_i:
+            raise HTTPException(422, f"الصنف «{product.name}»: ربط {qty_i} رقمًا مطلوب بالبيع (وصل {len(provided)})")
+        q = (
+            db.query(models.ProductSerial)
+            .filter(
+                models.ProductSerial.company_id == db.info["company_id"],
+                models.ProductSerial.product_id == item.product_id,
+                models.ProductSerial.warehouse_id == order.warehouse_id,
+                models.ProductSerial.status == "in_stock",
+            )
+        )
+        if provided:
+            rows = q.filter(models.ProductSerial.serial.in_(provided)).all()
+            missing = set(provided) - {r.serial for r in rows}
+            if missing:
+                raise HTTPException(409, f"أرقام غير متاحة للبيع للصنف «{product.name}»: " + "، ".join(sorted(missing)))
+        else:
+            rows = q.order_by(models.ProductSerial.id.asc()).limit(qty_i).all()
+            if len(rows) < qty_i:
+                raise HTTPException(409, f"لا توجد أرقام متاحة كافية للصنف «{product.name}» في مخزن البيع ({len(rows)} من {qty_i}) — سجل الأرقام أولًا")
+        for r in rows:
+            r.status = "sold"  # type: ignore
+            r.sale_ref = f"SO-{order.id}"  # type: ignore
+            r.sold_at = datetime.now(timezone.utc)  # type: ignore
 
 
 def _lot_qc_status(product: models.Product) -> str:
@@ -267,7 +335,8 @@ def create_purchase_order(payload: schemas.PurchaseOrderCreate, db: Session = De
     received_qty: dict = {}
     for item in order.items:
         received_qty[item.product_id] = received_qty.get(item.product_id, Decimal("0")) + Decimal(str(item.quantity))
-    _apply_po_receipt(db, order, received_qty, products)
+    _apply_po_receipt(db, order, dict(received_qty), products)
+    _register_serials(db, order, received_qty, payload.serials, f"PO-{order.id}")
     order.status = "received"  # type: ignore
 
     from ..accounting import VAT_INPUT_CODE, link_party_coa, link_safe_coa, seed_default_coa
@@ -367,7 +436,7 @@ def get_purchase_order(order_id: int, db: Session = Depends(get_db)):
 
 
 @purchases.post("/{order_id}/receive", response_model=schemas.PurchaseOrderOut)
-def receive_purchase_order(order_id: int, request: Request, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+def receive_purchase_order(order_id: int, request: Request, payload: Optional[schemas.PartialReceiveIn] = None, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     """Mark goods as received: adds stock, updates each product's cost price, logs movements."""
     order = _locked_order_or_404(db, models.PurchaseOrder, order_id, "Purchase order")
     _require_draft(order, "receive")
@@ -380,7 +449,8 @@ def receive_purchase_order(order_id: int, request: Request, db: Session = Depend
     for item in order.items:
         products[item.product_id] = _locked_product(db, item.product_id)
         received_qty[item.product_id] = received_qty.get(item.product_id, Decimal("0")) + Decimal(str(item.quantity))
-    _apply_po_receipt(db, order, received_qty, products)
+    _apply_po_receipt(db, order, dict(received_qty), products)
+    _register_serials(db, order, received_qty, payload.serials if payload is not None else None, f"PO-{order.id}")
     order.status = "received"  # type: ignore
 
     # Accounting: Debit Inventory, Credit Supplier
@@ -464,6 +534,7 @@ def receive_purchase_order_partial(
 
     products = {pid: _locked_product(db, pid) for pid in sorted(wanted)}
     gross = _apply_po_receipt(db, order, dict(wanted), products)
+    _register_serials(db, order, dict(wanted), payload.serials, f"PO-{order.id}")
 
     # القيد بالنسبة المستلمة: الخصم يُوزَّع بنسبة القيمة المستلمة، والضريبة بنسبة الصافي
     order_gross = sum((Decimal(str(it.quantity)) * it.unit_cost for it in order.items), Decimal("0"))
@@ -708,6 +779,8 @@ def confirm_sales_order(order_id: int, request: Request, db: Session = Depends(g
     check_credit_limit(db, order.customer_id, Decimal(str(order.total_amount)), perms=getattr(request.state, "permissions", None))
     apply_sale_stock(db, order, allow_expired=allow_expired)
     order.status = "confirmed"  # type: ignore
+    # ربط أرقام الأصناف المتتبعة بالبيع (المعطاة تتحقق، والباقي اختيار آلي) ثم تحرير الحجوزات
+    _bind_sale_serials(db, order, payload.serials if payload is not None else None)
     # الحجز يُستهلك بالمطابقة — المخزون خرج فعليًا فلا يظل محسوبًا على «متاح للبيع»
     _release_reservations(db, order.id)
 

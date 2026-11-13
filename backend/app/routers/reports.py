@@ -1038,6 +1038,46 @@ def stock_analytics_xlsx(
     )
 
 
+# ---------------------------------------------------------------- أرقام تسلسلية (م4)
+@router.get("/serial-warranty")
+def serial_warranty(
+    product_id: Optional[int] = None,
+    status: Optional[str] = None,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_manager),
+):
+    """سجل الأرقام التسلسلية بمنظور الضمان: الاستلام، البيع، ونهاية الضمان المحسوبة."""
+    q = (
+        db.query(models.ProductSerial, models.Product.sku, models.Product.name, models.Warehouse.name)
+        .join(models.Product, models.Product.id == models.ProductSerial.product_id)
+        .join(models.Warehouse, models.Warehouse.id == models.ProductSerial.warehouse_id)
+        .filter(
+            models.ProductSerial.company_id == db.info["company_id"],
+            models.Product.company_id == db.info["company_id"],
+        )
+    )
+    if product_id is not None:
+        q = q.filter(models.ProductSerial.product_id == product_id)
+    if status:
+        q = q.filter(models.ProductSerial.status == status)
+    rows = []
+    for s, sku, pname, wname in q.order_by(models.ProductSerial.id.desc()).limit(2000).all():
+        rows.append({
+            "serial": s.serial,
+            "product_id": s.product_id,
+            "sku": sku,
+            "product_name": pname,
+            "warehouse_name": wname,
+            "status": s.status,
+            "source_ref": s.source_ref,
+            "sale_ref": s.sale_ref,
+            "received_at": s.received_at.isoformat() if s.received_at else None,
+            "sold_at": s.sold_at.isoformat() if s.sold_at else None,
+            "warranty_end": s.warranty_end.isoformat() if s.warranty_end else None,
+        })
+    return {"rows": rows, "count": len(rows)}
+
+
 # ---------------------------------------------------------------- اقتراحات الشراء
 def _purchase_suggestion_rows(db: Session, warehouse_id: Optional[int] = None, supplier_id: Optional[int] = None) -> List[Dict[str, Any]]:
     """ما ينبغي طلبه الآن: الهدف (الأقصى ثم الأدنى لكل مخزن، أو العام) − المتاح، بتكلفة المتوسط المرجح.

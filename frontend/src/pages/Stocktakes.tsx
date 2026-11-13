@@ -7,7 +7,7 @@ import { useAction, useFetch, usePagedList } from "../hooks";
 import type { Product, Stocktake, Warehouse } from "../types";
 import { Alert, Empty, Field, Loading, Lookup, Modal, PageHeader, Pager } from "../ui";
 
-const STATUS: Record<Stocktake["status"], string> = { open: "مفتوح", applied: "تم الاعتماد", cancelled: "ملغي" };
+const STATUS: Record<Stocktake["status"], string> = { open: "مفتوح", review: "بانتظار الاعتماد", applied: "تم الاعتماد", cancelled: "ملغي" };
 
 function NewDialog({ onClose, onDone }: { onClose: () => void; onDone: (id: number) => void }) {
   const warehouses = useFetch(
@@ -16,11 +16,12 @@ function NewDialog({ onClose, onDone }: { onClose: () => void; onDone: (id: numb
   );
   const [wh, setWh] = useState("");
   const [notes, setNotes] = useState("");
+  const [blind, setBlind] = useState(false);
   const act = useAction();
   const submit = (e: FormEvent) => {
     e.preventDefault();
     void act.run(async () => {
-      const s = await api.post<Stocktake>("/stocktakes", { warehouse_id: Number(wh), notes: notes || null });
+      const s = await api.post<Stocktake>("/stocktakes", { warehouse_id: Number(wh), notes: notes || null, mode: blind ? "blind" : "open" });
       onDone(s.id);
     });
   };
@@ -36,6 +37,12 @@ function NewDialog({ onClose, onDone }: { onClose: () => void; onDone: (id: numb
                 {w.name}
               </option>
             ))}
+          </select>
+        </Field>
+        <Field label="نمط الجرد" hint={blind ? "جرد أعمي: العدّاد لا يرى أرصدة النظام إطلاقًا — تظهر الفروق بعد رفع الجرد للاعتماد فقط." : "الجرد العادي يعرض رصيد النظام بجانب خانة العد."}>
+          <select value={blind ? "blind" : "open"} onChange={(e) => setBlind(e.target.value === "blind")} aria-label="نمط الجرد">
+            <option value="open">عادي (يظهر رصيد النظام)</option>
+            <option value="blind">أعمي (بدون رصيد النظام — يمنع التلويث)</option>
           </select>
         </Field>
         <Field label="ملاحظات">
@@ -59,6 +66,8 @@ function DetailDialog({ id, onClose, onChanged }: { id: number; onClose: () => v
   const act = useAction();
   const s = data.data;
   const open = s?.status === "open";
+  const review = s?.status === "review";
+  const blindOpen = s?.mode === "blind" && open;
   const dl = useAction();
 
   const shown = (productId: number, saved: number | null) => (productId in draft ? draft[productId] : saved === null ? "" : String(saved));
@@ -91,7 +100,7 @@ function DetailDialog({ id, onClose, onChanged }: { id: number; onClose: () => v
         s && (
           <>
             <p className="muted">
-              {STATUS[s.status]} · أنشأه {s.username ?? "—"} · {dateTime(s.created_at)} · تم عدّ {num(s.lines_counted)} من {num(s.lines_total)} · variances: {num(s.lines_with_difference)}
+              {STATUS[s.status]} · {s.mode === "blind" ? "🔒 جرد أعمي" : "جرد عادي"} · أنشأه {s.username ?? "—"} · {dateTime(s.created_at)} · تم عدّ {num(s.lines_counted)} من {num(s.lines_total)} · الفروق: {num(s.lines_with_difference)}
             </p>
             <div className="table-wrap" style={{ maxHeight: "50vh", overflow: "auto" }}>
               <table>
@@ -107,12 +116,13 @@ function DetailDialog({ id, onClose, onChanged }: { id: number; onClose: () => v
                 <tbody>
                   {s.lines?.map((l) => {
                     const v = shown(l.product_id, l.counted_qty);
-                    const diff = v === "" || !/^\d+$/.test(v) ? null : Number(v) - l.system_qty;
+                    const sys = l.system_qty;
+                    const diff = v === "" || !/^\d+$/.test(v) || sys === null ? null : Number(v) - sys;
                     return (
                       <tr key={l.product_id}>
                         <td dir="ltr">{l.sku}</td>
                         <td>{l.product_name}</td>
-                        <td className="num">{num(l.system_qty)}</td>
+                        <td className="num">{sys === null ? "—" : num(sys)}</td>
                         <td className="num">
                           {open || editing ? (
                             <input
@@ -139,6 +149,9 @@ function DetailDialog({ id, onClose, onChanged }: { id: number; onClose: () => v
                 </tbody>
               </table>
             </div>
+            {blindOpen && (
+              <Alert kind="info">جرد أعمي — رصيد النظام والفروق مخفيان حتى رفع الجرد للاعتماد، فلا يتأثر العدّاد بما «يجب» أن يجده.</Alert>
+            )}
             {open && (
               <Field label="إضافة صنف" hint="ابحث عن صنف لإضافته للجرد (حتى لو كانت كميته 0 في النظام).">
                 <Lookup<Product>
@@ -161,7 +174,7 @@ function DetailDialog({ id, onClose, onChanged }: { id: number; onClose: () => v
             )}
             {confirmApply && (
               <Alert kind="info">
-                سيتم edit كميات {num(s.lines_with_difference)} صنف بحسب variances، ولا يمكن التراجع. هل تؤكد الاعتماد؟{" "}
+                سيتم تطبيق فروق {num(s.lines_with_difference)} صنف على أرصدة المخزون، ولا يمكن التراجع. هل تؤكد الاعتماد؟{" "}
                 <button className="btn btn-sm btn-primary" disabled={act.busy} onClick={() => void call("apply")}>
                   نعم، اعتمد
                 </button>{" "}
@@ -176,9 +189,26 @@ function DetailDialog({ id, onClose, onChanged }: { id: number; onClose: () => v
                   حفظ الكميات counted
                 </button>
               )}
-              {open && isManager && (
-                <button className="btn" disabled={act.busy || dirty || s.lines_counted === 0} title={dirty ? "احفظ الكميات أولاً" : undefined} onClick={() => setConfirmApply(true)}>
-                  اعتماد variances
+              {open && (
+                <button className="btn btn-success" disabled={act.busy || dirty || s.lines_counted === 0} title={dirty ? "احفظ الكميات أولاً" : undefined} onClick={() => void call("submit")}>
+                  📤 رفع لاعتماد الفروق
+                </button>
+              )}
+              {review && isManager && (
+                <button className="btn" disabled={act.busy || dirty} onClick={() => setConfirmApply(true)}>
+                  ✅ اعتماد الفروق
+                </button>
+              )}
+              {review && isManager && (
+                <button className="btn btn-danger" disabled={act.busy} onClick={() => {
+                  const reason = prompt("سبب الإعادة للعد (اختياري):") ?? undefined;
+                  void act.run(async () => {
+                    await api.post<Stocktake>(`/stocktakes/${id}/review-reject${reason ? `?reason=${encodeURIComponent(reason)}` : ""}`);
+                    data.reload();
+                    onChanged();
+                  });
+                }}>
+                  ↩ إعادة للعد
                 </button>
               )}
               {s.status === "applied" && isManager && !editing && (
@@ -221,7 +251,7 @@ function DetailDialog({ id, onClose, onChanged }: { id: number; onClose: () => v
                   <tr>
                     <td>${l.sku ?? ""}</td>
                     <td>${l.product_name ?? ""}</td>
-                    <td>${num(l.system_qty)}</td>
+                    <td>${l.system_qty === null ? "—" : num(l.system_qty)}</td>
                     <td>${l.counted_qty === null ? "—" : num(l.counted_qty)}</td>
                     <td>${l.difference === null ? "—" : (l.difference > 0 ? `+${l.difference}` : l.difference)}</td>
                   </tr>`).join("");

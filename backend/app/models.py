@@ -295,6 +295,9 @@ class Product(TenantOwned, Base):
     pack_name = Column(String(30), nullable=True)  # اسم وحدة الحزمة (كرتون/درزن)
     # مواد حساسة: مع بوابة PO_QC_GATE يستقبل لوطها بحالة «بانتظار الفحص» ولا يُصرف حتى الاعتماد
     qc_required = Column(Boolean, nullable=False, default=False, server_default="false")
+    # تتبع أرقام تسلسلية (موبايلات/أجهزة): الاستلام يسجل الأرقام والبيع يربط رقمًا محددًا
+    serial_tracking = Column(Boolean, nullable=False, default=False, server_default="false")
+    warranty_months = Column(Integer, nullable=True)  # مدة الضمان بالشهور (تقرير الضمان)
     is_active = Column(Boolean, nullable=False, default=True, server_default="true")
     warehouse_id = Column(Integer, ForeignKey("warehouses.id", ondelete="SET NULL"), nullable=True, index=True)
     supplier_id = Column(Integer, ForeignKey("suppliers.id", ondelete="SET NULL"), nullable=True, index=True)
@@ -1348,7 +1351,9 @@ class Stocktake(TenantOwned, Base):
     __tablename__ = "stocktakes"
 
     id = Column(Integer, primary_key=True, index=True)
-    status = Column(String(10), nullable=False, default="open", server_default="open", index=True)  # open | applied | cancelled
+    status = Column(String(10), nullable=False, default="open", server_default="open", index=True)  # open | review | applied | cancelled
+    # الجرد الأعمي: العد بلا عرض رصيد النظام (يمنع التلويث) — الأرصدة والفروق تظهر بعد الاعتماد فقط
+    mode = Column(String(10), nullable=False, server_default="open")  # open | blind
     warehouse_id = Column(Integer, ForeignKey("warehouses.id"), nullable=True)  # NULL = all products
     notes = Column(Text, nullable=True)
     created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
@@ -1484,6 +1489,43 @@ class StockReservation(TenantOwned, Base):
     product = relationship("Product")
     warehouse = relationship("Warehouse")
     sales_order = relationship("SalesOrder")
+
+
+class ProductSerial(TenantOwned, Base):
+    """رقم تسلسلي لصنف متتبع: يُسجل عند الاستلام ويُربط بالبيع — حالته (متاح/مباع)."""
+
+    __tablename__ = "product_serials"
+    __table_args__ = (UniqueConstraint("company_id", "product_id", "serial", name="uq_serial_per_product"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    product_id = Column(Integer, ForeignKey("products.id", ondelete="CASCADE"), nullable=False, index=True)
+    warehouse_id = Column(Integer, ForeignKey("warehouses.id", ondelete="CASCADE"), nullable=False, index=True)
+    serial = Column(String(80), nullable=False)
+    status = Column(String(20), nullable=False, server_default="in_stock", index=True)  # in_stock | sold
+    source_ref = Column(String(80), nullable=True)  # PO-x / يدوي
+    sale_ref = Column(String(80), nullable=True)  # SO-x
+    received_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    sold_at = Column(DateTime(timezone=True), nullable=True)
+
+    product = relationship("Product")
+    warehouse = relationship("Warehouse")
+
+    @property
+    def warehouse_name(self):
+        return self.warehouse.name if self.warehouse else None
+
+    @property
+    def warranty_end(self):
+        """نهاية الضمان = تاريخ الاستلام + مدة الضمان بالشهور (إن ضُبطت)."""
+        if self.received_at is None or self.product is None or self.product.warranty_months is None:
+            return None
+        months = int(self.product.warranty_months)
+        received = self.received_at if self.received_at.tzinfo is None else self.received_at.replace(tzinfo=None)
+        y, m = received.year, received.month + months
+        y += (m - 1) // 12
+        m = (m - 1) % 12 + 1
+        day = min(received.day, [31, 29 if y % 4 == 0 and (y % 100 != 0 or y % 400 == 0) else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m - 1])
+        return received.replace(year=y, month=m, day=day).date()
 
 
 class ChartAccount(TenantOwned, Base):
