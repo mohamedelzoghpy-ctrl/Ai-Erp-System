@@ -21,6 +21,7 @@ import CollectionsScreen from "./src/screens/Collections";
 import NotificationsScreen from "./src/screens/Notifications";
 import ShiftScreen from "./src/screens/Shift";
 import ManagerScreen from "./src/screens/Manager";
+import LeadsScreen from "./src/screens/Leads";
 
 // RTL العربي — يطبق مرة واحدة ثم يعاد التشغيل تلقائياً
 if (!I18nManager.isRTL) {
@@ -56,6 +57,7 @@ function MoreStack() {
       <Stack.Screen name="notifications" component={NotificationsScreen} options={{ title: "الإشعارات" }} />
       <Stack.Screen name="shift" component={ShiftScreen} options={{ title: "الوردية" }} />
       <Stack.Screen name="manager" component={ManagerScreen} options={{ title: "لوحة المدير" }} />
+      <Stack.Screen name="leads" component={LeadsScreen} options={{ title: "العملاء المحتملون" }} />
     </Stack.Navigator>
   );
 }

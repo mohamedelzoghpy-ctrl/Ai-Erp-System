@@ -383,7 +383,15 @@ export default function Crm() {
                   <td className="num-center" dir="ltr">{l.code}</td>
                   <td>{l.name}</td>
                   <td>{l.company_name ?? "—"}</td>
-                  <td dir="ltr">{l.phone ?? "—"}</td>
+                  <td dir="ltr">
+                    {l.phone ?? "—"}
+                    {l.phone && l.phone.replace(/[^0-9]/g, "").length >= 8 && (
+                      <>
+                        {" "}
+                        <a href={`https://wa.me/${(l.phone.startsWith("0") ? "2" : "") + l.phone.replace(/[^0-9]/g, "")}`} target="_blank" rel="noreferrer" title="WhatsApp">💬</a>
+                      </>
+                    )}
+                  </td>
                   <td>{t(SOURCE_LABELS[l.source] ?? l.source)}</td>
                   <td><StageBadge status={l.status} /></td>
                   <td className="num">{money(l.expected_value)}</td>
@@ -694,7 +702,17 @@ function LeadKanban({ leads, loading, canUpdate, onMove, onOpenActs, onEdit, onQ
                   {l.company_name && <div style={{ fontSize: 12 }} className="muted">{l.company_name}</div>}
                   <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginTop: 4 }}>
                     <span>{money(l.expected_value)}</span>
-                    {l.phone && <a dir="ltr" href={`tel:${l.phone}`}>{l.phone}</a>}
+                    {l.phone && (
+                      <span dir="ltr">
+                        <a href={`tel:${l.phone}`}>{l.phone}</a>
+                        {l.phone.replace(/[^0-9]/g, "").length >= 8 && (
+                          <>
+                            {" "}
+                            <a href={`https://wa.me/${(l.phone.startsWith("0") ? "2" : "") + l.phone.replace(/[^0-9]/g, "")}`} target="_blank" rel="noreferrer" title="WhatsApp">💬</a>
+                          </>
+                        )}
+                      </span>
+                    )}
                   </div>
                   {l.next_follow_up_at && (
                     <div style={{ fontSize: 11.5, marginTop: 4, color: isOverdue(l) ? "#b42318" : isToday(l) ? "#9a6700" : "#57606a" }}>

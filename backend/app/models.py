@@ -2804,5 +2804,7 @@ class CrmActivity(TenantOwned, Base):
     body = Column(Text, nullable=False)
     created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    # معرف فريد من تطبيق المندوب — يضمن عدم تكرار الأنشطة المرفوعة أوفلاين
+    client_ref = Column(String(64), nullable=True)
 
     lead = relationship("CrmLead", back_populates="activities")

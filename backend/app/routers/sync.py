@@ -91,6 +91,37 @@ def bootstrap(
         for pl in db.query(models.PriceList).filter(models.PriceList.company_id == company_id).all()  # type: ignore[attr-defined]
     ]
 
+    # عملاء المندوب المحتملون (CRM ميداني أوفلاين) — المسندون إليه فقط
+    rep_for_leads = db.query(models.SalesRep).filter(
+        models.SalesRep.company_id == company_id, models.SalesRep.user_id == user.id  # type: ignore[attr-defined]
+    ).first()
+    leads_payload = []
+    if rep_for_leads is not None:
+        lq = db.query(models.CrmLead).filter(
+            models.CrmLead.company_id == company_id,
+            models.CrmLead.assigned_rep_id == rep_for_leads.id,
+        )
+        if since_dt is not None:
+            lq = lq.filter(models.CrmLead.updated_at > since_dt)  # type: ignore[attr-defined]
+        leads_payload = [
+            {
+                "id": l.id, "code": l.code, "name": l.name,
+                "company_name": l.company_name, "phone": l.phone,
+                "address": l.address, "source": l.source,
+                "status": l.status, "expected_value": str(l.expected_value),
+                "next_follow_up_at": _iso(l.next_follow_up_at) if l.next_follow_up_at else None,
+                "notes": l.notes,
+                "updated_at": _iso(l.updated_at),
+            }
+            for l in lq.order_by(models.CrmLead.id).all()
+        ]
+        # إشعارات المتابعة المستحقة (مرة يومياً لكل قائد) + دفع FCM
+        from ..crm_followups import ensure_followup_notifications
+        try:
+            ensure_followup_notifications(db, rep_for_leads)
+        except Exception:
+            pass  # الإشعار لا يفشل المزامنة
+
     return {
         "server_time": server_time.isoformat(),
         "default_warehouse_id": next(
@@ -106,6 +137,7 @@ def bootstrap(
         "products": products,
         "customers": customers,
         "price_lists": price_lists,
+        "crm_leads": leads_payload,
     }
 
 
@@ -182,4 +214,117 @@ def push_orders(
             db.rollback()
             detail = getattr(exc, "detail", None) or str(exc)
             results.append({"client_ref": order_in.client_ref, "order_id": None, "status": "failed", "error": str(detail)[:300]})
+    return {"results": results}
+
+
+# ---------------- CRM ميداني أوفلاين (المرحلة 3) ----------------
+def _rep_for_mobile(db, company_id: int, user):
+    rep = db.query(models.SalesRep).filter(
+        models.SalesRep.company_id == company_id, models.SalesRep.user_id == user.id  # type: ignore[attr-defined]
+    ).first()
+    if rep is None:
+        from fastapi import HTTPException, status
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "الحساب غير مرتبط بمندوب")
+    return rep
+
+
+class SyncCrmActivityIn(BaseModel):
+    client_ref: str = Field(min_length=8, max_length=64)
+    lead_id: int
+    kind: str = Field(pattern="^(note|call|meeting)$")
+    body: str = Field(min_length=1, max_length=2000)
+    occurred_at: Optional[datetime] = None
+
+
+class SyncCrmActivitiesIn(BaseModel):
+    activities: List[SyncCrmActivityIn] = Field(min_length=1, max_length=200)
+
+
+class SyncCrmStageIn(BaseModel):
+    lead_id: int
+    status: str = Field(pattern="^(new|contacted|qualified|won|lost)$")
+    lost_reason: Optional[str] = Field(default=None, max_length=200)
+
+
+class SyncCrmStagesIn(BaseModel):
+    updates: List[SyncCrmStageIn] = Field(min_length=1, max_length=200)
+
+
+@router.post("/crm/activities")
+def push_crm_activities(payload: SyncCrmActivitiesIn, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    """رفع أنشطة متابعة مسجلة أوفلاين — idempotent بـ client_ref (رفع مكرر = تخطٍ بلا أثر)."""
+    company_id = db.info["company_id"]
+    rep = _rep_for_mobile(db, company_id, user)
+    results = []
+    for item in payload.activities:
+        lead = db.get(models.CrmLead, item.lead_id)
+        if lead is None or lead.company_id != company_id or lead.assigned_rep_id != rep.id:
+            results.append({"client_ref": item.client_ref, "ok": False, "reason": "القائد غير مسند إليك"})
+            continue
+        existing = db.query(models.CrmActivity).filter(
+            models.CrmActivity.company_id == company_id,
+            models.CrmActivity.client_ref == item.client_ref,
+        ).first()
+        if existing is not None:
+            results.append({"client_ref": item.client_ref, "ok": True, "id": existing.id, "duplicate": True})
+            continue
+        row = models.CrmActivity(
+            company_id=company_id, lead_id=lead.id, kind=item.kind,
+            body=item.body.strip(), created_by=user.id, client_ref=item.client_ref,
+        )
+        db.add(row)
+        db.flush()
+        results.append({"client_ref": item.client_ref, "ok": True, "id": row.id})
+    from ..audit import audit
+    audit(db, user, "create", "crm_activity", None, f"رفع {len(payload.activities)} نشاط من الموبايل")
+    db.commit()
+    return {"results": results}
+
+
+@router.post("/crm/stages")
+def push_crm_stage_updates(payload: SyncCrmStagesIn, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    """تغيير مراحل القادة من الموبايل — آخر حالة تفوز (idempotent بطبيعته).
+    won من الميدان = تحويل كامل لعميل فعلي. lost يتطلب سبباً."""
+    from ..routers.crm import _get_lead, STAGE_AR
+    from ..routers.crm import convert_lead as _convert_lead
+    company_id = db.info["company_id"]
+    rep = _rep_for_mobile(db, company_id, user)
+    results = []
+    for item in payload.updates:
+        try:
+            lead = _get_lead(db, item.lead_id)
+        except Exception:
+            results.append({"lead_id": item.lead_id, "ok": False, "reason": "القائد غير موجود"})
+            continue
+        if lead.assigned_rep_id != rep.id:
+            results.append({"lead_id": item.lead_id, "ok": False, "reason": "القائد غير مسند إليك"})
+            continue
+        if lead.converted_customer_id is not None:
+            results.append({"lead_id": item.lead_id, "ok": True, "status": lead.status, "already_final": True})
+            continue
+        if item.status == "lost" and not (item.lost_reason or "").strip():
+            results.append({"lead_id": item.lead_id, "ok": False, "reason": "سبب الفقد مطلوب"})
+            continue
+        old_status = lead.status
+        lead.status = item.status
+        if item.status == "lost":
+            lead.lost_reason = (item.lost_reason or "").strip()
+        if item.status == "won":
+            try:
+                _convert_lead(obj_id=lead.id, db=db, user=user)
+                customer_id = lead.converted_customer_id
+                results.append({"lead_id": item.lead_id, "ok": True, "status": "won", "converted_customer_id": customer_id})
+                continue
+            except Exception:
+                results.append({"lead_id": item.lead_id, "ok": False, "reason": "تعذر التحويل لعميل"})
+                db.rollback()
+                continue
+        db.add(models.CrmActivity(
+            company_id=company_id, lead_id=lead.id, kind="system",
+            body=f"تغيّرت المرحلة من الميدان: {STAGE_AR.get(old_status, old_status)} ← {STAGE_AR.get(item.status, item.status)}",
+            created_by=user.id,
+        ))
+        db.commit()
+        db.refresh(lead)
+        results.append({"lead_id": item.lead_id, "ok": True, "status": lead.status})
     return {"results": results}

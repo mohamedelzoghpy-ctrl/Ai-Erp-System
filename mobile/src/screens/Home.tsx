@@ -107,6 +107,9 @@ export default function HomeScreen({ navigation }: any) {
         <View style={{ width: "48%" }}>
           <Btn label="⏱ الوردية" kind="ghost" onPress={() => navigation.navigate("shift")} />
         </View>
+        <View style={{ width: "48%" }}>
+          <Btn label="🤝 العملاء المحتملون" kind="ghost" onPress={() => navigation.navigate("leads")} />
+        </View>
       </Card>
     </Screen>
   );

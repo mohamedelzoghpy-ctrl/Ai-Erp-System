@@ -621,6 +621,8 @@ ROUTE_RULES: List[RouteRule] = [
     # مزامنة تطبيق المندوبين — baseline لكل مستخدم (sales.rep.mobile)
     _rule("GET", "/sync/bootstrap", "sales.rep.mobile"),
     _rule("POST", "/sync/orders", "sales.rep.mobile"),
+    _rule("POST", "/sync/crm/activities", "sales.rep.mobile"),
+    _rule("POST", "/sync/crm/stages", "sales.rep.mobile"),
     _rule("GET", "/qc/templates", "manufacturing.quality.view"),
     _rule("POST", "/qc/templates", "manufacturing.quality.manage"),
     _rule("PUT", "/qc/templates/{template_id}", "manufacturing.quality.manage"),

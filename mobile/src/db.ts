@@ -28,6 +28,7 @@ export function initDb() {
     );
     CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
   `);
+  initCrmDb();
 }
 
 export function getMeta(key: string): string | null {
@@ -146,4 +147,79 @@ export function recordSyncedOrder(orderId: number, clientRef: string, total: str
 
 export function listSyncedOrders(): any[] {
   return db.getAllSync("SELECT * FROM synced_orders ORDER BY synced_at DESC LIMIT 200");
+}
+
+// ---------------- CRM الميداني (المرحلة 3) ----------------
+export function initCrmDb() {
+  db.execSync(
+    "CREATE TABLE IF NOT EXISTS crm_leads (" +
+      "id INTEGER PRIMARY KEY, code TEXT, name TEXT, company_name TEXT, phone TEXT," +
+      "address TEXT, source TEXT, status TEXT, expected_value TEXT," +
+      "next_follow_up_at TEXT, notes TEXT, updated_at TEXT)"
+  );
+  db.execSync(
+    "CREATE TABLE IF NOT EXISTS pending_crm_activities (" +
+      "client_ref TEXT PRIMARY KEY, lead_id INTEGER, kind TEXT, body TEXT, created_at TEXT)"
+  );
+  db.execSync(
+    "CREATE TABLE IF NOT EXISTS pending_crm_stages (" +
+      "lead_id INTEGER PRIMARY KEY, status TEXT, lost_reason TEXT)"
+  );
+}
+
+export function upsertLeads(rows: any[]) {
+  for (const l of rows) {
+    db.runSync(
+      "INSERT OR REPLACE INTO crm_leads (id, code, name, company_name, phone, address, source, status, expected_value, next_follow_up_at, notes, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+      [l.id, l.code, l.name, l.company_name ?? null, l.phone ?? null, l.address ?? null, l.source ?? null, l.status, String(l.expected_value ?? "0"), l.next_follow_up_at ?? null, l.notes ?? null, l.updated_at]
+    );
+  }
+}
+
+export function listLeads(term: string): any[] {
+  const q = term.trim();
+  if (!q) return db.getAllSync("SELECT * FROM crm_leads ORDER BY id DESC");
+  return db.getAllSync("SELECT * FROM crm_leads WHERE name LIKE ? OR company_name LIKE ? OR phone LIKE ? ORDER BY id DESC", [`%${q}%`, `%${q}%`, `%${q}%`]);
+}
+
+export function getLead(id: number): any | null {
+  return db.getFirstSync("SELECT * FROM crm_leads WHERE id = ?", [id]) ?? null;
+}
+
+export function updateLeadLocalStatus(id: number, status: string, lostReason?: string | null) {
+  db.runSync("UPDATE crm_leads SET status = ? WHERE id = ?", [status, id]);
+  if (lostReason != null) db.runSync("UPDATE crm_leads SET status = ? WHERE id = ?", [status, id]);
+}
+
+export function queueCrmActivity(clientRef: string, leadId: number, kind: string, body: string) {
+  db.runSync(
+    "INSERT OR REPLACE INTO pending_crm_activities (client_ref, lead_id, kind, body, created_at) VALUES (?,?,?,?,?)",
+    [clientRef, leadId, kind, body, new Date().toISOString()]
+  );
+}
+
+export function listPendingCrmActivities(): { client_ref: string; lead_id: number; kind: string; body: string; created_at: string }[] {
+  return db.getAllSync("SELECT client_ref, lead_id, kind, body, created_at FROM pending_crm_activities ORDER BY created_at");
+}
+
+export function removePendingCrmActivity(clientRef: string) {
+  db.runSync("DELETE FROM pending_crm_activities WHERE client_ref = ?", [clientRef]);
+}
+
+export function queueCrmStage(leadId: number, status: string, lostReason?: string | null) {
+  db.runSync("INSERT OR REPLACE INTO pending_crm_stages (lead_id, status, lost_reason) VALUES (?,?,?)", [leadId, status, lostReason ?? null]);
+}
+
+export function listPendingCrmStages(): { lead_id: number; status: string; lost_reason: string | null }[] {
+  return db.getAllSync("SELECT lead_id, status, lost_reason FROM pending_crm_stages");
+}
+
+export function removePendingCrmStage(leadId: number) {
+  db.runSync("DELETE FROM pending_crm_stages WHERE lead_id = ?", [leadId]);
+}
+
+export function countPendingCrm(): number {
+  const a = (db.getFirstSync("SELECT COUNT(*) c FROM pending_crm_activities") as any)?.c ?? 0;
+  const s = (db.getFirstSync("SELECT COUNT(*) c FROM pending_crm_stages") as any)?.c ?? 0;
+  return a + s;
 }
