@@ -158,6 +158,7 @@ ROUTE_RULES: List[RouteRule] = [
     # ---------- بيانات الشركة ----------
     _rule("GET", "/company", "admin.company.view"),
     _rule("PATCH", "/company", "admin.company.update"),
+    _rule("PATCH", "/company/license", "admin.company.license_renew"),
     _rule("GET", "/company/branches", "admin.branch.view"),
     _rule("POST", "/company/branches", "admin.branch.create"),
     _rule("GET", "/company/departments", "admin.department.view"),

@@ -29,7 +29,14 @@ export function setUnauthorizedHandler(fn: (() => void) | null) {
   onUnauthorized = fn;
 }
 
+let onLicenseExpired: (() => void) | null = null;
+export function setLicenseExpiredHandler(fn: (() => void) | null) {
+  onLicenseExpired = fn;
+}
+
 function messageFromDetail(status: number, detail: unknown): string {
+  const msg = typeof detail === "string" ? detail : "";
+  if (msg.includes("انتهت رخصة") && onLicenseExpired) onLicenseExpired();
   if (typeof detail === "string") return detail;
   if (Array.isArray(detail)) {
     // FastAPI validation errors: [{loc: [...], msg: "..."}]

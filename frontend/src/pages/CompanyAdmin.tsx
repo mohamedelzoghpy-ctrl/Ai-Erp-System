@@ -83,6 +83,11 @@ export default function CompanyAdmin({ platform = false, onSaved }: { platform?:
   const [restoreBk, setRestoreBk] = useState<any | null>(null);
   const [restoreConfirmText, setRestoreConfirmText] = useState("");
   const [restoreBusy, setRestoreBusy] = useState(false);
+  const [licPassword, setLicPassword] = useState("");
+  const [licDate, setLicDate] = useState("");
+  const [licBusy, setLicBusy] = useState(false);
+  const [licNote, setLicNote] = useState<string | null>(null);
+  const [licError, setLicError] = useState<string | null>(null);
   const [curTick, setCurTick] = useState(0);
   const currencies = useFetch(
     () => (platform ? Promise.resolve([]) : api.get<any[]>("/currencies")),
@@ -524,6 +529,70 @@ export default function CompanyAdmin({ platform = false, onSaved }: { platform?:
   return (
     <div className="company-admin-page">
       <PageHeader title={platform ? "إدارة الشركات" : "الفروع وإعدادات الشركة"} />
+
+      {(() => {
+        const lu = currentCompany.data?.license_until ?? null;
+        const daysLeft = lu ? Math.ceil((new Date(lu + "T23:59:59").getTime() - Date.now()) / 86400000) : null;
+        const expired = daysLeft !== null && daysLeft < 0;
+        const expiring = daysLeft !== null && daysLeft >= 0 && daysLeft <= 7;
+        return (
+          <div className="card card-pad" style={{ marginBottom: 16 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <h2 style={{ margin: 0 }}>🗓️ الترخيص</h2>
+              {lu ? (
+                <span className="badge" style={{
+                  borderRadius: 999, padding: "4px 12px", fontSize: 13, fontWeight: 700,
+                  background: expired ? "#fee4e2" : expiring ? "#fff4d6" : "#dcfce7",
+                  color: expired ? "#b42318" : expiring ? "#9a6700" : "#15803d",
+                }}>
+                  {expired ? "منتهية!" : expiring ? `توشك على الانتهاء — ${daysLeft} يوم` : `سارية — ${daysLeft} يومًا متبقيًا`}
+                </span>
+              ) : (
+                <span className="badge" style={{ background: "#dcfce7", color: "#15803d", borderRadius: 999, padding: "4px 12px", fontSize: 13, fontWeight: 700 }}>
+                  غير مقيّد — لا تاريخ انتهاء
+                </span>
+              )}
+            </div>
+            {lu && <p className="muted" style={{ fontSize: 13, margin: "6px 0 0" }}>
+              تنتهي رخصة الشركة في: <b>{new Date(lu + "T00:00:00").toLocaleDateString("ar-EG", { year: "numeric", month: "long", day: "numeric" })}</b>
+              {expired && <span style={{ color: "#b42318" }}> — جميع العمليات متوقفة للمستخدمين، ويمكنك التجديد أدناه.</span>}
+            </p>}
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end", marginTop: 10 }}>
+              <div>
+                <div style={{ fontSize: 12, marginBottom: 4 }}>كلمة سر التجديد (من مزوّد البرنامج)</div>
+                <input type="password" value={licPassword} onChange={(e) => setLicPassword(e.target.value)} placeholder="كلمة السر المحفوظة" style={{ width: 220 }} />
+              </div>
+              <div>
+                <div style={{ fontSize: 12, marginBottom: 4 }}>السارية حتى (التاريخ الجديد)</div>
+                <input type="date" dir="ltr" value={licDate} onChange={(e) => setLicDate(e.target.value)} />
+              </div>
+              <button
+                className="btn btn-primary"
+                disabled={licBusy || !licPassword || !licDate}
+                onClick={async () => {
+                  setLicBusy(true);
+                  setLicError(null);
+                  setLicNote(null);
+                  try {
+                    await api.patch("/company/license", { license_password: licPassword, license_until: licDate });
+                    setLicNote(`تم التجديد حتى ${licDate} — عودة كاملة للعمل`);
+                    setLicPassword("");
+                    currentCompany.reload();
+                  } catch (err) {
+                    setLicError((err as Error).message);
+                  } finally {
+                    setLicBusy(false);
+                  }
+                }}
+              >
+                {licBusy ? "جارٍ التجديد…" : "تجديد الرخصة"}
+              </button>
+            </div>
+            {licNote && <div dir="rtl" style={{ marginTop: 8, padding: "8px 12px", borderRadius: 8, fontSize: 13, background: "var(--ok-bg)", color: "var(--ok)" }}>✅ {licNote}</div>}
+            {licError && <div dir="rtl" style={{ marginTop: 8, padding: "8px 12px", borderRadius: 8, fontSize: 13, background: "#fee4e2", color: "#b42318" }}>⚠️ {licError}</div>}
+          </div>
+        );
+      })()}
       <Alert>{error || currentCompany.error || branches.error || companies.error || (!platform ? currentEmployees.error : null)}</Alert>
 
 

@@ -1,10 +1,13 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { api, getToken, setToken, setUnauthorizedHandler } from "./api";
+import { api, getToken, setToken, setUnauthorizedHandler , setLicenseExpiredHandler } from "./api";
 import type { Role, User } from "./types";
 
 interface AuthState {
   user: User | null;
   loading: boolean;
+  /** انتهت رخصة الشركة — أي استدعاء API أعاد رسالة الترخيص */
+  licenseExpired: boolean;
+  clearLicenseExpired: () => void;
   login: (username: string, password: string) => Promise<void>;
   setupAdmin: (username: string, password: string, fullName: string) => Promise<void>;
   logout: () => void;
@@ -79,6 +82,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [login],
   );
 
+  const [licenseExpired, setLicenseExpired] = useState(false);
+  useEffect(() => {
+    setLicenseExpiredHandler(() => setLicenseExpired(true));
+    return () => setLicenseExpiredHandler(null);
+  }, []);
+
   const value = useMemo<AuthState>(() => {
     const role: Role | undefined = user?.role;
     const can = (...codes: string[]) => {
@@ -97,6 +106,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       permissions,
       can,
       refreshPermissions,
+      licenseExpired,
+      clearLicenseExpired: () => setLicenseExpired(false),
     };
   }, [user, loading, login, setupAdmin, logout, permissions, refreshPermissions]);
 

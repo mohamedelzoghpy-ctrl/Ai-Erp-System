@@ -526,6 +526,7 @@ CATALOG: Dict[str, dict] = {
             "company": ("بيانات الشركة", [
                 ("view", "عرض إعدادات الشركة", False, False),
                 ("update", "تعديل إعدادات الشركة", False, False),
+                ("license_renew", "تجديد رخصة الشركة بكلمة السر", False, False),
             ]),
             "branch": ("الفروع", [
                 ("view", "عرض الفروع", False, False),

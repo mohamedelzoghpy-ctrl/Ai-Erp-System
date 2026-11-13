@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { useAuth } from "./auth";
+import { useI18n } from "./i18n";
 import Layout from "./Layout";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
@@ -93,11 +94,32 @@ function useNoNegativeInputs() {
   }, []);
 }
 
+function LicenseBlockedScreen() {
+  const { t } = useI18n();
+  const { logout } = useAuth();
+  return (
+    <div dir="rtl" style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: "#f6f8fa", padding: 20 }}>
+      <div className="card card-pad" style={{ maxWidth: 460, textAlign: "center" }}>
+        <div style={{ fontSize: 44, marginBottom: 8 }}>🔒</div>
+        <h2 style={{ margin: "0 0 10px", color: "#b42318" }}>{t("انتهت رخصة استخدام البرنامج")}</h2>
+        <p style={{ margin: "0 0 6px", fontSize: 14 }}>
+          {t("انتهت مدة ترخيص هذه الشركة — جميع العمليات متوقفة حتى التجديد.")}
+        </p>
+        <p className="muted" style={{ fontSize: 13, margin: "0 0 14px" }}>
+          {t("مدير الشركة يمكنه الدخول والتجديد بكلمة سر التجديد المحفوظة من صفحة إدارة الشركات ← قسم الترخيص.")}
+        </p>
+        <button className="btn" onClick={logout}>{t("تسجيل الخروج")}</button>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
-  const { user, loading } = useAuth();
+  const { user, loading, licenseExpired } = useAuth();
   useNoNegativeInputs();
 
   if (loading) return <Loading />;
+  if (user && licenseExpired) return <LicenseBlockedScreen />;
   if (!user) return <Login />;
 
   return (

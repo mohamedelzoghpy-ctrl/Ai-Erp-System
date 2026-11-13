@@ -1124,3 +1124,42 @@ def self_register(payload: schemas.SelfRegisterIn, db: Session = Depends(get_db)
         "trial_days": trial_days,
         "message": "تم إنشاء حسابكم — سجلّوا الدخول باسم المدير وكلمة السر المختارة",
     }
+
+
+@company.patch("/license", response_model=schemas.CompanyOut)
+def renew_own_company_license(
+    payload: schemas.CompanyLicenseUpdate,
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(get_current_user),
+):
+    """تجديد ذاتي لرخصة الشركة: مدير الشركة + كلمة سر التجديد المحفوظة (LICENSE_RENEWAL_PASSWORD).
+
+    يعمل حتى وانتهت الرخصة — البوابة المركزية تعفي دور admin من حظر الترخيص."""
+    from ..deps import user_role
+    from ..exports import LOCAL_TZ
+    from datetime import datetime as _dt
+    if user_role(actor) != "admin" and not actor.is_platform_admin:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "التجديد متاح لمدير الشركة فقط")
+    company_id = db.info["company_id"]
+    company = db.get(models.Company, company_id)
+    if company is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Company not found")
+    expected = os.getenv("LICENSE_RENEWAL_PASSWORD", "")
+    if not expected:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "لم يتم ضبط كلمة سر التجديد على الخادم (LICENSE_RENEWAL_PASSWORD) — لا يمكن التجديد",
+        )
+    if not secrets.compare_digest(payload.license_password, expected):
+        audit(db, actor, "update", "company_license_denied", company, f"محاولة تجديد ذاتي لرخصة «{company.name}» بكلمة سر خاطئة")
+        db.commit()
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "كلمة سر التجديد غير صحيحة")
+    old = company.license_until
+    company.license_until = payload.license_until
+    audit(
+        db, actor, "update", "company_license", company,
+        f"تجديد ذاتي — رخصة «{company.name}»: {old.isoformat() if old else 'غير مقيّد'} → {payload.license_until.isoformat() if payload.license_until else 'غير مقيّد'}",
+    )
+    db.commit()
+    db.refresh(company)
+    return company

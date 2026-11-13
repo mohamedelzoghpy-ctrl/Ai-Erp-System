@@ -155,10 +155,12 @@ async def permission_gate(
                 from ..exports import LOCAL_TZ  # توقيت العمل المحلي — الاستحقاق تقويمي محلي لا UTC
                 _today = datetime.now(LOCAL_TZ).date()
                 if _today > _company.license_until:
-                    raise HTTPException(
-                        status.HTTP_403_FORBIDDEN,
-                        f"انتهت رخصة استخدام البرنامج بتاريخ {_company.license_until.isoformat()} — يرجى التجديد من مزوّد البرنامج",
-                    )
+                    # أدمن الشركة نفسه فقط يبقى قادراً على الدخول والتجديد بكلمة السر المحفوظة
+                    if user_role(user) != "admin":
+                        raise HTTPException(
+                            status.HTTP_403_FORBIDDEN,
+                            f"انتهت رخصة استخدام البرنامج بتاريخ {_company.license_until.isoformat()} — يرجى التجديد. مدير الشركة يمكنه الدخول والتجديد.",
+                        )
 
     rule = match_rule(method, path)
     if rule is None:
