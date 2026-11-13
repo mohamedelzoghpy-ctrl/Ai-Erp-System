@@ -50,6 +50,7 @@ class LotOut(BaseModel):
     expiry_date: Optional[date] = None
     qty_received: float
     qty_remaining: float
+    qc_status: str = "passed"  # passed | pending | failed (فحص جودة الاستلام)
     created_at: Optional[str] = None
 
 
@@ -68,6 +69,7 @@ def _lot_out(db: Session, lot: models.StockLot) -> LotOut:
         expiry_date=lot.expiry_date,
         qty_received=float(lot.qty_received or 0),
         qty_remaining=float(lot.qty_remaining or 0),
+        qc_status=getattr(lot, "qc_status", "passed") or "passed",
         created_at=lot.created_at.isoformat() if lot.created_at else None,
     )
 

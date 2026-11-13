@@ -44,6 +44,7 @@ def test_valuation_follows_the_stock_in_each_warehouse(api):
     ok(api.post("/stock-transfers", json={"from_warehouse_id": w1["id"], "to_warehouse_id": w2["id"], "items": [{"product_id": p["id"], "quantity": 4}]}), 201)
     _ts = ok(api.get("/stock-transfers?status=pending"))[0]
     ok(api.post(f"/stock-transfers/{_ts['id']}/approve"))
+    ok(api.post(f"/stock-transfers/{_ts['id']}/receive"))  # استلام كامل من العابر
     rows = {r["warehouse_id"]: r for r in ok(api.get("/reports/inventory-valuation"))}
     assert rows[w1["id"]]["units"] == 6 and Decimal(rows[w1["id"]]["cost_value"]) == Decimal("30")
     assert rows[w2["id"]]["units"] == 4 and Decimal(rows[w2["id"]]["sale_value"]) == Decimal("40")

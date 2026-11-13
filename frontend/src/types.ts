@@ -58,6 +58,7 @@ export interface Warehouse {
   code: string;
   location: string | null;
   is_active: boolean;
+  is_transit?: boolean; // المخزن العابر — لا يظهر بقوائم التشغيل
   branch_id: number;
 }
 
@@ -88,6 +89,7 @@ export interface Product {
   sale_price: string;
   quantity: number; // total over all warehouses
   reorder_level: number;
+  qc_required?: boolean; // مادة حساسة: بوابة فحص جودة الاستلام PO_QC_GATE
   is_active: boolean;
   warehouse_id: number | null;
   supplier_id: number | null;
@@ -107,13 +109,14 @@ export interface StockMovement {
   created_at: string;
 }
 
-export type OrderStatus = "draft" | "received" | "confirmed" | "cancelled";
+export type OrderStatus = "draft" | "received" | "confirmed" | "cancelled" | "partial";
 
 export interface OrderItem {
   id: number;
   product_id: number;
   product_name?: string | null;
   returned_quantity?: number;
+  received_quantity?: number; // purchase orders — المُستلم فعليًا (استلام جزئي)
   quantity: number;
   unit_cost?: string; // purchase orders
   unit_price?: string; // sales orders
@@ -285,14 +288,15 @@ export interface StockTransfer {
   to_warehouse_id: number;
   to_warehouse_name: string | null;
   notes: string | null;
-  status: "pending" | "approved" | "rejected";
+  status: "pending" | "in_transit" | "completed" | "rejected" | "cancelled" | "approved";
   valuation: "cost" | "sale";
+  booked_value?: string | null; // القيمة المحجوزة في «مخزون تحت النقل» 1103
   username: string | null;
   approved_by: number | null;
   approved_at: string | null;
   rejection_reason: string | null;
   created_at: string;
-  items: { product_id: number; sku: string | null; product_name: string | null; quantity: number }[];
+  items: { product_id: number; sku: string | null; product_name: string | null; quantity: number; received_quantity?: number }[];
 }
 
 export interface JournalEntry {

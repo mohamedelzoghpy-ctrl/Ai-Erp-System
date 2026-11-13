@@ -580,12 +580,17 @@ def inventory_reconcile(
         models.ChartAccount.company_id == company_id, models.ChartAccount.code == "1130"
     ).first()
     wip = _q(_balances_up_to(db, company_id, cutoff).get(wip_acc.id, Decimal("0")) if wip_acc else 0)
-    ledger_total = ledger + wip
+    in_transit_acc = db.query(models.ChartAccount).filter(
+        models.ChartAccount.company_id == company_id, models.ChartAccount.code == "1103"
+    ).first()
+    in_transit = _q(_balances_up_to(db, company_id, cutoff).get(in_transit_acc.id, Decimal("0")) if in_transit_acc else 0)
+    ledger_total = ledger + wip + in_transit
     return {
         "as_of": str(cutoff),
         "computed_value": _q(computed),
         "ledger_inventory": ledger,
         "ledger_wip": wip,
+        "ledger_in_transit": in_transit,
         "ledger_total": ledger_total,
         "difference": _q(computed - ledger_total),
         "lines": lines,
@@ -612,6 +617,7 @@ def inventory_reconcile_xlsx(
             [("text", "تقييم المخزون المحسوب"), ("money", r["computed_value"])],
             [("text", "رصيد المخزون 1101 بالدفاتر"), ("money", r["ledger_inventory"])],
             [("text", "رصيد إنتاج تحت التشغيل 1130"), ("money", r["ledger_wip"])],
+            [("text", "مخزون تحت النقل 1103"), ("money", r["ledger_in_transit"])],
             [("text", "الفرق (محسوب − دفاتر)"), ("money", r["difference"])],
         ],
     )]

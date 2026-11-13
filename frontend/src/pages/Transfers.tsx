@@ -23,6 +23,7 @@ function NewTransfer({ onClose, onDone }: { onClose: () => void; onDone: (t: Sto
   const [lines, setLines] = useState<Line[]>([]);
   const [picked, setPicked] = useState<Product | null>(null);
   const act = useAction();
+  const opsWarehouses = (warehouses.data ?? []).filter((w) => !w.is_transit); // العابر ليس مصدرًا أو هدفًا
 
   const have = (p: Product) => p.warehouse_quantity ?? 0;
   const over = lines.filter((l) => Number(l.quantity) > have(l.product));
@@ -65,7 +66,7 @@ function NewTransfer({ onClose, onDone }: { onClose: () => void; onDone: (t: Sto
           <Field label={t("transfers.from") + " " + t("common.warehouse")}>
             <select value={from} onChange={(e) => changeFrom(e.target.value)} aria-label={t("transfers.from")} required>
               <option value="">— {t("common.none")} —</option>
-              {warehouses.data?.map((w) => (
+              {opsWarehouses.map((w) => (
                 <option key={w.id} value={w.id}>
                   {w.name}
                 </option>
@@ -75,8 +76,8 @@ function NewTransfer({ onClose, onDone }: { onClose: () => void; onDone: (t: Sto
           <Field label={t("إلى مخزن")}>
             <select value={to} onChange={(e) => setTo(e.target.value)} aria-label={t("إلى مخزن")} required>
               <option value="">{t("— اختر —")}</option>
-              {warehouses.data
-                ?.filter((w) => String(w.id) !== from)
+              {opsWarehouses
+                .filter((w) => String(w.id) !== from)
                 .map((w) => (
                   <option key={w.id} value={w.id}>
                     {w.name}
@@ -177,6 +178,7 @@ function EditTransfer({ t: trf, onClose, onDone }: { t: StockTransfer; onClose: 
   const [picked, setPicked] = useState<Product | null>(null);
   const act = useAction();
   const initialized = useRef(false);
+  const opsWarehouses = (warehouses.data ?? []).filter((w) => !w.is_transit);
 
   // initialize lines once products load
   if (products.data && !initialized.current) {
@@ -225,13 +227,13 @@ function EditTransfer({ t: trf, onClose, onDone }: { t: StockTransfer; onClose: 
               <Field label={t("من مخزن")}>
                 <select value={from} onChange={(e) => changeFrom(e.target.value)} required>
                   <option value="">{t("— اختر —")}</option>
-                  {warehouses.data?.map((w) => (<option key={w.id} value={w.id}>{w.name}</option>))}
+                  {opsWarehouses.map((w) => (<option key={w.id} value={w.id}>{w.name}</option>))}
                 </select>
               </Field>
               <Field label={t("إلى مخزن")}>
                 <select value={to} onChange={(e) => setTo(e.target.value)} required>
                   <option value="">{t("— اختر —")}</option>
-                  {warehouses.data?.filter((w) => String(w.id) !== from).map((w) => (<option key={w.id} value={w.id}>{w.name}</option>))}
+                  {opsWarehouses.filter((w) => String(w.id) !== from).map((w) => (<option key={w.id} value={w.id}>{w.name}</option>))}
                 </select>
               </Field>
             </div>
@@ -285,7 +287,7 @@ function EditTransfer({ t: trf, onClose, onDone }: { t: StockTransfer; onClose: 
     </Modal>
   );
 }
-function ViewTransfer({ t: trf, onClose, onApprove, onReject, onEdit }: { t: StockTransfer; onClose: () => void; onApprove?: (t: StockTransfer) => void; onReject?: (t: StockTransfer) => void; onEdit?: (t: StockTransfer) => void }) {
+function ViewTransfer({ t: trf, onClose, onApprove, onReject, onEdit, onReceive, onCancelTransit }: { t: StockTransfer; onClose: () => void; onApprove?: (t: StockTransfer) => void; onReject?: (t: StockTransfer) => void; onEdit?: (t: StockTransfer) => void; onReceive?: (t: StockTransfer) => void; onCancelTransit?: (t: StockTransfer) => void }) {
   const { t } = useI18n();
   const dl = useAction();
 
@@ -295,7 +297,7 @@ function ViewTransfer({ t: trf, onClose, onApprove, onReject, onEdit }: { t: Sto
       <p>
         {t("من ")}<b>{trf.from_warehouse_name}</b>{t(" إلى ")}<b>{trf.to_warehouse_name}</b> · {dateTime(trf.created_at)} · {trf.username ?? "—"}
       </p>
-      <p className="muted">{t("تقييم التحويل: ")}{trf.valuation === "sale" ? t("سعر البيع") : t("سعر التكلفة")}</p>
+      <p className="muted">{t("تقييم التحويل: ")}{trf.valuation === "sale" ? t("سعر البيع") : t("سعر التكلفة")}{trf.booked_value != null && trf.status === "in_transit" ? ` · ${t("مخزون تحت النقل: ")}${num(Number(trf.booked_value))}` : ""}</p>
       <div className="table-wrap">
         <table>
           <thead>
@@ -303,16 +305,23 @@ function ViewTransfer({ t: trf, onClose, onApprove, onReject, onEdit }: { t: Sto
               <th>{t("الكود")}</th>
               <th>{t("الصنف")}</th>
               <th className="num">{t("الكمية")}</th>
+              <th className="num">{t("المُستلم")}</th>
+              <th className="num">{t("في الطريق")}</th>
             </tr>
           </thead>
           <tbody>
-            {trf.items.map((i) => (
-              <tr key={i.product_id}>
-                <td dir="ltr">{i.sku}</td>
-                <td>{i.product_name}</td>
-                <td className="num">{num(i.quantity)}</td>
-              </tr>
-            ))}
+            {trf.items.map((i) => {
+              const received = i.received_quantity ?? 0;
+              return (
+                <tr key={i.product_id}>
+                  <td dir="ltr">{i.sku}</td>
+                  <td>{i.product_name}</td>
+                  <td className="num">{num(i.quantity)}</td>
+                  <td className="num" style={{ fontWeight: received > 0 ? 700 : 400 }}>{num(received)}</td>
+                  <td className="num">{num(Number((i.quantity - received).toFixed(3)))}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -329,8 +338,18 @@ function ViewTransfer({ t: trf, onClose, onApprove, onReject, onEdit }: { t: Sto
             {t("رفض")}
           </button>
         )}
-        {trf.status === "approved" && onEdit && (
-          <button className="btn btn-primary" onClick={() => onEdit(trf)}>
+        {trf.status === "in_transit" && onReceive && (
+          <button className="btn btn-primary" onClick={() => onReceive(trf)}>
+            📦 {t("استلام التحويل")}
+          </button>
+        )}
+        {trf.status === "in_transit" && onCancelTransit && (
+          <button className="btn btn-danger" onClick={() => onCancelTransit(trf)}>
+            {t("إلغاء وإرجاع للمصدر")}
+          </button>
+        )}
+        {trf.status === "in_transit" && onEdit && (
+          <button className="btn" onClick={() => onEdit(trf)}>
             edit
           </button>
         )}
@@ -358,6 +377,7 @@ export default function Transfers() {
   const [creating, setCreating] = useState(false);
   const [view, setView] = useState<StockTransfer | null>(null);
   const [editing, setEditing] = useState<StockTransfer | null>(null);
+  const [receiving, setReceiving] = useState<StockTransfer | null>(null);
   const act = useAction();
 
   const approve = (trf: StockTransfer) => {
@@ -382,12 +402,23 @@ export default function Transfers() {
       list.reload();
     });
   };
+  const cancelTransit = (trf: StockTransfer) => {
+    if (!confirm(t("إلغاء التحويل العابر؟ الكمية المتبقية في الطريق تعود إلى المخزن المصدر بقيد عكسي."))) return;
+    void act.run(async () => {
+      await api.post(`/stock-transfers/${trf.id}/cancel`);
+      list.reload();
+      if (view?.id === trf.id) setView(null);
+    });
+  };
 
   const statusBadge = (s: StockTransfer["status"]) => {
     const map: Record<string, { label: string; cls: string }> = {
       pending: { label: t("transfers.pending"), cls: "badge badge-warn" },
+      in_transit: { label: t("في الطريق"), cls: "badge badge-warn" },
+      completed: { label: t("مكتمل"), cls: "badge badge-ok" },
       approved: { label: t("transfers.approved"), cls: "badge badge-ok" },
       rejected: { label: t("transfers.rejected"), cls: "badge badge-off" },
+      cancelled: { label: t("ملغي"), cls: "badge badge-off" },
     };
     const v = map[s] ?? { label: s, cls: "badge" };
     return <span className={v.cls}>{v.label}</span>;
@@ -432,8 +463,11 @@ export default function Transfers() {
         <select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setSearchParams(e.target.value ? { status: e.target.value } : {}); }} aria-label={t("transfers.status")}>
           <option value="">{t("transfers.allStatuses")}</option>
           <option value="pending">{t("transfers.pending")}</option>
+          <option value="in_transit">{t("في الطريق")}</option>
+          <option value="completed">{t("مكتمل")}</option>
           <option value="approved">{t("transfers.approved")}</option>
           <option value="rejected">{t("transfers.rejected")}</option>
+          <option value="cancelled">{t("ملغي")}</option>
         </select>
       </div>
       <div className="card table-wrap">
@@ -467,6 +501,16 @@ export default function Transfers() {
                     <button className="btn btn-sm" onClick={() => setView(trf)}>
                       review
                     </button>
+                    {isManager && trf.status === "in_transit" && (
+                      <button className="btn btn-sm btn-primary" disabled={act.busy} onClick={() => setReceiving(trf)}>
+                        📦 {t("استلام")}
+                      </button>
+                    )}
+                    {isManager && trf.status === "in_transit" && (
+                      <button className="btn btn-sm btn-danger" disabled={act.busy} onClick={() => cancelTransit(trf)}>
+                        {t("إلغاء")}
+                      </button>
+                    )}
                     {((trf.status === "pending" && (isManager || trf.username === user?.username)) || (trf.status !== "pending" && isManager)) && (
                       <button className="btn btn-sm btn-danger" disabled={act.busy} onClick={() => remove(trf)}>
                         delete
@@ -481,11 +525,6 @@ export default function Transfers() {
                           {t("رفض")}
                         </button>
                       </>
-                    )}
-                    {trf.status === "pending" && (trf.username === null || true) && (
-                      <button className="btn btn-sm" disabled={act.busy} onClick={() => remove(trf)}>
-                        delete
-                      </button>
                     )}
                   </td>
                 </tr>
@@ -507,8 +546,88 @@ export default function Transfers() {
           }}
         />
       )}
-      {view && <ViewTransfer t={view} onClose={() => setView(null)} onApprove={isManager ? approve : undefined} onReject={isManager ? reject : undefined} onEdit={isManager ? (t) => { setView(null); setEditing(t); } : undefined} />}
+      {view && <ViewTransfer t={view} onClose={() => setView(null)} onApprove={isManager ? approve : undefined} onReject={isManager ? reject : undefined} onEdit={isManager && view.status === "in_transit" && view.items.every((i) => (i.received_quantity ?? 0) === 0) ? (t) => { setView(null); setEditing(t); } : undefined} onReceive={isManager ? (t) => { setView(null); setReceiving(t); } : undefined} onCancelTransit={isManager ? cancelTransit : undefined} />}
       {editing && <EditTransfer t={editing} onClose={() => setEditing(null)} onDone={() => { setEditing(null); list.reload(); }} />}
+      {receiving && <ReceiveTransfer t={receiving} onClose={() => setReceiving(null)} onDone={() => { setReceiving(null); list.reload(); }} />}
     </>
+  );
+}
+
+function ReceiveTransfer({ t: trf, onClose, onDone }: { t: StockTransfer; onClose: () => void; onDone: () => void }) {
+  const { t } = useI18n();
+  const { busy, error, run } = useAction();
+  const [qtys, setQtys] = useState<Record<number, string>>(() =>
+    Object.fromEntries(trf.items.map((i) => [i.product_id, String(Number((i.quantity - (i.received_quantity ?? 0)).toFixed(3)))])),
+  );
+  const lines = trf.items
+    .map((i) => ({ i, qty: Number(qtys[i.product_id] ?? "0") }))
+    .filter((l) => l.qty > 0)
+    .map((l) => ({ product_id: l.i.product_id, quantity: l.qty }));
+  const over = trf.items.some((i) => Number(qtys[i.product_id] ?? "0") > Number((i.quantity - (i.received_quantity ?? 0)).toFixed(3)));
+
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    if (lines.length === 0 || over) return;
+    void run(async () => {
+      await api.post(`/stock-transfers/${trf.id}/receive`, { items: lines });
+      onDone();
+    });
+  };
+
+  return (
+    <Modal title={`${t("استلام التحويل")} TR-${trf.id}`} onClose={onClose}>
+      <form onSubmit={submit}>
+        <Alert>{error}</Alert>
+        <p className="muted" style={{ marginTop: 0 }}>
+          {t("من المخزن العابر إلى ")}<b>{trf.to_warehouse_name}</b> — {t("استلم الكمية الواصلة فعليًا؛ يمكن تكرار الاستلام حتى اكتمال التحويل.")}
+        </p>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>{t("الصنف")}</th>
+                <th className="num">{t("في الطريق")}</th>
+                <th className="num">{t("كمية الاستلام")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {trf.items.map((i) => {
+                const remaining = Number((i.quantity - (i.received_quantity ?? 0)).toFixed(3));
+                return (
+                  <tr key={i.product_id}>
+                    <td>{i.product_name} <span className="muted" dir="ltr">{i.sku}</span></td>
+                    <td className="num">{num(remaining)}</td>
+                    <td className="num">
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.001"
+                        style={{ width: 100 }}
+                        value={qtys[i.product_id] ?? ""}
+                        aria-label={`${t("كمية الاستلام ")}${i.product_name ?? i.product_id}`}
+                        onChange={(e) => setQtys((q) => ({ ...q, [i.product_id]: e.target.value }))}
+                      />
+                      {Number(qtys[i.product_id] ?? "0") > remaining && (
+                        <div className="muted" style={{ color: "var(--danger)" }}>
+                          {t("المتبقي ")}{num(remaining)}{t(" فقط")}
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <div className="actions">
+          <button className="btn btn-primary" disabled={busy || lines.length === 0 || over}>
+            {busy ? t("جارٍ الاستلام…") : t("تأكيد الاستلام")}
+          </button>
+          <button type="button" className="btn" onClick={onClose}>
+            {t("إلغاء")}
+          </button>
+        </div>
+      </form>
+    </Modal>
   );
 }

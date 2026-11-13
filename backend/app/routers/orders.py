@@ -72,6 +72,85 @@ def _require_draft(order, action: str):
         )
 
 
+def _lot_qc_status(product: models.Product) -> str:
+    """حالة لوط الاستلام: المواد الحساسة (qc_required) تُستقبل «بانتظار الفحص» مع بوابة PO_QC_GATE."""
+    import os
+    if os.getenv("PO_QC_GATE", "0").lower() in ("1", "true", "yes") and getattr(product, "qc_required", False):
+        return "pending"
+    return "passed"
+
+
+def _upsert_po_lot(db: Session, order, product: models.Product, qty: Decimal) -> None:
+    """لوط تلقائي لاستلام شراء — كود اللوط = رقم أمر الشراء (التتبع العكسي)، يُراكم الاستلامات الجزئية."""
+    lot = (
+        db.query(models.StockLot)
+        .filter(
+            models.StockLot.company_id == db.info["company_id"],
+            models.StockLot.product_id == product.id,
+            models.StockLot.warehouse_id == order.warehouse_id,
+            models.StockLot.lot_code == f"PO-{order.id}",
+        )
+        .first()
+    )
+    if lot is None:
+        db.add(models.StockLot(  # type: ignore
+            company_id=db.info["company_id"],
+            product_id=product.id,
+            warehouse_id=order.warehouse_id,
+            lot_code=f"PO-{order.id}",
+            source="purchase",
+            reference=f"PO-{order.id}",
+            qty_received=qty,
+            qty_remaining=qty,
+            qc_status=_lot_qc_status(product),
+        ))
+    else:
+        lot.qty_received = Decimal(str(lot.qty_received)) + qty  # type: ignore
+        lot.qty_remaining = Decimal(str(lot.qty_remaining)) + qty  # type: ignore
+
+
+def _apply_po_receipt(db: Session, order, received: dict, products: dict) -> Decimal:
+    """يطبق كميات الاستلام (كليًا أو جزئيًا) بلا commit: متوسط مرجّح + حركة مخزون + لوط + received_quantity.
+
+    received: {product_id: qty} — يُعدَّل داخل الدالة بتوزيعه على البنود بالترتيب.
+    يعيد القيمة الإجمالية المستلمة (Σ كمية مستلمة × تكلفة البند) لأساس القيد المحاسبي.
+    """
+    gross = Decimal("0")
+    # المتوسط المرجّح على الجزء المستلم فقط (بنود الصنف مجتمعة)
+    per_product_value: dict = {}
+    for item in order.items:
+        qty = received.get(item.product_id, Decimal("0"))
+        if qty <= 0:
+            continue
+        gross += item.unit_cost * qty
+        per_product_value[item.product_id] = per_product_value.get(item.product_id, Decimal("0")) + item.unit_cost * qty
+    for pid, value in per_product_value.items():
+        product = products[pid]
+        qty = received[pid]
+        old_qty = max(Decimal(str(product.quantity or 0)), Decimal("0"))
+        old_cost = Decimal(str(product.cost_price or 0))
+        new_qty = old_qty + qty
+        product.cost_price = ((old_qty * old_cost + value) / new_qty).quantize(Decimal("0.01")) if new_qty > 0 else product.cost_price
+    for item in order.items:
+        qty = received.get(item.product_id, Decimal("0"))
+        if qty <= 0:
+            continue
+        product = products[item.product_id]
+        stock.move_stock(db, product, order.warehouse_id, qty, "purchase_receipt", f"PO-{order.id}")  # type: ignore
+        _upsert_po_lot(db, order, product, qty)
+    # توزيع المُستلم على البنود بالترتيب (يدعم تكرار الصنف في أكثر من بند)
+    for item in order.items:
+        qty = received.get(item.product_id, Decimal("0"))
+        if qty <= 0:
+            continue
+        remaining_item = Decimal(str(item.quantity)) - Decimal(str(item.received_quantity or 0))
+        take = min(qty, remaining_item)
+        if take > 0:
+            item.received_quantity = Decimal(str(item.received_quantity or 0)) + take  # type: ignore
+            received[item.product_id] = qty - take
+    return gross
+
+
 # ======================= Purchases =======================
 @purchases.post("/from-suggestions", response_model=schemas.PurchaseOrderOut, status_code=status.HTTP_201_CREATED)
 def create_purchase_order_from_suggestions(
@@ -172,47 +251,23 @@ def create_purchase_order(payload: schemas.PurchaseOrderCreate, db: Session = De
     db.add(order)
     db.flush()
 
+    if not payload.auto_receive:
+        # مسودة بلا استلام: المخزون والقيد والدفع كلها لاحقًا (/receive أو /receive-partial)
+        if payload.payment_mode == "cash":
+            db.rollback()
+            raise HTTPException(422, "الدفع النقدي يتطلب استلامًا فوريًا — أنشئ الأمر آجلًا كمسودة ثم استلم وادفع")
+        audit(db, user, "create", "purchase_order", order, f"مسودة — استلام لاحق · الإجمالي {total}")
+        db.commit()
+        db.refresh(order)
+        attach_settlement(db, "supplier", order)
+        return order
+
     # Receipt is immediate; stock, cost, payable, and cash settlement commit atomically.
     # المتوسط المرجح: تكلفة الاستلام تُحتسب مرة واحدة لكل منتج (بنوده مجتمعة)
     received_qty: dict = {}
-    received_value: dict = {}
     for item in order.items:
         received_qty[item.product_id] = received_qty.get(item.product_id, Decimal("0")) + Decimal(str(item.quantity))
-        received_value[item.product_id] = received_value.get(item.product_id, Decimal("0")) + item.unit_cost * Decimal(str(item.quantity))
-    for pid, qty in received_qty.items():
-        product = products[pid]
-        old_qty = max(Decimal(str(product.quantity or 0)), Decimal("0"))
-        old_cost = Decimal(str(product.cost_price or 0))
-        new_qty = old_qty + qty
-        product.cost_price = ((old_qty * old_cost + received_value[pid]) / new_qty).quantize(Decimal("0.01")) if new_qty > 0 else product.cost_price
-    for item in order.items:
-        product = products[item.product_id]
-        stock.move_stock(db, product, order.warehouse_id, item.quantity, "purchase_receipt", f"PO-{order.id}")  # type: ignore
-        # لوط تلقائي لكل استلام شراء — كود اللوط = رقم أمر الشراء (التتبع العكسي)
-        lot = (
-            db.query(models.StockLot)
-            .filter(
-                models.StockLot.company_id == db.info["company_id"],
-                models.StockLot.product_id == item.product_id,
-                models.StockLot.warehouse_id == order.warehouse_id,
-                models.StockLot.lot_code == f"PO-{order.id}",
-            )
-            .first()
-        )
-        if lot is None:
-            db.add(models.StockLot(
-                company_id=db.info["company_id"],  # type: ignore
-                product_id=item.product_id,  # type: ignore
-                warehouse_id=order.warehouse_id,  # type: ignore
-                lot_code=f"PO-{order.id}",  # type: ignore
-                source="purchase",  # type: ignore
-                reference=f"PO-{order.id}",  # type: ignore
-                qty_received=item.quantity,  # type: ignore
-                qty_remaining=item.quantity,  # type: ignore
-            ))
-        else:
-            lot.qty_received = Decimal(str(lot.qty_received)) + item.quantity  # type: ignore
-            lot.qty_remaining = Decimal(str(lot.qty_remaining)) + item.quantity  # type: ignore
+    _apply_po_receipt(db, order, received_qty, products)
     order.status = "received"  # type: ignore
 
     from ..accounting import VAT_INPUT_CODE, link_party_coa, link_safe_coa, seed_default_coa
@@ -321,45 +376,11 @@ def receive_purchase_order(order_id: int, request: Request, db: Session = Depend
     check_supplier_credit_limit(db, order.supplier_id, Decimal(str(order.total_amount)), perms=getattr(request.state, "permissions", None))
     # المتوسط المرجّح — نفس منطق الاستلام الفوري في الإنشاء (لا تكلفة آخر سطر)
     received_qty: dict = {}
-    received_value: dict = {}
-    for item in order.items:
-        received_qty[item.product_id] = received_qty.get(item.product_id, Decimal("0")) + Decimal(str(item.quantity))
-        received_value[item.product_id] = received_value.get(item.product_id, Decimal("0")) + item.unit_cost * Decimal(str(item.quantity))
     products: dict = {}
-    for pid, qty in received_qty.items():
-        product = products[pid] = _locked_product(db, pid)
-        old_qty = max(Decimal(str(product.quantity or 0)), Decimal("0"))
-        old_cost = Decimal(str(product.cost_price or 0))
-        new_qty = old_qty + qty
-        product.cost_price = ((old_qty * old_cost + received_value[pid]) / new_qty).quantize(Decimal("0.01")) if new_qty > 0 else product.cost_price
     for item in order.items:
-        product = products[item.product_id]
-        stock.move_stock(db, product, order.warehouse_id, item.quantity, "purchase_receipt", f"PO-{order.id}")  # type: ignore
-        # لوط تلقائي لكل استلام شراء — أساس التتبع العكسي (كود اللوط = رقم أمر الشراء)
-        lot = (
-            db.query(models.StockLot)
-            .filter(
-                models.StockLot.company_id == db.info["company_id"],
-                models.StockLot.product_id == item.product_id,
-                models.StockLot.warehouse_id == order.warehouse_id,
-                models.StockLot.lot_code == f"PO-{order.id}",
-            )
-            .first()
-        )
-        if lot is None:
-            db.add(models.StockLot(
-                company_id=db.info["company_id"],  # type: ignore
-                product_id=item.product_id,  # type: ignore
-                warehouse_id=order.warehouse_id,  # type: ignore
-                lot_code=f"PO-{order.id}",  # type: ignore
-                source="purchase",  # type: ignore
-                reference=f"PO-{order.id}",  # type: ignore
-                qty_received=item.quantity,  # type: ignore
-                qty_remaining=item.quantity,  # type: ignore
-            ))
-        else:
-            lot.qty_received = Decimal(str(lot.qty_received)) + item.quantity  # type: ignore
-            lot.qty_remaining = Decimal(str(lot.qty_remaining)) + item.quantity  # type: ignore
+        products[item.product_id] = _locked_product(db, item.product_id)
+        received_qty[item.product_id] = received_qty.get(item.product_id, Decimal("0")) + Decimal(str(item.quantity))
+    _apply_po_receipt(db, order, received_qty, products)
     order.status = "received"  # type: ignore
 
     # Accounting: Debit Inventory, Credit Supplier
@@ -400,6 +421,101 @@ def receive_purchase_order(order_id: int, request: Request, db: Session = Depend
     audit(db, user, 'receive', 'purchase_order', order, f"إجمالي {order.total_amount}")
     db.commit()
     db.refresh(order)
+    return order
+
+
+@purchases.post("/{order_id}/receive-partial", response_model=schemas.PurchaseOrderOut)
+def receive_purchase_order_partial(
+    order_id: int,
+    payload: schemas.PartialReceiveIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """استلام جزئي لأمر شراء: كميات محددة تُجمع على الاستلامات السابقة.
+
+    التكلفة (متوسط مرجّح) والقيد المحاسبي على الجزء المستلم فقط — الخصم والضريبة
+    يُوزَّعان بنسبة ما استُلم من إجمالي الأمر. التجاوز فوق المطلوب يتطلب
+    صلاحية purchasing.order.over_receive."""
+    from ..accounts import check_supplier_credit_limit
+
+    order = _locked_order_or_404(db, models.PurchaseOrder, order_id, "Purchase order")
+    if order.status not in ("draft", "partial"):
+        raise HTTPException(409, f"الاستلام الجزئي يتطلب أمرًا مسودة أو جزئي الاستلام (الحالة: {order.status})")
+
+    items_by_pid: dict = {}
+    for it in order.items:
+        items_by_pid.setdefault(it.product_id, []).append(it)
+    wanted: dict = {}
+    for ln in payload.items:
+        wanted[ln.product_id] = wanted.get(ln.product_id, Decimal("0")) + Decimal(str(ln.quantity))
+
+    perms = getattr(request.state, "permissions", None) or set()
+    over_allowed = user_has_permission(perms, "purchasing.order.over_receive")
+    for pid, qty in wanted.items():
+        lines = items_by_pid.get(pid)
+        if not lines:
+            raise HTTPException(422, f"الصنف {pid} ليس في أمر الشراء")
+        remaining = sum(
+            (Decimal(str(it.quantity)) - Decimal(str(it.received_quantity or 0)) for it in lines), Decimal("0")
+        )
+        if qty > remaining and not over_allowed:
+            raise HTTPException(409, f"الصنف {pid}: المتبقي للاستلام {remaining} فقط — التجاوز يتطلب صلاحية «استلام أكثر من المطلوب»")
+
+    products = {pid: _locked_product(db, pid) for pid in sorted(wanted)}
+    gross = _apply_po_receipt(db, order, dict(wanted), products)
+
+    # القيد بالنسبة المستلمة: الخصم يُوزَّع بنسبة القيمة المستلمة، والضريبة بنسبة الصافي
+    order_gross = sum((Decimal(str(it.quantity)) * it.unit_cost for it in order.items), Decimal("0"))
+    discount_share = (Decimal(str(order.discount_amount or 0)) * gross / order_gross) if order_gross > 0 else Decimal("0")
+    net = gross - discount_share
+    order_net = order_gross - Decimal(str(order.discount_amount or 0))
+    tax_share = (Decimal(str(order.tax_amount or 0)) * net / order_net) if order_net > 0 else Decimal("0")
+    credit_total = net + tax_share
+
+    check_supplier_credit_limit(db, order.supplier_id, credit_total, perms=perms)
+
+    supplier = None
+    if credit_total != 0 or net != 0:
+        from ..accounting import VAT_INPUT_CODE, seed_default_coa, link_party_coa
+        seed_default_coa(db, db.info["company_id"])
+        supplier = db.get(models.Supplier, order.supplier_id)
+        if supplier is not None:
+            link_party_coa(db, supplier, db.info["company_id"], is_customer=False)
+        inventory_acc = db.query(models.ChartAccount).filter(models.ChartAccount.company_id == db.info["company_id"], models.ChartAccount.code == "1101").first()
+        if not inventory_acc or not supplier or not supplier.chart_account_id:
+            db.rollback()
+            raise HTTPException(409, "Purchase accounting accounts could not be initialized")
+        po_items = [
+            {"account_id": inventory_acc.id, "debit": net, "credit": 0},
+            {"account_id": supplier.chart_account_id, "debit": 0, "credit": credit_total},
+        ]
+        if tax_share > 0:
+            vat_in_acc = db.query(models.ChartAccount).filter(
+                models.ChartAccount.company_id == db.info["company_id"], models.ChartAccount.code == VAT_INPUT_CODE
+            ).first()
+            if vat_in_acc is None or vat_in_acc.is_group:
+                db.rollback()
+                raise HTTPException(409, "حساب ضريبة المشتريات (1145) غير موجود — حدّث شجرة الحسابات")
+            po_items.insert(1, {"account_id": vat_in_acc.id, "debit": tax_share, "credit": 0})
+        AccountingEngine.create_entry(
+            db=db,
+            company_id=db.info["company_id"],
+            user_id=user.id,
+            description=f"Purchase Receipt (partial) PO-{order.id}",
+            items=po_items,
+            reference=f"PO-{order.id}",
+        )
+
+    fully = all(
+        Decimal(str(it.received_quantity or 0)) >= Decimal(str(it.quantity))
+        for it in order.items
+    )
+    order.status = "received" if fully else "partial"  # type: ignore
+    audit(db, user, "receive", "purchase_order", order, f"استلام جزئي بقيمة {gross} — الحالة {order.status}")
+    db.commit()
+    db.refresh(order)
+    attach_settlement(db, "supplier", order)
     return order
 
 

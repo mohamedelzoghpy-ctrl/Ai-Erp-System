@@ -361,3 +361,67 @@ def retest_batch_qc(batch_id: int, notes: Optional[str] = None, db: Session = De
     db.commit()
     db.refresh(batch)
     return QcMeasurementsOut(batch_id=batch_id, attempt=new_attempt, attempts_count=new_attempt, overall_pass=None, results=[])
+
+
+# ---------- فحص جودة الاستلام (لوطات الشراء — بوابة PO_QC_GATE) ----------
+
+@router.post("/lots/{lot_id}/release")
+def release_lot_qc(
+    lot_id: int,
+    action: Literal["passed", "rejected"],
+    notes: Optional[str] = None,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """حكم فحص جودة الاستلام على لوط شراء «بانتظار الفحص»:
+    - passed: يُعتمد ويُسمح بصرفه في البيع/الـPOS/الإنتاج.
+    - rejected: يُشطب من المخزون وتُرحَّل قيمته إلى حساب الهالك (نفس سياسة رفض دفعة الإنتاج)."""
+    from decimal import Decimal
+
+    from ..accounting import AccountingEngine
+    from ..stock import dec, move_stock
+
+    if action == "rejected" and not notes:
+        raise HTTPException(422, "سبب الرفض مطلوب عند رفض اللوط")
+    lot = db.get(models.StockLot, lot_id)
+    if lot is None or lot.company_id != db.info["company_id"]:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Lot {lot_id} not found")
+    if lot.qc_status != "pending":
+        raise HTTPException(status.HTTP_409_CONFLICT, f"اللوط مفحوص بالفعل وحالته: {lot.qc_status}")
+    product = db.get(models.Product, lot.product_id)
+    if product is None:
+        raise HTTPException(422, "منتج اللوط غير موجود")
+
+    if action == "rejected":
+        remaining = dec(lot.qty_remaining)
+        if remaining > 0:
+            move_stock(db, product, lot.warehouse_id, -remaining, "qc_reject", reference=lot.lot_code, user_id=user.id)
+            value = (remaining * dec(product.cost_price)).quantize(Decimal("0.01"))
+            company_id = db.info["company_id"]
+            inventory_acc = db.query(models.ChartAccount).filter(models.ChartAccount.company_id == company_id, models.ChartAccount.code == "1101").first()
+            scrap_acc = db.query(models.ChartAccount).filter(models.ChartAccount.company_id == company_id, models.ChartAccount.code == "5600").first()
+            if inventory_acc is None or scrap_acc is None or scrap_acc.is_group:
+                db.rollback()
+                raise HTTPException(409, "حسابات فحص الجودة (1101/5600) غير مهيأة")
+            if value > 0:
+                AccountingEngine.create_entry(
+                    db=db,
+                    company_id=company_id,
+                    user_id=user.id,
+                    description=f"QC Reject lot {lot.lot_code}: {product.name}",
+                    items=[
+                        {"account_id": scrap_acc.id, "debit": value, "credit": 0},
+                        {"account_id": inventory_acc.id, "debit": 0, "credit": value},
+                    ],
+                    reference=lot.lot_code,
+                )
+                # أنزِل متوسط التكلفة المرجّح — الكمية المشطوبة خرجت من المخزون
+                old_qty = dec(product.quantity)  # بعد خصم اللوط (move_stock حدّث الرصيد)
+                if old_qty > 0:
+                    product.cost_price = ((old_qty * dec(product.cost_price) - value) / old_qty).quantize(Decimal("0.01"))
+            lot.qty_remaining = Decimal("0")
+    lot.qc_status = action
+    audit(db, user, "update", "lot_qc", lot, f"فحص اللوط {lot.lot_code}: {action}" + (f" — {notes}" if notes else ""))
+    db.commit()
+    db.refresh(lot)
+    return {"lot_id": lot.id, "lot_code": lot.lot_code, "qc_status": lot.qc_status, "qty_remaining": float(dec(lot.qty_remaining))}

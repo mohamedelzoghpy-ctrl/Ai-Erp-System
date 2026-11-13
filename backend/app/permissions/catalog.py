@@ -88,6 +88,7 @@ CATALOG: Dict[str, dict] = {
                 ("create", "إنشاء أمر شراء", False, False),
                 ("cancel", "إلغاء أمر شراء", False, False),
                 ("receive", "استلام أمر شراء", False, False),
+                ("over_receive", "استلام أكثر من الكمية المطلوبة", True, False),
                 ("pdf", "طباعة أمر الشراء", False, False),
                 ("export", "تصدير أوامر الشراء", False, False),
             ]),
@@ -134,12 +135,14 @@ CATALOG: Dict[str, dict] = {
                 ("create", "استلام لوط / إنشاء", False, False),
                 ("update", "تعديل بيانات لوط", False, False),
                 ("write_off", "إعدام/هالك من لوط", True, False),
+                ("qc_release", "اعتماد فحص جودة الاستلام", False, False),
             ]),
             "transfer": ("التحويلات المخزنية", [
                 ("view", "عرض التحويلات", False, False),
                 ("create", "إنشاء تحويل", False, False),
                 ("edit", "تعديل تحويل", False, False),
                 ("approve", "اعتماد تحويل", False, False),
+                ("receive", "استلام تحويل (من العابر)", False, False),
                 ("reject", "رفض تحويل", False, False),
                 ("delete", "حذف تحويل", False, False),
                 ("pdf", "طباعة تحويل", False, False),
@@ -897,7 +900,7 @@ def migrate_legacy_user_sections(db: Session) -> None:
 
 def seed_all(engine) -> None:
     """بذر الكتالوج + أقسام كل الشركات القائمة — يُستدعى عند إقلاع التطبيق."""
-    from .database import SessionLocal
+    from ..database import SessionLocal  # app.database — لا وحدة app.permissions.database
 
     db = SessionLocal()
     try:

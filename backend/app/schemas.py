@@ -68,6 +68,7 @@ class WarehouseBase(BaseModel):
     code: str = Field(min_length=1, max_length=50)
     location: Optional[str] = None
     is_active: bool = True
+    is_transit: bool = False  # المخزن العابر (يُنشأ آليًا — لا يظهر بقوائم التشغيل)
 
 
 class WarehouseCreate(WarehouseBase):
@@ -229,6 +230,8 @@ class ProductBase(BaseModel):
     reorder_level: int = Field(default=0, ge=0)
     pack_qty: Decimal = Field(default=Decimal("1"), ge=0)
     pack_name: Optional[str] = Field(default=None, max_length=30)
+    # مادة حساسة: مع بوابة PO_QC_GATE يستقبل لوطها «بانتظار الفحص» ولا يُصرف حتى الاعتماد
+    qc_required: bool = False
     is_active: bool = True
     warehouse_id: Optional[int] = None
     supplier_id: Optional[int] = None
@@ -249,6 +252,7 @@ class ProductUpdate(BaseModel):
     cost_price: Optional[Decimal] = Field(default=None, ge=0)
     sale_price: Optional[Decimal] = Field(default=None, ge=0)
     reorder_level: Optional[int] = Field(default=None, ge=0)
+    qc_required: Optional[bool] = None
     is_active: Optional[bool] = None
     warehouse_id: Optional[int] = None
     supplier_id: Optional[int] = None
@@ -311,6 +315,7 @@ class PurchaseItemOut(PurchaseItemIn, ORMModel):
     id: int
     product_name: Optional[str] = None
     returned_quantity: float = 0
+    received_quantity: float = 0  # المُستلم فعليًا (استلام جزئي متعدد)
 
 
 class PurchaseOrderCreate(BaseModel):
@@ -323,7 +328,19 @@ class PurchaseOrderCreate(BaseModel):
     discount_value: Decimal = Field(default=Decimal("0"), ge=0)
     tax_rate: Decimal = Field(default=Decimal("14"), ge=0, le=100)
     currency_id: Optional[int] = None
+    # False = مسودة تُستلم لاحقًا (كليًا عبر /receive أو جزئيًا عبر /receive-partial)
+    auto_receive: bool = True
     items: List[PurchaseItemIn] = Field(min_length=1)
+
+
+class PartialReceiveItemIn(BaseModel):
+    product_id: int
+    quantity: float = Field(gt=0)
+
+
+class PartialReceiveIn(BaseModel):
+    """استلام جزئي لأمر شراء مسودة/جزئي — الكميات تُجمع على الاستلامات السابقة."""
+    items: List[PartialReceiveItemIn] = Field(min_length=1)
 
 
 class PurchaseOrderOut(ORMModel):
@@ -1896,11 +1913,22 @@ class TransferCreate(BaseModel):
     items: List[TransferItemIn] = Field(min_length=1, max_length=500)
 
 
+class TransferReceiveItemIn(BaseModel):
+    product_id: int
+    quantity: float = Field(gt=0)
+
+
+class TransferReceiveIn(BaseModel):
+    """استلام تحويل قائم في الطريق — حذف البنود يعني استلام كل المتبقي."""
+    items: Optional[List[TransferReceiveItemIn]] = None
+
+
 class TransferItemOut(ORMModel):
     product_id: int
     sku: Optional[str] = None
     product_name: Optional[str] = None
     quantity: float
+    received_quantity: float = 0  # ما وصل مخزن الهدف (الباقي عابر)
 
 
 class TransferOut(ORMModel):
@@ -1912,6 +1940,7 @@ class TransferOut(ORMModel):
     notes: Optional[str] = None
     status: str = "pending"
     valuation: str = "cost"
+    booked_value: Optional[Decimal] = None  # القيمة المحجوزة في «مخزون تحت النقل» 1103
     username: Optional[str] = None
     approved_by: Optional[int] = None
     approved_at: Optional[datetime] = None

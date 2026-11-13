@@ -210,7 +210,7 @@ function OrdersScreen({ kind }: { kind: Kind }) {
       {creating && (
         <OrderForm
           cfg={cfg}
-          warehouses={(warehouses.data ?? []).filter((w) => w.is_active)}
+          warehouses={(warehouses.data ?? []).filter((w) => w.is_active && !w.is_transit)}
           onClose={() => setCreating(false)}
           onSaved={(id) => {
             setCreating(false);
@@ -280,6 +280,8 @@ function OrderForm({
 
   const isPurchaseOrder = cfg.priceField === "unit_cost";
   const [docType, setDocType] = useState<"order" | "quotation">("order");
+  // استلام لاحق: تحفظ فاتورة الشراء مسودة تُستلم لاحقًا كليًا أو جزئيًا
+  const [laterReceive, setLaterReceive] = useState(false);
 
   // Picking a warehouse resets the safe; the effect below auto-fills it from the
   // safe(s) of the branch the selected warehouse belongs to.
@@ -324,7 +326,7 @@ function OrderForm({
         [cfg.partyField]: party!.id,
         warehouse_id: Number(warehouse),
         notes: notes.trim() || null,
-        ...(isPurchaseOrder ? { payment_mode: paymentMode, safe_id: paymentMode === "cash" ? Number(safeId) : null } : { rep_id: repId === "" ? null : Number(repId), safe_id: safeId === "" ? null : Number(safeId), document_type: docType }),
+        ...(isPurchaseOrder ? { payment_mode: paymentMode, safe_id: paymentMode === "cash" ? Number(safeId) : null, auto_receive: !laterReceive } : { rep_id: repId === "" ? null : Number(repId), safe_id: safeId === "" ? null : Number(safeId), document_type: docType }),
         discount_mode: discountMode,
         discount_value: discountValue || "0",
         tax_rate: taxEnabled ? "14" : "0",
@@ -375,12 +377,12 @@ function OrderForm({
                   <input value={user?.full_name || user?.username || ""} readOnly aria-label={t("مسؤول المشتريات")} />
                 </Field>
                 <Field label={t("طريقة الدفع")}>
-                  <select value={paymentMode} onChange={(e) => setPaymentMode(e.target.value as "cash" | "credit")} aria-label={t("طريقة الدفع")}>
-                    <option value="cash">{t("نقدي")}</option>
+                  <select value={laterReceive ? "credit" : paymentMode} onChange={(e) => setPaymentMode(e.target.value as "cash" | "credit")} aria-label={t("طريقة الدفع")} disabled={laterReceive} title={laterReceive ? t("الدفع النقدي مع الاستلام اللاحق يتم من شاشة المدفوعات بعد الاستلام") : undefined}>
+                    <option value="cash" disabled={laterReceive}>{t("نقدي")}</option>
                     <option value="credit">{t("آجل")}</option>
                   </select>
                 </Field>
-                {paymentMode === "cash" && <Field label={t("اسم الخزينة")}>
+                {paymentMode === "cash" && !laterReceive && <Field label={t("اسم الخزينة")}>
                   <select value={safeId} onChange={(e) => setSafeId(e.target.value)} required aria-label={t("اسم الخزينة")}>
                     <option value="">{t("— اختر الخزينة —")}</option>
                     {(safes.data ?? []).filter((safe) => safe.is_active).map((safe) => <option key={safe.id} value={safe.id}>{safe.name}</option>)}
@@ -527,9 +529,18 @@ function OrderForm({
           <Field label={t("ملاحظات")}>
             <textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
           </Field>
+          {isPurchaseOrder && (
+            <Field label={t("طريقة الاستلام")} hint={laterReceive ? t("تُحفظ كمسودة — استلم كليًا أو جزئيًا من تفاصيل الفاتورة عند وصول البضاعة.") : t("يتم استلام البضاعة وتحديث المخزون فور حفظ الفاتورة.")}>
+              <select value={laterReceive ? "later" : "now"} onChange={(e) => setLaterReceive(e.target.value === "later")} aria-label={t("طريقة الاستلام")}>
+                <option value="now">{t("استلام فوري (كما هو متعارف)")}</option>
+                <option value="later">{t("استلام لاحق — مسودة (يدعم الاستلام الجزئي)")}</option>
+              </select>
+            </Field>
+          )}
           <p className="muted" style={{ fontSize: 13, textAlign: "center", margin: "4px 0 0" }}>
             {cfg.partyField === "customer_id"
               ? t("تُحفظ كمسودة مبيعات بدون أي خصم من الأرصدة — التحويل إلى فاتورة مبيعات هو الذي يخصم المخزون.")
+              : laterReceive ? t("تُحفظ كمسودة شراء بلا حركة مخزون حتى الاستلام.")
               : t("يتم استلام البضاعة وتحديث المخزون فور حفظ الفاتورة.")}
           </p>
           <div className="pos-summary-actions">
@@ -567,6 +578,7 @@ function OrderDetail({
   const isDraft = order.status === "draft";
   const isSales = cfg.partyField === "customer_id";
   const [returning, setReturning] = useState(false);
+  const [receiving, setReceiving] = useState(false);
 
   const transition = (path: string, confirmText: string) => {
     if (!confirm(confirmText)) return;
@@ -622,6 +634,7 @@ function OrderDetail({
             <tr>
               <th>{t("المنتج")}</th>
               <th className="num">{t("الكمية")}</th>
+              {!isSales && <th className="num">{t("المُستلم")}</th>}
               <th className="num">{cfg.priceLabel}</th>
               <th className="num">{t("الإجمالي")}</th>
             </tr>
@@ -633,6 +646,11 @@ function OrderDetail({
                 <tr key={it.id}>
                   <td>{it.product_name ?? `#${it.product_id}`}</td>
                   <td className="num">{num(it.quantity)}</td>
+                  {!isSales && (
+                    <td className="num" style={{ fontWeight: (it.received_quantity ?? 0) > 0 ? 700 : 400 }}>
+                      {num(it.received_quantity ?? 0)}
+                    </td>
+                  )}
                   <td className="num">{money(price)}</td>
                   <td className="num">{money(Number(price) * it.quantity)}</td>
                 </tr>
@@ -694,6 +712,9 @@ function OrderDetail({
               <button className="btn btn-primary" disabled={busy} onClick={() => transition(cfg.commit.path, cfg.commit.confirmText)}>
                 {cfg.commit.label}
               </button>
+              <button className="btn btn-success" disabled={busy} onClick={() => setReceiving(true)}>
+                📦 {t("استلام جزئي")}
+              </button>
               <button className="btn btn-danger" disabled={busy} onClick={() => transition("cancel", `${t("إلغاء ")}${cfg.orderWord}${t("؟ لا يمكن التراجع.")}`)}>
                 {t("إلغاء ")}{cfg.orderWord}
               </button>
@@ -705,6 +726,13 @@ function OrderDetail({
           <p className="muted" style={{ marginBottom: 8 }}>
             {order.status === "cancelled" ? `${cfg.orderWord}${t(" ملغاة.")}` : isSales ? t("تم تحويل المسودة إلى فاتورة مبيعات وخصم الكميات من الأرصدة.") : `${t("تم تنفيذ ")}${cfg.orderWord}${t(" وتحديث المخزون.")}`}
           </p>
+          {order.status === "partial" && !isSales && (
+            <div className="form-actions">
+              <button className="btn btn-primary" disabled={busy} onClick={() => setReceiving(true)}>
+                📦 {t("استلام جزئي")}
+              </button>
+            </div>
+          )}
           {order.status === cfg.doneStatus && order.items.some((i) => i.quantity > (i.returned_quantity ?? 0)) && (
             <div className="form-actions">
               <button className="btn" onClick={() => setReturning(true)}>
@@ -713,6 +741,16 @@ function OrderDetail({
             </div>
           )}
         </>
+      )}
+      {receiving && (
+        <PartialReceiveDialog
+          order={order}
+          onClose={() => setReceiving(false)}
+          onDone={() => {
+            setReceiving(false);
+            onChanged();
+          }}
+        />
       )}
       {returning && (
         <ReturnDialog
@@ -725,6 +763,97 @@ function OrderDetail({
           }}
         />
       )}
+    </Modal>
+  );
+}
+
+// -------------------------------------------------------------- partial receive
+
+function PartialReceiveDialog({
+  order,
+  onClose,
+  onDone,
+}: {
+  order: Order;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const { t } = useI18n();
+  const { busy, error, run } = useAction();
+  const [qtys, setQtys] = useState<Record<number, string>>(() =>
+    Object.fromEntries(order.items.map((it) => [it.id, String(Number((it.quantity - (it.received_quantity ?? 0)).toFixed(3)))])),
+  );
+  const lines = order.items
+    .map((it) => ({ it, qty: Number(qtys[it.id] ?? "0") }))
+    .filter((l) => l.qty > 0)
+    .map((l) => ({ product_id: l.it.product_id, quantity: l.qty }));
+  const over = order.items.some((it) => Number(qtys[it.id] ?? "0") > Number((it.quantity - (it.received_quantity ?? 0)).toFixed(3)));
+
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    if (lines.length === 0 || over) return;
+    void run(async () => {
+      await api.post(`/purchase-orders/${order.id}/receive-partial`, { items: lines });
+      onDone();
+    });
+  };
+
+  return (
+    <Modal title={`${t("استلام جزئي")} — ${t("الفاتورة")} #${order.id}`} onClose={onClose}>
+      <form onSubmit={submit}>
+        <Alert>{error}</Alert>
+        <p className="muted" style={{ marginTop: 0 }}>
+          {t("استلم الكميات الواصلة فعليًا — يمكن تكرار الاستلام حتى اكتمال الفاتورة. التجاوز فوق المطلوب يحتاج صلاحية خاصة.")}
+        </p>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>{t("المنتج")}</th>
+                <th className="num">{t("المطلوب")}</th>
+                <th className="num">{t("المُستلم")}</th>
+                <th className="num">{t("كمية الاستلام")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {order.items.map((it) => {
+                const remaining = Number((it.quantity - (it.received_quantity ?? 0)).toFixed(3));
+                return (
+                  <tr key={it.id}>
+                    <td>{it.product_name ?? `#${it.product_id}`}</td>
+                    <td className="num">{num(it.quantity)}</td>
+                    <td className="num">{num(it.received_quantity ?? 0)}</td>
+                    <td className="num">
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.001"
+                        style={{ width: 100 }}
+                        value={qtys[it.id] ?? ""}
+                        aria-label={`${t("كمية الاستلام ")}${it.product_name ?? it.product_id}`}
+                        onChange={(e) => setQtys((q) => ({ ...q, [it.id]: e.target.value }))}
+                      />
+                      {Number(qtys[it.id] ?? "0") > remaining && (
+                        <div className="muted" style={{ color: "var(--danger)" }}>
+                          {t("المتبقي ")}{num(remaining)}{t(" فقط")}
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <div className="actions">
+          <button className="btn btn-primary" disabled={busy || lines.length === 0 || over}>
+            {busy ? t("جارٍ الاستلام…") : t("تأكيد الاستلام")}
+          </button>
+          <button type="button" className="btn" onClick={onClose}>
+            {t("إلغاء")}
+          </button>
+        </div>
+      </form>
     </Modal>
   );
 }

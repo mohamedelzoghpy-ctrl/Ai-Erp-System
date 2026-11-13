@@ -158,6 +158,7 @@ def test_stock_movements_report_filters(api):
     }), 201)
     transfers = ok(c.get("/stock-transfers"))
     ok(c.post(f"/stock-transfers/{transfers[0]['id']}/approve"))
+    ok(c.post(f"/stock-transfers/{transfers[0]['id']}/receive"))  # استلام كامل من العابر
     # بدون فلتر: حركتان على الأقل (adjustment + transfer_out + transfer_in)
     all_rows = ok(c.get("/reports/stock-movements"))
     reasons = {r["reason"] for r in all_rows}

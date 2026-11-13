@@ -44,7 +44,10 @@ function quantityInCart(cart: CartLine[], productId: number): number {
 export default function Pos() {
   const { isManager, can } = useAuth();
   const { t } = useI18n();
-  const warehouses = useFetch(() => api.get<Warehouse[]>("/warehouses?is_active=true&limit=500"), "pos-wh");
+  const warehouses = useFetch(
+    () => api.get<Warehouse[]>("/warehouses?is_active=true&limit=500").then((ws) => ws.filter((w) => !w.is_transit)),
+    "pos-wh",
+  );
   const safes = useFetch(() => api.get<{ id: number; name: string; is_active: boolean }[]>("/safes"), "pos-safes");
   const [warehouse, setWarehouse] = useState(remembered());
   const [screen, setScreen] = useState<"history" | "new">("history");

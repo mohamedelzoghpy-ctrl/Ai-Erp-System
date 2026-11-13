@@ -10,7 +10,10 @@ import { Alert, Empty, Field, Loading, Lookup, Modal, PageHeader, Pager } from "
 const STATUS: Record<Stocktake["status"], string> = { open: "مفتوح", applied: "تم الاعتماد", cancelled: "ملغي" };
 
 function NewDialog({ onClose, onDone }: { onClose: () => void; onDone: (id: number) => void }) {
-  const warehouses = useFetch(() => api.get<Warehouse[]>("/warehouses?is_active=true&limit=500"), "st-wh");
+  const warehouses = useFetch(
+    () => api.get<Warehouse[]>("/warehouses?is_active=true&limit=500").then((ws) => ws.filter((w) => !w.is_transit)),
+    "st-wh",
+  );
   const [wh, setWh] = useState("");
   const [notes, setNotes] = useState("");
   const act = useAction();

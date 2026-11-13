@@ -44,6 +44,7 @@ export const STATUS_LABEL: Record<OrderStatus, Bi> = {
   received: { ar: "تم الاستلام", en: "Received" },
   confirmed: { ar: "مؤكد", en: "Confirmed" },
   cancelled: { ar: "ملغي", en: "Cancelled" },
+  partial: { ar: "استلام جزئي", en: "Partially received" },
 };
 
 export function statusLabel(status: OrderStatus, lang: Lang = fmtLang): string {
@@ -58,6 +59,11 @@ export const REASON_LABEL: Record<string, Bi> = {
   stock_import: { ar: "استيراد مخزون", en: "Stock import" },
   transfer_out: { ar: "تحويل (صادر)", en: "Transfer (out)" },
   transfer_in: { ar: "تحويل (وارد)", en: "Transfer (in)" },
+  transfer_in_transit: { ar: "تحويل (إلى العابر)", en: "Transfer (to transit)" },
+  transfer_receipt: { ar: "تحويل (استلام من العابر)", en: "Transfer (transit receipt)" },
+  transfer_cancel: { ar: "تحويل (إلغاء عائد)", en: "Transfer (cancel return)" },
+  transfer_edit: { ar: "تحويل (تعديل)", en: "Transfer (edit)" },
+  qc_reject: { ar: "رفض فحص جودة", en: "QC reject" },
   sales_return: { ar: "مرتجع بيع", en: "Sales return" },
   purchase_return: { ar: "مرتجع شراء", en: "Purchase return" },
 };

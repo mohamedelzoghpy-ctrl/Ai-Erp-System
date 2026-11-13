@@ -432,6 +432,7 @@ function ProductForm({
     sale_price: initial?.sale_price ?? "0",
     quantity: "0",
     reorder_level: String(initial?.reorder_level ?? 0),
+    qc_required: initial?.qc_required ?? false,
     warehouse_id: initial?.warehouse_id ? String(initial.warehouse_id) : "",
     supplier_id: initial?.supplier_id ? String(initial.supplier_id) : "",
     is_active: initial?.is_active ?? true,
@@ -473,6 +474,7 @@ function ProductForm({
       unit: f.unit.trim() || "قطعة",
       sale_price: f.sale_price || "0",
       reorder_level: Number(f.reorder_level) || 0,
+      qc_required: f.qc_required,
       is_active: f.is_active,
       warehouse_id: f.warehouse_id ? Number(f.warehouse_id) : null,
       supplier_id: f.supplier_id ? Number(f.supplier_id) : null,
@@ -527,6 +529,12 @@ function ProductForm({
           </Field>
           <Field label={t("حد إعادة الطلب")}>
             <input type="number" min="0" step="1" value={f.reorder_level} onChange={(e) => set("reorder_level", e.target.value)} />
+          </Field>
+          <Field label={t("فحص الجودة عند الاستلام")} hint={t("مواد حساسة: مع تفعيل بوابة PO_QC_GATE يستقبل لوطها «بانتظار الفحص» ولا يُصرف حتى الاعتماد.")}>
+            <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <input type="checkbox" checked={f.qc_required} onChange={(e) => set("qc_required", e.target.checked)} />
+              {t("مادة حساسة تطلب فحصًا")}
+            </label>
           </Field>
           <Field label={t("المخزن")}>
             <select value={f.warehouse_id} onChange={(e) => set("warehouse_id", e.target.value)}>

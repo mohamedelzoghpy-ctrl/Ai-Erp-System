@@ -336,6 +336,7 @@ def seed_default_coa(db, company_id: int) -> int:
         ("1130", "إنتاج تحت التشغيل (WIP)", "asset", "1100", False),
         ("1120", "ذمم العملاء (Accounts Receivable)", "asset", "1100", False),
         ("1101", "المخزون (Inventory)", "asset", "1100", False),
+        ("1103", "مخزون تحت النقل (In-Transit)", "asset", "1100", False),
         ("1140", "مصروفات مدفوعة مقدماً (Prepaid)", "asset", "1100", False),
         ("1200", "الأصول الثابتة", "asset", "1000", True),
         ("1210", "المعدات (Equipment)", "asset", "1200", False),

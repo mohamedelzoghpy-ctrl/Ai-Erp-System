@@ -237,6 +237,8 @@ class Warehouse(TenantOwned, Base):
     branch_id = Column(Integer, ForeignKey("branches.id", ondelete="RESTRICT"), nullable=False, index=True)
     location = Column(String(255), nullable=True)
     is_active = Column(Boolean, nullable=False, default=True, server_default="true")
+    # المخزن العابر: وعاء «مخزون في الطريق» للتحويلات بمرحلة نقل — يُنشأ آليًا لكل شركة
+    is_transit = Column(Boolean, nullable=False, default=False, server_default="false")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
@@ -291,6 +293,8 @@ class Product(TenantOwned, Base):
     # وحدة التعبئة: 1 كرتون = pack_qty قطعة (البيع والتخزين بالقطعة دائمًا)
     pack_qty = Column(Numeric(12, 3), nullable=False, default=1, server_default="1")
     pack_name = Column(String(30), nullable=True)  # اسم وحدة الحزمة (كرتون/درزن)
+    # مواد حساسة: مع بوابة PO_QC_GATE يستقبل لوطها بحالة «بانتظار الفحص» ولا يُصرف حتى الاعتماد
+    qc_required = Column(Boolean, nullable=False, default=False, server_default="false")
     is_active = Column(Boolean, nullable=False, default=True, server_default="true")
     warehouse_id = Column(Integer, ForeignKey("warehouses.id", ondelete="SET NULL"), nullable=True, index=True)
     supplier_id = Column(Integer, ForeignKey("suppliers.id", ondelete="SET NULL"), nullable=True, index=True)
@@ -386,6 +390,8 @@ class PurchaseOrderItem(TenantOwned, Base):
     product_id = Column(Integer, ForeignKey("products.id"), nullable=False, index=True)
     quantity = Column(Numeric(12, 3), nullable=False)
     unit_cost = Column(Numeric(12, 2), nullable=False)
+    # استلام جزئي: المُستلم فعليًا من الكمية المطلوبة (استلامات متعددة)
+    received_quantity = Column(Numeric(12, 3), nullable=False, default=0, server_default="0")
 
     order = relationship("PurchaseOrder", back_populates="items")
     product = relationship("Product")
@@ -1024,6 +1030,8 @@ class StockLot(TenantOwned, Base):
     expiry_date = Column(Date, nullable=True)
     qty_received = Column(Numeric(12, 3), nullable=False, default=0, server_default="0")
     qty_remaining = Column(Numeric(12, 3), nullable=False, default=0, server_default="0")
+    # فحص جودة الاستلام (PO_QC_GATE): passed | pending | failed — pending يمنع الصرف
+    qc_status = Column(String(20), nullable=False, default="passed", server_default="passed", index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     product = relationship("Product")
@@ -1408,7 +1416,9 @@ class StockTransfer(TenantOwned, Base):
     to_warehouse_id = Column(Integer, ForeignKey("warehouses.id"), nullable=False, index=True)
     notes = Column(Text, nullable=True)
     valuation = Column(String(10), nullable=False, server_default="cost")  # cost / sale
-    status = Column(String(20), nullable=False, server_default="pending", index=True)  # pending/approved/rejected
+    # القيمة الدفترية المحجوزة في «مخزون تحت النقل» (1103) لحظة الاعتماد — أساس قيود الاستلام/الإلغاء
+    booked_value = Column(Numeric(14, 2), nullable=True)
+    status = Column(String(20), nullable=False, server_default="pending", index=True)  # pending/in_transit/completed/rejected/cancelled
     created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     username = Column(String(60), nullable=True)
     approved_by = Column(Integer, ForeignKey("users.id"), nullable=True)
@@ -1437,6 +1447,8 @@ class StockTransferItem(TenantOwned, Base):
     transfer_id = Column(Integer, ForeignKey("stock_transfers.id", ondelete="CASCADE"), nullable=False, index=True)
     product_id = Column(Integer, ForeignKey("products.id"), nullable=False, index=True)
     quantity = Column(Numeric(12, 3), nullable=False)
+    # ما وصل مخزن الهدف فعلًا (استلام جزئي متعدد) — الباقي عابر
+    received_quantity = Column(Numeric(12, 3), nullable=False, default=0, server_default="0")
 
     transfer = relationship("StockTransfer", back_populates="items")
     product = relationship("Product")

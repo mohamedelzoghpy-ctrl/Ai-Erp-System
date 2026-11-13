@@ -91,12 +91,13 @@ def move_stock(db: Session, product: models.Product, warehouse_id: int, change: 
 
 
 def assert_no_pending_qc_lots(db: Session, company_id: int, product: "models.Product", warehouse_id: int, qty: Union[int, float, Decimal]) -> None:
-    """بوابة فحص الجودة (QC_GATE): تمنع صرف كمية يغطيها لوط دفعة إنتاج ما زالت
-    بانتظار الفحص (qc_status=pending). الدفعات المرفوضة مشطوب مخزونها أصلًا،
-    واللوطات بلا دفعة (شراء/افتتاحي) تمرّ بحرية."""
+    """بوابة فحص الجودة: تمنع صرف كمية يغطيها لوط بانتظار الفحص (qc_status=pending).
+
+    مصدران للتعليق:
+    - لوطات شراء مواد حساسة (PO_QC_GATE) — تُمنع دائمًا حتى اعتماد الفحص.
+    - دفعات إنتاج (QC_GATE) — تُمنع فقط عند تفعيل بوابة الإنتاج بيئيًا.
+    الدفعات المرفوضة مشطوب مخزونها أصلًا، واللوطات بلا فحص تمرّ بحرية."""
     import os
-    if os.getenv("QC_GATE", "0").lower() not in ("1", "true", "yes"):
-        return
     if company_id is None:
         return
     lots = (
@@ -116,14 +117,23 @@ def assert_no_pending_qc_lots(db: Session, company_id: int, product: "models.Pro
     )
     remaining = q3(qty)
     needed_codes: list = []
+    pending_purchase: list = []
     for lot in lots:
         if remaining <= 0:
             break
         take = min(Decimal(str(lot.qty_remaining)), remaining)
         needed_codes.append(lot.lot_code)
+        if lot.qc_status == "pending":
+            pending_purchase.append(lot)
         remaining -= take
     if remaining > 0 or not needed_codes:
         return  # اللوطات لا تغطي الكمية — move_stock سيتولى المنع
+    if pending_purchase:
+        codes = ", ".join(l.lot_code for l in pending_purchase)
+        from fastapi import HTTPException
+        raise HTTPException(status.HTTP_409_CONFLICT, f"لوطات بانتظار فحص جودة الاستلام لا يمكن صرفها: {codes} — اعتمد فحص QC أولًا")
+    if os.getenv("QC_GATE", "0").lower() not in ("1", "true", "yes"):
+        return
     pending = (
         db.query(models.ProductionBatch.batch_no)
         .filter(
