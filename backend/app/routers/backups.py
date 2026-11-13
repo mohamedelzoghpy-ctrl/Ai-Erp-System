@@ -10,7 +10,7 @@ import gzip
 import json
 import os
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import List
 
@@ -27,6 +27,22 @@ from .. import models
 router = APIRouter(prefix="/admin/backups", tags=["backups"])
 
 _SAFE_NAME = re.compile(r"^backup-\d{8}-\d{6}\.json\.gz$")
+_JSON_AUTO_NAME = re.compile(r"^auto-json-\d{8}-\d{6}\.json\.gz$")
+_SQL_NAME = re.compile(r"^auto-erp_db-\d{8}-\d{6}\.sql\.gz$")
+
+
+def _backup_kind(name: str) -> str:
+    """json_manual | json_auto | sql_auto — للعرض والصلاحيات في الواجهة."""
+    if _SQL_NAME.match(name):
+        return "sql_auto"
+    if _JSON_AUTO_NAME.match(name):
+        return "json_auto"
+    return "json_manual"
+
+
+def _restorable(name: str) -> bool:
+    """النسخ JSON فقط (اليدوية والتلقائية) قابلة للاستعادة من الواجهة."""
+    return not _SQL_NAME.match(name)
 
 
 def _backup_dir() -> Path:
@@ -55,7 +71,12 @@ def _dump_payload(db: Session) -> dict:
 
 @router.get("")
 def list_backups(_: models.User = Depends(require_platform_admin)):
-    files = sorted(_backup_dir().glob("backup-*.json.gz"), reverse=True)
+    d = _backup_dir()
+    files = sorted(
+        list(d.glob("backup-*.json.gz")) + list(d.glob("auto-json-*.json.gz")) + list(d.glob("auto-erp_db-*.sql.gz")),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
     out = []
     for f in files:
         try:
@@ -67,13 +88,32 @@ def list_backups(_: models.User = Depends(require_platform_admin)):
         # وmtime احتياط أخير. Date دائمًا موجود.
         generated = head.get("generated_at")
         if not generated:
-            m = re.match(r"backup-(\d{8})-(\d{6})\.json\.gz", f.name)
+            m = re.search(r"(\d{8})-(\d{6})\.", f.name)
             if m:
                 generated = datetime.strptime(m.group(1) + m.group(2), "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc).isoformat()
             else:
                 generated = datetime.fromtimestamp(f.stat().st_mtime, timezone.utc).isoformat()
-        out.append({"name": f.name, "size": f.stat().st_size, "generated_at": generated})
+        out.append({
+            "name": f.name, "size": f.stat().st_size, "generated_at": generated,
+            "type": _backup_kind(f.name), "restorable": _restorable(f.name),
+        })
     return out
+
+
+def _write_json_backup(db: Session, prefix: str) -> tuple:
+    """كتابة نسخة JSON على القرص — يستخدمها اليدوي والمجدول معًا. يعيد (الاسم، الحجم)."""
+    payload = _dump_payload(db)
+    stamp = datetime.now(timezone.utc)
+    name = f"{prefix}-{stamp.strftime('%Y%m%d-%H%M%S')}.json.gz"
+    path = _backup_dir() / name
+    # نسختان في نفس الثانية (يدوي + مجدول) → زد الثانية حتى الاسم فريد — النمط يبقى سليمًا
+    while path.exists():
+        stamp = stamp + timedelta(seconds=1)
+        name = f"{prefix}-{stamp.strftime('%Y%m%d-%H%M%S')}.json.gz"
+        path = _backup_dir() / name
+    with gzip.open(path, "wt", encoding="utf-8") as fh:
+        json.dump(payload, fh, ensure_ascii=False, default=str)
+    return name, path.stat().st_size, len(payload["tables"])
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -82,21 +122,59 @@ def create_backup(
     user: models.User = Depends(require_platform_admin),
 ):
     """إنشاء نسخة احتياطية كاملة الآن (JSON.gz على القرص)."""
-    payload = _dump_payload(db)
-    name = f"backup-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}.json.gz"
-    path = _backup_dir() / name
-    with gzip.open(path, "wt", encoding="utf-8") as fh:
-        json.dump(payload, fh, ensure_ascii=False, default=str)
-    size = path.stat().st_size
+    name, size, tables = _write_json_backup(db, "backup")
     audit(db, user, "create", "backup", None, f"نسخة احتياطية {name} ({size} بايت)")
     db.commit()
-    return {"name": name, "size": size, "tables": len(payload["tables"])}
+    return {"name": name, "size": size, "tables": tables}
+
+
+# ---------------- المجدول: نسخ JSON تلقائية كل ساعة (احتفاظ بأحدث 2) ----------------
+_SCHED_LOCK = __import__("threading").Lock()
+
+
+def run_scheduled_json_backup() -> dict:
+    """نسخة JSON تلقائية واحدة + تنظيف الاحتفاظ (أحدث 2 من التلقائية فقط —
+    لا تمس النسخ اليدوية backup-*). يعيد ملخصًا للتشخيص."""
+    from ..database import SessionLocal
+    db = SessionLocal()
+    try:
+        name, size, tables = _write_json_backup(db, "auto-json")
+        keep = sorted(_backup_dir().glob("auto-json-*.json.gz"), key=lambda p: p.stat().st_mtime, reverse=True)
+        removed = 0
+        for old_path in keep[2:]:
+            old_path.unlink()
+            removed += 1
+        db.commit()
+        # بلا سجل تدقيق: المهمة نظامية بلا مستخدم/شركة — الطباعة ووجود الملف هما الأثر
+        return {"ok": True, "name": name, "size": size, "tables": tables, "removed": removed}
+    except Exception as exc:
+        db.rollback()
+        return {"ok": False, "error": str(exc)}
+    finally:
+        db.close()
+
+
+def _auto_json_backup_loop() -> None:
+    """حلقة الخلفية: أول نسخة بعد دقيقة من الإقلاع ثم كل ساعة (AUTO_JSON_BACKUP_SECONDS)."""
+    import time as _time
+    interval = int(os.getenv("AUTO_JSON_BACKUP_SECONDS", "3600"))
+    first_delay = int(os.getenv("AUTO_JSON_BACKUP_FIRST_DELAY", "60"))
+    _time.sleep(first_delay)
+    while True:
+        if _SCHED_LOCK.acquire(blocking=False):
+            try:
+                result = run_scheduled_json_backup()
+                print(f"[auto-backup] {result}")
+            except Exception as exc:  # noqa: BLE001 — الخلفية لا تُسقط التطبيق
+                print(f"[auto-backup] failed: {exc}")
+            finally:
+                _SCHED_LOCK.release()
+        _time.sleep(interval)
 
 
 @router.get("/{name}/download")
 def download_backup(name: str, _: models.User = Depends(require_platform_admin)):
-    if not _SAFE_NAME.match(name):
-        raise HTTPException(422, "اسم ملف غير صالح")
+
     path = _backup_dir() / name
     if not path.exists():
         raise HTTPException(status.HTTP_404_NOT_FOUND, "النسخة غير موجودة")
@@ -113,7 +191,7 @@ def delete_backup(
     db: Session = Depends(get_db),
     user: models.User = Depends(require_platform_admin),
 ):
-    if not _SAFE_NAME.match(name):
+    if not (_SAFE_NAME.match(name) or _JSON_AUTO_NAME.match(name) or _SQL_NAME.match(name)):
         raise HTTPException(422, "اسم ملف غير صالح")
     path = _backup_dir() / name
     if not path.exists():
@@ -140,8 +218,10 @@ def restore_backup(
     خطير بطبيعته (يستبدل كل البيانات) — يتطلب platform-admin + تأكيد نصي «استعادة»."""
     if payload.confirm != "استعادة":
         raise HTTPException(422, "اكتب كلمة التأكيد «استعادة» للتنفيذ")
-    if not _SAFE_NAME.match(name):
+    if not (_SAFE_NAME.match(name) or _JSON_AUTO_NAME.match(name) or _SQL_NAME.match(name)):
         raise HTTPException(422, "اسم ملف غير صالح")
+    if _SQL_NAME.match(name):
+        raise HTTPException(422, "الاستعادة متاحة لنسخ JSON فقط — نسخ SQL تُستعاد عبر psql")
     path = _backup_dir() / name
     if not path.exists():
         raise HTTPException(status.HTTP_404_NOT_FOUND, "النسخة غير موجودة")

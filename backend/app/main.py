@@ -29,6 +29,10 @@ async def lifespan(_: FastAPI):
         seed_all(engine)
     except Exception as exc:  # noqa: BLE001 — البذر لا يُسقط الإقلاع
         print(f"[permissions] seed skipped: {exc}")
+    # النسخ JSON التلقائية المجدولة (كل ساعة، احتفاظ بأحدث 2 — لا تمس اليدوية).
+    import threading as _threading
+    from .routers.backups import _auto_json_backup_loop
+    _threading.Thread(target=_auto_json_backup_loop, daemon=True, name="auto-json-backup").start()
     yield
 
 

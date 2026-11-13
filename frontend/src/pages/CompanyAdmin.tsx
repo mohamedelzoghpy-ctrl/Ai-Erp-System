@@ -956,7 +956,7 @@ export default function CompanyAdmin({ platform = false, onSaved }: { platform?:
                 </button>
               </div>
               <p className="muted" style={{ fontSize: 13, margin: "0 0 12px" }}>
-                نسخة كاملة لقاعدة البيانات: كل الجداول مع صور المنتجات وسجل التدقيق — بصيغة JSON مضغوطة. الاستعادة تستبدل البيانات الحالية بالكامل، فاحتفظ بنسخة خارج الجهاز قبل أي عملية خطرة.
+                نسخة كاملة لقاعدة البيانات: كل الجداول مع صور المنتجات وسجل التدقيق — بصيغة JSON مضغوطة. تعمل نسخة JSON تلقائية كل ساعة (يُحتفظ بأحدث اثنتين) إضافة إلى نسخ SQL تلقائية، ويمكنك إنشاء نسخة يدوية متى شئت. الاستعادة تستبدل البيانات الحالية بالكامل، فاحتفظ بنسخة خارج الجهاز قبل أي عملية خطرة.
               </p>
 
               <Alert>{bkError}</Alert>
@@ -994,13 +994,22 @@ export default function CompanyAdmin({ platform = false, onSaved }: { platform?:
                         <thead>
                           <tr>
                             <th>الملف</th>
+                            <th>النوع</th>
                             <th>تاريخ الإنشاء</th>
                             <th className="num">الحجم</th>
                             <th className="actions">إجراءات</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {rows.map((b: any) => (
+                          {rows.map((b: any) => {
+                            const kind = b.type ?? "json_manual";
+                            const kindLabel = kind === "sql_auto" ? "SQL تلقائية" : kind === "json_auto" ? "JSON كل ساعة" : "JSON يدوية";
+                            const kindStyle = kind === "sql_auto"
+                              ? { background: "#e3f2fd", color: "#0d47a1" }
+                              : kind === "json_auto"
+                                ? { background: "#dcfce7", color: "#15803d" }
+                                : { background: "#f6f8fa", color: "#57606a" };
+                            return (
                             <tr key={b.name}>
                               <td dir="ltr">
                                 <b>{b.name}</b>
@@ -1008,21 +1017,34 @@ export default function CompanyAdmin({ platform = false, onSaved }: { platform?:
                                   <span className="badge badge-confirmed" style={{ marginInlineStart: 8, fontSize: 11 }}>الأحدث</span>
                                 )}
                               </td>
+                              <td>
+                                <span className="badge" style={{ ...kindStyle, borderRadius: 999, padding: "2px 10px", fontSize: 12, fontWeight: 700 }}>
+                                  {kindLabel}
+                                </span>
+                              </td>
                               <td>{fmtDateTimeAr(b.generated_at)}</td>
                               <td className="num">{fmtSize(b.size)}</td>
                               <td className="actions">
                                 <button className="btn btn-sm" disabled={dl.busy} onClick={() => void dl.run(() => api.download(`/admin/backups/${b.name}/download`, b.name))}>
                                   ⬇️ تنزيل
                                 </button>{" "}
-                                <button className="btn btn-sm" style={{ color: "#b42318", borderColor: "#b42318" }} onClick={() => setDelBk(b)}>
-                                  حذف
-                                </button>{" "}
-                                <button className="btn-delete" onClick={() => { setRestoreBk(b); setRestoreConfirmText(""); }}>
-                                  ♻️ استعادة
-                                </button>
+                                {kind !== "sql_auto" && (
+                                  <>
+                                    <button className="btn btn-sm" style={{ color: "#b42318", borderColor: "#b42318" }} onClick={() => setDelBk(b)}>
+                                      حذف
+                                    </button>{" "}
+                                    <button className="btn-delete" onClick={() => { setRestoreBk(b); setRestoreConfirmText(""); }}>
+                                      ♻️ استعادة
+                                    </button>
+                                  </>
+                                )}
+                                {kind === "sql_auto" && (
+                                  <small className="muted" style={{ fontSize: 11 }}>تُدار تلقائيًا — تُستعاد عبر psql</small>
+                                )}
                               </td>
                             </tr>
-                          ))}
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>
