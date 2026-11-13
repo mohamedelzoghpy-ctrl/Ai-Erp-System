@@ -416,7 +416,7 @@ export default function Boms() {
       )}
 
       {simulatingBom && (
-        <Modal title={`محاكي تخطيط الاحتياجات (MRP) — ${productsById.get(simulatingBom.product_id)?.name} (${simulatingBom.version})`} onClose={() => setSimulatingBom(null)}>
+        <Modal wide title={`محاكي تخطيط الاحتياجات (MRP) — ${productsById.get(simulatingBom.product_id)?.name} (${simulatingBom.version})`} onClose={() => setSimulatingBom(null)}>
           <div style={{ marginBottom: 16, display: "flex", gap: 10, alignItems: "center" }}>
             <label style={{ fontWeight: 600 }}>الكمية المخططة:</label>
             <input
