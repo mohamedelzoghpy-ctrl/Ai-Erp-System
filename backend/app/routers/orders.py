@@ -153,6 +153,8 @@ def create_purchase_order(payload: schemas.PurchaseOrderCreate, db: Session = De
     tax = (taxable * payload.tax_rate / Decimal("100")).quantize(Decimal("0.01"))
     total = taxable + tax
     order.total_amount = total  # type: ignore
+    order.discount_amount = discount  # type: ignore
+    order.tax_amount = tax  # type: ignore
     from ..pricing import resolve_currency
     _currency, _rate = resolve_currency(db, getattr(payload, "currency_id", None))
     if _currency is not None:
@@ -313,10 +315,22 @@ def receive_purchase_order(order_id: int, request: Request, db: Session = Depend
     # فحص سقف المديونية للمورد قبل استلام المشتريات وتوليد التزام الدفع
     from ..accounts import check_supplier_credit_limit
     check_supplier_credit_limit(db, order.supplier_id, Decimal(str(order.total_amount)), perms=getattr(request.state, "permissions", None))
+    # المتوسط المرجّح — نفس منطق الاستلام الفوري في الإنشاء (لا تكلفة آخر سطر)
+    received_qty: dict = {}
+    received_value: dict = {}
     for item in order.items:
-        product = _locked_product(db, item.product_id)
+        received_qty[item.product_id] = received_qty.get(item.product_id, Decimal("0")) + Decimal(str(item.quantity))
+        received_value[item.product_id] = received_value.get(item.product_id, Decimal("0")) + item.unit_cost * Decimal(str(item.quantity))
+    products: dict = {}
+    for pid, qty in received_qty.items():
+        product = products[pid] = _locked_product(db, pid)
+        old_qty = max(Decimal(str(product.quantity or 0)), Decimal("0"))
+        old_cost = Decimal(str(product.cost_price or 0))
+        new_qty = old_qty + qty
+        product.cost_price = ((old_qty * old_cost + received_value[pid]) / new_qty).quantize(Decimal("0.01")) if new_qty > 0 else product.cost_price
+    for item in order.items:
+        product = products[item.product_id]
         stock.move_stock(db, product, order.warehouse_id, item.quantity, "purchase_receipt", f"PO-{order.id}")  # type: ignore
-        product.cost_price = item.unit_cost
         # لوط تلقائي لكل استلام شراء — أساس التتبع العكسي (كود اللوط = رقم أمر الشراء)
         lot = (
             db.query(models.StockLot)
@@ -345,7 +359,7 @@ def receive_purchase_order(order_id: int, request: Request, db: Session = Depend
     order.status = "received"  # type: ignore
 
     # Accounting: Debit Inventory, Credit Supplier
-    from ..accounting import seed_default_coa, link_party_coa
+    from ..accounting import VAT_INPUT_CODE, seed_default_coa, link_party_coa
     seed_default_coa(db, db.info["company_id"])
     supplier = db.get(models.Supplier, order.supplier_id)
     if supplier is not None:
@@ -354,15 +368,28 @@ def receive_purchase_order(order_id: int, request: Request, db: Session = Depend
     if not inventory_acc or not supplier or not supplier.chart_account_id:
         db.rollback()
         raise HTTPException(409, "Purchase accounting accounts could not be initialized")
+    # فصل ضريبة المدخلات (نفس سياسة الاستلام الفوري): مدين المخزون (صافي الضريبة)
+    # + مدين 1145 (ضريبة أمر الشراء المحفوظة) · دائن المورد (الإجمالي).
+    # أوامر قديمة سبقت التخزين (tax_amount=0) تُرحّل كالسابق دون تفكيك.
+    po_tax = Decimal(str(order.tax_amount or 0))
+    po_items = [
+        {"account_id": inventory_acc.id, "debit": Decimal(str(order.total_amount)) - po_tax, "credit": 0},
+        {"account_id": supplier.chart_account_id, "debit": 0, "credit": order.total_amount},
+    ]
+    if po_tax > 0:
+        vat_in_acc = db.query(models.ChartAccount).filter(
+            models.ChartAccount.company_id == db.info["company_id"], models.ChartAccount.code == VAT_INPUT_CODE
+        ).first()
+        if vat_in_acc is None or vat_in_acc.is_group:
+            db.rollback()
+            raise HTTPException(409, "حساب ضريبة المشتريات (1145) غير موجود — حدّث شجرة الحسابات")
+        po_items.insert(1, {"account_id": vat_in_acc.id, "debit": po_tax, "credit": 0})
     AccountingEngine.create_entry(
         db=db,
         company_id=db.info["company_id"],
         user_id=user.id,
         description=f"Purchase Receipt PO-{order.id}",
-        items=[
-            {"account_id": inventory_acc.id, "debit": order.total_amount, "credit": 0},
-            {"account_id": supplier.chart_account_id, "debit": 0, "credit": order.total_amount},
-        ],
+        items=po_items,
         reference=f"PO-{order.id}"
     )
 

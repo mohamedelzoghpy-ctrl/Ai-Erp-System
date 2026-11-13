@@ -176,7 +176,8 @@ def login(request: Request, form: OAuth2PasswordRequestForm = Depends(), db: Ses
         .join(models.Company)
         .filter(models.UserCompanyMembership.user_id == user.id)
         .filter(models.Company.is_active.is_(True))
-        .one_or_none()
+        .order_by(models.UserCompanyMembership.id)
+        .first()  # مستخدم بعدة شركات → الشركة الأولى (التبديل متاح من الواجهة) بدلاً من MultipleResultsFound
     )
     if membership is None:
         raise HTTPException(
@@ -341,12 +342,26 @@ def list_users(
         .all()
     )
     BA, WA = models.UserBranchAccess, models.UserWarehouseAccess
+    user_ids = [u.id for u in users]
     branch_map: dict = {}
-    for uid, bid in db.query(BA.user_id, BA.branch_id).all():
-        branch_map.setdefault(uid, []).append(bid)
+    if user_ids:
+        # حجب الشركة: أفرع الشركات الحالية فقط — لا تسريب لبيانات وصول شركات أخرى
+        for uid, bid in (
+            db.query(BA.user_id, BA.branch_id)
+            .join(models.Branch, models.Branch.id == BA.branch_id)
+            .filter(BA.user_id.in_(user_ids), models.Branch.company_id == db.info["company_id"])  # type: ignore
+            .all()
+        ):
+            branch_map.setdefault(uid, []).append(bid)
     wh_map: dict = {}
-    for uid, wid in db.query(WA.user_id, WA.warehouse_id).all():
-        wh_map.setdefault(uid, []).append(wid)
+    if user_ids:
+        for uid, wid in (
+            db.query(WA.user_id, WA.warehouse_id)
+            .join(models.Warehouse, models.Warehouse.id == WA.warehouse_id)
+            .filter(WA.user_id.in_(user_ids), models.Warehouse.company_id == db.info["company_id"])  # type: ignore
+            .all()
+        ):
+            wh_map.setdefault(uid, []).append(wid)
     out = []
     for u in users:
         item = schemas.UserOut.model_validate(u)
@@ -367,6 +382,17 @@ def user_activity(
     target = db.get(models.User, user_id)
     if target is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    # عضوية الشركة الحالية فقط: لا سجلات نشاط عبر الشركات
+    membership = (
+        db.query(models.UserCompanyMembership)
+        .filter(
+            models.UserCompanyMembership.user_id == user_id,
+            models.UserCompanyMembership.company_id == db.info["company_id"],  # type: ignore
+        )
+        .first()
+    )
+    if membership is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found in this company")
     q = db.query(models.AuditLog).filter(or_(models.AuditLog.user_id == user_id, models.AuditLog.username == target.username))
     total = q.count()
     login_start, login_end, login_count = (

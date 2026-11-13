@@ -62,6 +62,46 @@ def _post_cogs_reversal(db: Session, company_id: int, user: models.User, ret, co
         )
 
 
+def _post_refund_cash_entry(db: Session, company_id: int, user: models.User, ret, kind: str, prefix: str) -> None:
+    """المرتجع المردود نقداً: النقد يخرج/يدخل الصندوق فعلياً — قيد إلزامي.
+
+    مرتجع البيع: دائن العميل (الإجمالي) ثم مدين العميل × دائن الصندوق (1111) بقيمة المردود
+    → صافي أثر العميل (الإجمالي − المردود) كما تحسبه دفترية الأطراف في accounts.py.
+    مرتجع الشراء: العكس (مدين الصندوق × دائن المورد). بدون هذا القيد يبقى النقد
+    خارج الدفاتر وكشف حساب الطرف يخالف القيود.
+    """
+    refund = Decimal(str(ret.refund_amount or 0))
+    if refund <= 0:
+        return
+    party = db.get(models.Customer if kind == "sales" else models.Supplier, ret.customer_id if kind == "sales" else ret.supplier_id)  # type: ignore
+    if party is None or not party.chart_account_id:
+        return  # نفس قاعدة التدهور: مرتجع بلا طرف/حساب دفتري لا يُرحّل
+    cash_acc = db.query(models.ChartAccount).filter(
+        models.ChartAccount.company_id == company_id, models.ChartAccount.code == "1111"
+    ).first()
+    if cash_acc is None or cash_acc.is_group:
+        # seed_default_coa يضمن وجوده — غيابه يعني شجرة محذوفة: نفشل بدل صمت محاسبي
+        raise HTTPException(409, "حساب الصندوق (1111) غير موجود — حدّث شجرة الحسابات")
+    from ..accounting import AccountingEngine
+    if kind == "sales":
+        items = [
+            {"account_id": party.chart_account_id, "debit": refund, "credit": 0},
+            {"account_id": cash_acc.id, "debit": 0, "credit": refund},
+        ]
+        desc = f"Sales Return Cash Refund {prefix}-{ret.id}"
+    else:
+        items = [
+            {"account_id": cash_acc.id, "debit": refund, "credit": 0},
+            {"account_id": party.chart_account_id, "debit": 0, "credit": refund},
+        ]
+        desc = f"Purchase Return Cash Refund {prefix}-{ret.id}"
+    AccountingEngine.create_entry(
+        db=db, company_id=company_id, user_id=user.id,
+        description=desc, items=items,
+        reference=f"{prefix}-{ret.id}",
+    )
+
+
 def _create(kind: str, payload: schemas.ReturnCreate, db: Session, user: models.User):
     if payload.order_id is None:
         return _create_standalone(kind, payload, db, user)
@@ -139,8 +179,7 @@ def _create(kind: str, payload: schemas.ReturnCreate, db: Session, user: models.
     try:
         if kind == "sales":
             revenue_acc = db.query(models.ChartAccount).filter(models.ChartAccount.company_id == company_id, models.ChartAccount.code == "4101").first()
-            ar_acc = db.query(models.ChartAccount).filter(models.ChartAccount.company_id == company_id, models.ChartAccount.code == "1100").first()
-            if revenue_acc and ar_acc and party and party.chart_account_id and ret.refund_amount == 0:
+            if revenue_acc and party and party.chart_account_id:
                 from ..accounting import AccountingEngine
                 AccountingEngine.create_entry(
                     db=db, company_id=company_id, user_id=user.id,
@@ -154,9 +193,8 @@ def _create(kind: str, payload: schemas.ReturnCreate, db: Session, user: models.
             # Goods are back in stock: relieve the COGS recorded on the original sale.
             _post_cogs_reversal(db, company_id, user, ret, cogs_total, c["prefix"])
         else:
-            ap_acc = db.query(models.ChartAccount).filter(models.ChartAccount.company_id == company_id, models.ChartAccount.code == "2100").first()
             inventory_acc = db.query(models.ChartAccount).filter(models.ChartAccount.company_id == company_id, models.ChartAccount.code == "1101").first()
-            if ap_acc and inventory_acc and party and party.chart_account_id and ret.refund_amount == 0:
+            if inventory_acc and party and party.chart_account_id:
                 from ..accounting import AccountingEngine
                 AccountingEngine.create_entry(
                     db=db, company_id=company_id, user_id=user.id,
@@ -167,6 +205,8 @@ def _create(kind: str, payload: schemas.ReturnCreate, db: Session, user: models.
                     ],
                     reference=f"{c['prefix']}-{ret.id}", date=None,
                 )
+        # المردود النقدي: قيد صندوق إلزامي (بيع: صادر — شراء: وارد)
+        _post_refund_cash_entry(db, company_id, user, ret, kind, c["prefix"])
     except Exception:
         # القيد إلزامي: فشل الترحيل (فترة مغلقة/حساب مفقود) يُفشل المرتجع كله —
         # لا مرتجع بلا قيد؛ المعاملة تُرجع ذريًا (لا commit بعد هذه النقطة)
@@ -266,8 +306,7 @@ def _create_standalone(kind: str, payload: schemas.ReturnCreate, db: Session, us
     try:
         if kind == "sales":
             revenue_acc = db.query(models.ChartAccount).filter(models.ChartAccount.company_id == company_id, models.ChartAccount.code == "4101").first()
-            ar_acc = db.query(models.ChartAccount).filter(models.ChartAccount.company_id == company_id, models.ChartAccount.code == "1100").first()
-            if revenue_acc and ar_acc and party and party.chart_account_id and ret.refund_amount == 0:
+            if revenue_acc and party and party.chart_account_id:
                 from ..accounting import AccountingEngine
                 AccountingEngine.create_entry(
                     db=db, company_id=company_id, user_id=user.id,
@@ -281,9 +320,8 @@ def _create_standalone(kind: str, payload: schemas.ReturnCreate, db: Session, us
             # Goods are back in stock: relieve the COGS recorded on the original sale.
             _post_cogs_reversal(db, company_id, user, ret, cogs_total, c["prefix"])
         else:
-            ap_acc = db.query(models.ChartAccount).filter(models.ChartAccount.company_id == company_id, models.ChartAccount.code == "2100").first()
             inventory_acc = db.query(models.ChartAccount).filter(models.ChartAccount.company_id == company_id, models.ChartAccount.code == "1101").first()
-            if ap_acc and inventory_acc and party and party.chart_account_id and ret.refund_amount == 0:
+            if inventory_acc and party and party.chart_account_id:
                 from ..accounting import AccountingEngine
                 AccountingEngine.create_entry(
                     db=db, company_id=company_id, user_id=user.id,
@@ -294,6 +332,8 @@ def _create_standalone(kind: str, payload: schemas.ReturnCreate, db: Session, us
                     ],
                     reference=f"{c['prefix']}-{ret.id}", date=None,
                 )
+        # المردود النقدي: قيد صندوق إلزامي (بيع: صادر — شراء: وارد)
+        _post_refund_cash_entry(db, company_id, user, ret, kind, c["prefix"])
     except Exception:
         # القيد إلزامي هنا أيضاً — نفس منطق المرتجع المرتبط بأمر
         raise

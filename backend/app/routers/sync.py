@@ -66,13 +66,18 @@ def bootstrap(
         cq = cq.filter(models.Customer.updated_at > since_dt)  # type: ignore[attr-defined]
     customers_rows = cq.order_by(models.Customer.id).all()
     from ..accounts import party_balances
+    from ..permissions.engine import can
+
     balances = party_balances(db, "customer", [c.id for c in customers_rows] or [0])
+    # أقنعة الحقول الحساسة — الرصيد وحد الائتمان لا يُرسلان إلا لمن يملك صلاحية
+    # عرض أرصدة المندوب (سُحبت من قسم المستخدم؟ لا تصل) أو صلاحية عرض الرصيد الكاملة.
+    _view_balance = can("sales.customer.rep_mobile_balance", "sales.customer.balance_view")
     customers = [
         {
             "id": c.id, "name": c.name, "phone": c.phone,
-            "credit_limit": str(c.credit_limit) if c.credit_limit is not None else None,
+            "credit_limit": (str(c.credit_limit) if c.credit_limit is not None else None) if _view_balance else None,
             "price_list_id": c.price_list_id,
-            "balance": str(balances.get(c.id, 0)),
+            "balance": str(balances.get(c.id, 0)) if _view_balance else None,
             "updated_at": _iso(c.updated_at),
         }
         for c in customers_rows

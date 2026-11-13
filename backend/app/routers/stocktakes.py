@@ -132,7 +132,7 @@ def apply(stocktake_id: int, db: Session = Depends(get_db), user: models.User = 
         delta = l.counted_qty - l.system_qty
         target = wid if wid is not None else stock.home_warehouse_id(db, products[l.product_id])
         if delta < 0 and stock.available(db, l.product_id, target) + delta < 0:  # type: ignore
-            problems.append(f"{products[l.product_id].name}: الكمية الحالية {stock.available(db, l.product_id, target)} والتسوية {delta:+d}")  # type: ignore
+            problems.append(f"{products[l.product_id].name}: الكمية الحالية {stock.available(db, l.product_id, target)} والتسوية {delta:+}")  # type: ignore
     if problems:
         raise HTTPException(status.HTTP_409_CONFLICT, "Would make stock negative (stock moved since the sheet was created): " + "; ".join(problems))
     changed = 0
@@ -180,7 +180,7 @@ def adjust(stocktake_id: int, payload: schemas.StocktakeCounts, db: Session = De
         delta = c.counted_qty - old
         target = wid if wid is not None else stock.home_warehouse_id(db, products[c.product_id])  # type: ignore
         if delta < 0 and stock.available(db, c.product_id, target) + delta < 0:  # type: ignore
-            problems.append(f"{products[c.product_id].name}: current {stock.available(db, c.product_id, target)} adjustment {delta:+d}")  # type: ignore
+            problems.append(f"{products[c.product_id].name}: current {stock.available(db, c.product_id, target)} adjustment {delta:+}")  # type: ignore
     if problems:
         raise HTTPException(status.HTTP_409_CONFLICT, "Would make stock negative: " + "; ".join(problems))
     changed = 0
@@ -226,7 +226,7 @@ def sheet_xlsx(stocktake_id: int, db: Session = Depends(get_db), _: models.User 
             ("text", l.product_name or ""),
             ("int", l.system_qty),
             ("text", "" if l.counted_qty is None else str(l.counted_qty)),
-            ("text", "" if l.difference is None else f"{l.difference:+d}"),
+            ("text", "" if l.difference is None else f"{l.difference:+}"),
         ]
         for l in s.lines
     ]

@@ -25,10 +25,13 @@ REQUIRE_SHIFT = os.getenv("POS_REQUIRE_SHIFT", "false").lower() in ("1", "true",
 
 
 def _walk_in(db: Session) -> models.Customer:
-    c = db.query(models.Customer).filter(models.Customer.name == WALK_IN_NAME).order_by(models.Customer.id).first()
+    company_id = db.info.get("company_id")
+    c = db.query(models.Customer).filter(
+        models.Customer.name == WALK_IN_NAME, models.Customer.company_id == company_id  # type: ignore
+    ).order_by(models.Customer.id).first()
     if c is None:
         from ..codegen import unique_code
-        c = models.Customer(name=WALK_IN_NAME, code=unique_code(db, models.Customer, db.info.get("company_id"), WALK_IN_NAME, "C"))  # type: ignore
+        c = models.Customer(company_id=company_id, name=WALK_IN_NAME, code=unique_code(db, models.Customer, company_id, WALK_IN_NAME, "C"))  # type: ignore
         db.add(c)
         db.flush()
     return c

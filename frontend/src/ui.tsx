@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { api } from "./api";
+import { api, getToken } from "./api";
 import { statusLabel } from "./format";
 import { useI18n } from "./i18n";
 import type { OrderStatus, Product } from "./types";
@@ -12,7 +12,10 @@ function NoImage() {
 /** صورة مصغّرة للمنتج: مرفوعة (bytea عبر /products/{id}/image) أو رابط إنترنت — أو 📦 */
 export function ProductThumb({ product }: { product: Product }) {
   const [failed, setFailed] = useState(false);
-  const src = product.image_uploaded ? `/api/products/${product.id}/image` : product.image_url || null;
+  const tok = getToken();
+  const src = product.image_uploaded
+    ? `/api/products/${product.id}/image${tok ? `?token=${encodeURIComponent(tok)}` : ""}`
+    : product.image_url || null;
   if (!src || failed) return <NoImage />;
   return (
     <img

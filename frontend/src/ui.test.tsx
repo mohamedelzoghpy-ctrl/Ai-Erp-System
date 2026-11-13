@@ -89,7 +89,7 @@ describe("ProductThumb", () => {
       <ProductThumb product={{ ...base, image_uploaded: true } as Product} />,
     );
     const img = container.querySelector("img");
-    expect(img).toHaveAttribute("src", "/api/products/1/image");
+    expect(img?.getAttribute("src")?.startsWith("/api/products/1/image")).toBe(true);
   });
   it("فشل تحميل الصورة → يعود للبديل 📦", () => {
     const { container } = renderUI(

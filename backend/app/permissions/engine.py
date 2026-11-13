@@ -136,6 +136,12 @@ async def permission_gate(
     if (method, path) in PUBLIC_ENDPOINTS:
         return
 
+    # وسوم <img> لا ترسل ترويسات — تسمح بـ token في الاستعلام فقط لطلبات GET
+    # لمسارات الصور (ضيق عمداً؛ التوكن في الـ URL قد يظهر في سجلات البروكسي).
+    token = token or (
+        request.query_params.get("token") if method == "GET" and path.endswith("/image") else None
+    )
+
     user = get_current_user(request, token_header=token, db=db)  # يرفع 401/403 ويضبط db.info ويخزن في request.state
 
     if (method, path) in SELF_ENDPOINTS:

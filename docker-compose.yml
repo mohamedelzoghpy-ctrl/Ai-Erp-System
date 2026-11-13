@@ -55,6 +55,9 @@ services:
       COMPANY_ADDRESS: ${COMPANY_ADDRESS:-}
       CURRENCY_LABEL: ${CURRENCY_LABEL:-ج.م}
       EXPORT_TIMEZONE: ${EXPORT_TIMEZONE:-Africa/Cairo}
+      # dev فقط: إنشاء الجداول الناقصة تلقائياً عند الإقلاع (الإنتاج يعتمد Alembic — القيمة الافتراضية false)
+      AUTO_CREATE_TABLES: ${AUTO_CREATE_TABLES:-true}
+      ETA_ENC_KEY: ${ETA_ENC_KEY:-}
       # النسخ الاحتياطية: داخل الحاوية وعلى القرص المضيف (./backups) — لا تضيع عند إعادة الإنشاء
       BACKUP_DIR: /srv/backups
     volumes:

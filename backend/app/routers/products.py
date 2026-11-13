@@ -19,7 +19,8 @@ from ..accounting import seed_default_coa
 from ..database import get_db
 
 router = APIRouter(prefix="/products", tags=["products & inventory"], dependencies=[Depends(get_current_user)])
-# صور المنتج: استرجاع الصورة دون توكن (تُستخدم داخل <img src> بالمتصفح)
+# صور المنتج: تخدم وسوم <img> — المصادقة عبر توكن الاستعلام (?token=) في البوابة
+# المركزية (permission_gate) + قاعدة GET → inventory.product.view + حجب الشركة أدناه.
 image_router = APIRouter(prefix="/products", tags=["products & inventory"])
 
 _MAX_IMAGE_BYTES = 3 * 1024 * 1024  # 3MB
@@ -42,8 +43,11 @@ def _product_image_or_404(db: Session, product_id: int) -> models.Product:
 
 @image_router.get("/{product_id}/image")
 def get_product_image(product_id: int, db: Session = Depends(get_db)):
-    """Public: serves the uploaded product image bytes for <img> tags."""
+    """تخدم وسم <img> بعد المصادقة (توكن الاستعلام) — مقيّدة بشركة المستخدم عبر المستمع المركزي."""
     product = _product_image_or_404(db, product_id)
+    company_id = db.info.get("company_id")
+    if company_id is not None and product.company_id != company_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "no image")
     return Response(content=product.image_blob, media_type=product.image_mime or "image/png")  # type: ignore
 
 

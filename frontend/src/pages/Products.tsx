@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { api } from "../api";
+import { api, getToken } from "../api";
 import { useAuth } from "../auth";
 import { useI18n } from "../i18n";
 import { dateTime, money, num, reasonLabel } from "../format";
@@ -442,7 +442,12 @@ function ProductForm({
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imageNote, setImageNote] = useState<string | null>(null);
   const imageUrl = f.image_url.trim() || null;
-  const previewSrc = imageFile ? URL.createObjectURL(imageFile) : initial?.image_uploaded ? `/api/products/${initial.id}/image` : imageUrl;
+  const _tok = getToken();
+  const previewSrc = imageFile
+    ? URL.createObjectURL(imageFile)
+    : initial?.image_uploaded
+      ? `/api/products/${initial.id}/image${_tok ? `?token=${encodeURIComponent(_tok)}` : ""}`
+      : imageUrl;
   const currentImageTitle = initial?.image_uploaded ? t("صورة مرفوعة من الجهاز") : imageUrl ? t("صورة من رابط") : t("لا صورة بعد");
 
   const pickImage = (file: File | null) => {
