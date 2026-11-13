@@ -31,6 +31,28 @@ _JSON_AUTO_NAME = re.compile(r"^auto-json-\d{8}-\d{6}\.json\.gz$")
 _SQL_NAME = re.compile(r"^auto-erp_db-\d{8}-\d{6}\.sql\.gz$")
 
 
+def _validate_file(path: Path, kind: str) -> dict:
+    """فحص سلامة النسخة: JSON = فك + تحليل كامل + تنسيق صحيح + جداول غير فارغة؛
+    SQL = فك + مؤشر تفريغ PostgreSQL + حجم معقول. يعيد {ok, detail}."""
+    try:
+        with gzip.open(path, "rt", encoding="utf-8") as fh:
+            content = fh.read()
+        if not content:
+            return {"ok": False, "detail": "الملف فارغ"}
+        if kind == "sql_auto":
+            if "PostgreSQL database dump" in content or "-- Dumped" in content:
+                return {"ok": True, "detail": "تفريغ PostgreSQL سليم"}
+            return {"ok": False, "detail": "لا يحتوي تفريغ PostgreSQL"}
+        data = json.loads(content)
+        if data.get("format") != "mozad-backup-1":
+            return {"ok": False, "detail": "تنسيق غير معروف"}
+        tables = data.get("tables") or {}
+        empty = sum(1 for rows in tables.values() if not rows)
+        return {"ok": True, "detail": f"{len(tables)} جدولًا ({len(tables) - empty} بها بيانات)", "tables": len(tables)}
+    except Exception as exc:
+        return {"ok": False, "detail": f"تالف: {exc}"}
+
+
 def _backup_kind(name: str) -> str:
     """json_manual | json_auto | sql_auto — للعرض والصلاحيات في الواجهة."""
     if _SQL_NAME.match(name):
@@ -93,9 +115,11 @@ def list_backups(_: models.User = Depends(require_platform_admin)):
                 generated = datetime.strptime(m.group(1) + m.group(2), "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc).isoformat()
             else:
                 generated = datetime.fromtimestamp(f.stat().st_mtime, timezone.utc).isoformat()
+        kind = _backup_kind(f.name)
         out.append({
             "name": f.name, "size": f.stat().st_size, "generated_at": generated,
-            "type": _backup_kind(f.name), "restorable": _restorable(f.name),
+            "type": kind, "restorable": _restorable(f.name),
+            "valid": _validate_file(f, kind),
         })
     return out
 
@@ -145,8 +169,17 @@ def run_scheduled_json_backup() -> dict:
             old_path.unlink()
             removed += 1
         db.commit()
+        # تحقق فوري من سلامة ما كُتب — النسخة التالفة تُحذف إن كانت هي الأحدث
+        validation = _validate_file(_backup_dir() / name, "json_auto")
+        if not validation.get("ok"):
+            print(f"[auto-backup] ⚠️ النسخة {name} تالفة — حذفها: {validation.get('detail')}")
+            try:
+                (_backup_dir() / name).unlink()
+            except OSError:
+                pass
+            return {"ok": False, "error": f"النسخة تالفة: {validation.get('detail')}", "removed": removed}
         # بلا سجل تدقيق: المهمة نظامية بلا مستخدم/شركة — الطباعة ووجود الملف هما الأثر
-        return {"ok": True, "name": name, "size": size, "tables": tables, "removed": removed}
+        return {"ok": True, "name": name, "size": size, "tables": tables, "removed": removed, "validation": validation}
     except Exception as exc:
         db.rollback()
         return {"ok": False, "error": str(exc)}
@@ -226,6 +259,9 @@ def restore_backup(
     if not path.exists():
         raise HTTPException(status.HTTP_404_NOT_FOUND, "النسخة غير موجودة")
 
+    validation = _validate_file(path, "json_manual" if _SAFE_NAME.match(name) else "json_auto")
+    if not validation.get("ok"):
+        raise HTTPException(422, f"الملف تالف ولا يمكن الاستعادة منه: {validation.get('detail')}")
     with gzip.open(path, "rt", encoding="utf-8") as fh:
         data = json.load(fh)
     if data.get("format") != "mozad-backup-1":

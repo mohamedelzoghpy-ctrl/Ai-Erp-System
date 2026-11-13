@@ -96,3 +96,46 @@ def test_restore_json_auto_but_not_sql(env):
     (tmp_path / "auto-erp_db-20261114-130000.sql.gz").write_bytes(gzip.compress(b"x"))
     resp = client.post("/admin/backups/auto-erp_db-20261114-130000.sql.gz/restore", json={"confirm": "استعادة"})
     assert resp.status_code == 422 and "JSON" in resp.json()["detail"]
+
+
+def test_validation_flags_on_list(env):
+    client, factory, tmp_path = env
+    # نسخة JSON سليمة (عبر المجدول) + SQL سليمة + ملفان تالفان
+    from app.routers.backups import run_scheduled_json_backup
+    assert run_scheduled_json_backup()["ok"] is True
+    good_sql = "PostgreSQL database dump complete\n-- plenty of content here" * 10
+    (tmp_path / "auto-erp_db-20261114-120000.sql.gz").write_bytes(gzip.compress(good_sql.encode()))
+    (tmp_path / "auto-json-19990101-000000.json.gz").write_bytes(gzip.compress(b"not json at all"))
+
+    rows = ok(client.get("/admin/backups"))
+    by_name = {r["name"]: r for r in rows}
+    auto_good = [r for r in rows if r["type"] == "json_auto" and r["valid"]["ok"]]
+    assert auto_good and auto_good[0]["valid"]["tables"] > 0
+    sql = by_name["auto-erp_db-20261114-120000.sql.gz"]
+    assert sql["valid"]["ok"] is True
+    broken = by_name["auto-json-19990101-000000.json.gz"]
+    assert broken["valid"]["ok"] is False and "تالف" in broken["valid"]["detail"]
+
+
+def test_scheduled_run_deletes_its_own_corrupt_output(env):
+    """لو فشل التحقق بعد الكتابة: النسخة التالفة تُحذف ولا تعتبر نجاحًا."""
+    client, factory, tmp_path = env
+    import app.routers.backups as bk
+    # اجعل التحقق يفشل دائمًا
+    orig = bk._validate_file
+    bk._validate_file = lambda path, kind: {"ok": False, "detail": "فحص مفروض"}
+    try:
+        r = bk.run_scheduled_json_backup()
+    finally:
+        bk._validate_file = orig
+    assert r["ok"] is False and "تالفة" in r["error"]
+    # الملف التالف حُذف
+    autos = list(tmp_path.glob("auto-json-*.json.gz"))
+    assert autos == []
+
+
+def test_restore_of_corrupt_json_returns_422_not_500(env):
+    client, factory, tmp_path = env
+    (tmp_path / "backup-20261114-000000.json.gz").write_bytes(gzip.compress(b"garbage-not-json"))
+    resp = client.post("/admin/backups/backup-20261114-000000.json.gz/restore", json={"confirm": "استعادة"})
+    assert resp.status_code == 422 and "تالف" in resp.json()["detail"]

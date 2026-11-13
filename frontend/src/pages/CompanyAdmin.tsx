@@ -959,6 +959,30 @@ export default function CompanyAdmin({ platform = false, onSaved }: { platform?:
                 نسخة كاملة لقاعدة البيانات: كل الجداول مع صور المنتجات وسجل التدقيق — بصيغة JSON مضغوطة. تعمل نسخة JSON تلقائية كل ساعة (يُحتفظ بأحدث اثنتين) إضافة إلى نسخ SQL تلقائية، ويمكنك إنشاء نسخة يدوية متى شئت. الاستعادة تستبدل البيانات الحالية بالكامل، فاحتفظ بنسخة خارج الجهاز قبل أي عملية خطرة.
               </p>
 
+              {(() => {
+                const autoRows = (backups.data ?? []).filter((b: any) => b.type === "json_auto" || b.type === "sql_auto");
+                if (autoRows.length === 0) {
+                  return (
+                    <div dir="rtl" style={{ marginBottom: 10, padding: "8px 12px", borderRadius: 8, fontSize: 13, background: "#fff4d6", color: "#9a6700" }}>
+                      🟠 لا نسخ تلقائية بعد — أول نسخة تُنشأ تلقائيًا بعد دقيقة من إقلاع النظام
+                    </div>
+                  );
+                }
+                const newestAuto = autoRows.reduce((acc: any, b: any) => ((b.generated_at || "") > (acc.generated_at || "") ? b : acc));
+                const minutes = Math.max(0, Math.floor((Date.now() - new Date(newestAuto.generated_at).getTime()) / 60000));
+                const healthy = minutes <= 120;
+                const when = minutes < 1 ? "أقل من دقيقة" : minutes < 60 ? `${minutes} دقيقة` : `${Math.floor(minutes / 60)} ساعة و${minutes % 60} دقيقة`;
+                return healthy ? (
+                  <div dir="rtl" style={{ marginBottom: 10, padding: "8px 12px", borderRadius: 8, fontSize: 13, background: "var(--ok-bg)", color: "var(--ok)" }}>
+                    🟢 النسخ التلقائية تعمل بانتظام — آخر نسخة قبل {when} ({newestAuto.type === "sql_auto" ? "SQL" : "JSON"})
+                  </div>
+                ) : (
+                  <div dir="rtl" style={{ marginBottom: 10, padding: "8px 12px", borderRadius: 8, fontSize: 13, background: "#fee4e2", color: "#b42318" }}>
+                    🔴 آخر نسخة تلقائية قبل {when} — المتوقع كل ساعة! تحقق من حاوية النسخ (<code>docker logs ai-erp-system-1-db-backup-1</code>).
+                  </div>
+                );
+              })()}
+
               <Alert>{bkError}</Alert>
               {bkNote && (
                 <div dir="rtl" style={{ marginBottom: 10, padding: "8px 12px", borderRadius: 8, fontSize: 13, background: "var(--ok-bg)", color: "var(--ok)" }}>
@@ -995,6 +1019,7 @@ export default function CompanyAdmin({ platform = false, onSaved }: { platform?:
                           <tr>
                             <th>الملف</th>
                             <th>النوع</th>
+                            <th>السلامة</th>
                             <th>تاريخ الإنشاء</th>
                             <th className="num">الحجم</th>
                             <th className="actions">إجراءات</th>
@@ -1022,6 +1047,11 @@ export default function CompanyAdmin({ platform = false, onSaved }: { platform?:
                                   {kindLabel}
                                 </span>
                               </td>
+                              <td>
+                                {b.valid?.ok
+                                  ? <span style={{ color: "#15803d", fontSize: 12 }} title={b.valid.detail}>✅ سليمة</span>
+                                  : <span style={{ color: "#b42318", fontSize: 12, fontWeight: 700 }} title={b.valid?.detail}>⚠️ تالفة</span>}
+                              </td>
                               <td>{fmtDateTimeAr(b.generated_at)}</td>
                               <td className="num">{fmtSize(b.size)}</td>
                               <td className="actions">
@@ -1033,7 +1063,12 @@ export default function CompanyAdmin({ platform = false, onSaved }: { platform?:
                                     <button className="btn btn-sm" style={{ color: "#b42318", borderColor: "#b42318" }} onClick={() => setDelBk(b)}>
                                       حذف
                                     </button>{" "}
-                                    <button className="btn-delete" onClick={() => { setRestoreBk(b); setRestoreConfirmText(""); }}>
+                                    <button
+                                      className="btn-delete"
+                                      disabled={b.valid && !b.valid.ok}
+                                      title={b.valid && !b.valid.ok ? "نسخة تالفة — لا يمكن الاستعادة منها" : undefined}
+                                      onClick={() => { setRestoreBk(b); setRestoreConfirmText(""); }}
+                                    >
                                       ♻️ استعادة
                                     </button>
                                   </>
