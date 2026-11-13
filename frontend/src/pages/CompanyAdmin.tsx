@@ -7,6 +7,14 @@ import type { Branch, Company, Department, Role, User } from "../types";
 import { money } from "../format";
 import { ActiveBadge, Alert, Empty, Field, Loading, Modal, PageHeader } from "../ui";
 
+/** تنسيق حجم ملف: KB أو MB بأقرب خانة. */
+function fmtSize(bytes: number): string {
+  if (!bytes || bytes <= 0) return "0 ك.ب";
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${Math.round(kb)} ك.ب`;
+  return `${(kb / 1024).toFixed(1)} م.ب`;
+}
+
 export default function CompanyAdmin({ platform = false, onSaved }: { platform?: boolean; onSaved?: () => void }) {
   const navigate = useNavigate();
   const { isAdmin } = useAuth();
@@ -60,6 +68,13 @@ export default function CompanyAdmin({ platform = false, onSaved }: { platform?:
     return v == null ? "" : String(v);
   });
   const [bkTick, setBkTick] = useState(0);
+  const [bkCreating, setBkCreating] = useState(false);
+  const [bkNote, setBkNote] = useState<string | null>(null);
+  const [bkError, setBkError] = useState<string | null>(null);
+  const [delBk, setDelBk] = useState<any | null>(null);
+  const [restoreBk, setRestoreBk] = useState<any | null>(null);
+  const [restoreConfirmText, setRestoreConfirmText] = useState("");
+  const [restoreBusy, setRestoreBusy] = useState(false);
   const [curTick, setCurTick] = useState(0);
   const currencies = useFetch(
     () => (platform ? Promise.resolve([]) : api.get<any[]>("/currencies")),
@@ -908,49 +923,179 @@ export default function CompanyAdmin({ platform = false, onSaved }: { platform?:
 
 
           {platform && (
-        <div className="card" style={{ padding: 20, marginBottom: 16 }}>
-          <h2 style={{ margin: "0 0 12px" }}>💾 النسخ الاحتياطي</h2>
-          <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
-            <button className="btn btn-primary" disabled={busy} onClick={async () => {
-              try {
-                const r: any = await api.post("/admin/backups", {});
-                alert(`أُنشئت نسخة ${r?.name} (${Math.round((r?.size ?? 0) / 1024)} ك.ب)`);
-                setBkTick((t) => t + 1);
-              } catch (err) { alert((err as Error).message); }
-            }}>إنشاء نسخة الآن</button>
-          </div>
-          <div className="table-wrap">
-            <table>
-              <thead><tr><th>الملف</th><th>تاريخ الإنشاء</th><th>الحجم</th><th></th></tr></thead>
-              <tbody>
-                {(backups.data ?? []).map((b: any) => (
-                  <tr key={b.name}>
-                    <td dir="ltr">{b.name}</td>
-                    <td dir="ltr">{(b.generated_at || "").slice(0, 19).replace("T", " ")}</td>
-                    <td className="num">{Math.round(b.size / 1024)} ك.ب</td>
-                    <td>
-                      <button className="btn btn-sm" onClick={() => void dl.run(() => api.download(`/admin/backups/${b.name}/download`, b.name))}>⬇️ تنزيل</button>{" "}
-                      <button className="btn-delete" onClick={async () => {
-                        if (!confirm(`حذف ${b.name}؟`)) return;
-                        try { await api.del(`/admin/backups/${b.name}`); setBkTick((t) => t + 1); } catch (err) { alert((err as Error).message); }
-                      }}>حذف</button>{" "}
-                      <button className="btn btn-sm" style={{ color: "#b91c1c" }} onClick={async () => {
-                        const answer = prompt(`⚠️ خطير: الاستعادة تمسح كل البيانات الحالية وتعيد ${b.name}.\nاكتب «استعادة» للتنفيذ:`);
-                        if (answer !== "استعادة") return;
-                        try {
-                          const r: any = await api.post(`/admin/backups/${b.name}/restore`, { confirm: answer });
-                          alert(`تمت الاستعادة — ${r?.rows} صف في ${r?.tables} جدول`);
-                        } catch (err) { alert((err as Error).message); }
-                      }}>استعادة</button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
+            <div className="card card-pad" style={{ marginBottom: 16 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 4 }}>
+                <h2 style={{ margin: 0 }}>💾 النسخ الاحتياطي</h2>
+                <button
+                  className="btn btn-primary"
+                  disabled={bkCreating}
+                  onClick={async () => {
+                    setBkCreating(true);
+                    setBkError(null);
+                    setBkNote(null);
+                    try {
+                      const r: any = await api.post("/admin/backups", {});
+                      setBkNote(`$أُنشئت نسخة ${r?.name} (${fmtSize(r?.size ?? 0)})`);
+                      setBkTick((tick) => tick + 1);
+                    } catch (err) {
+                      setBkError((err as Error).message);
+                    } finally {
+                      setBkCreating(false);
+                    }
+                  }}
+                >
+                  {bkCreating ? "جارٍ إنشاء النسخة…" : "+ إنشاء نسخة الآن"}
+                </button>
+              </div>
+              <p className="muted" style={{ fontSize: 13, margin: "0 0 12px" }}>
+                نسخة كاملة لقاعدة البيانات: كل الجداول مع صور المنتجات وسجل التدقيق — بصيغة JSON مضغوطة. الاستعادة تستبدل البيانات الحالية بالكامل، فاحتفظ بنسخة خارج الجهاز قبل أي عملية خطرة.
+              </p>
+
+              <Alert>{bkError}</Alert>
+              {bkNote && (
+                <div dir="rtl" style={{ marginBottom: 10, padding: "8px 12px", borderRadius: 8, fontSize: 13, background: "var(--ok-bg)", color: "var(--ok)" }}>
+                  ✅ {bkNote}
+                </div>
+              )}
+
+              {(() => {
+                const rows = [...(backups.data ?? [])].sort((a: any, b: any) => (b.generated_at || "").localeCompare(a.generated_at || ""));
+                const newest = rows[0]?.name;
+                const totalSize = rows.reduce((s: number, b: any) => s + (b.size ?? 0), 0);
+                if (rows.length === 0) {
+                  return <Empty>لا نسخ احتياطية بعد — اضغط «إنشاء نسخة الآن» للبدء.</Empty>;
+                }
+                return (
+                  <>
+                    <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
+                      <div className="card card-pad" style={{ flex: 1, minWidth: 130 }}>
+                        <div className="muted" style={{ fontSize: 12 }}>عدد النسخ</div>
+                        <div style={{ fontWeight: 800, fontSize: 18 }}>{rows.length}</div>
+                      </div>
+                      <div className="card card-pad" style={{ flex: 1, minWidth: 130 }}>
+                        <div className="muted" style={{ fontSize: 12 }}>إجمالي الحجم</div>
+                        <div style={{ fontWeight: 800, fontSize: 18 }}>{fmtSize(totalSize)}</div>
+                      </div>
+                      <div className="card card-pad" style={{ flex: 2, minWidth: 220 }}>
+                        <div className="muted" style={{ fontSize: 12 }}>أحدث نسخة</div>
+                        <div style={{ fontWeight: 800, fontSize: 14 }} dir="ltr">{newest}</div>
+                      </div>
+                    </div>
+                    <div className="table-wrap">
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>الملف</th>
+                            <th>تاريخ الإنشاء</th>
+                            <th className="num">الحجم</th>
+                            <th className="actions">إجراءات</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {rows.map((b: any) => (
+                            <tr key={b.name}>
+                              <td dir="ltr">
+                                <b>{b.name}</b>
+                                {b.name === newest && (
+                                  <span className="badge badge-confirmed" style={{ marginInlineStart: 8, fontSize: 11 }}>الأحدث</span>
+                                )}
+                              </td>
+                              <td dir="ltr">{(b.generated_at || "").slice(0, 19).replace("T", " ")}</td>
+                              <td className="num">{fmtSize(b.size)}</td>
+                              <td className="actions">
+                                <button className="btn btn-sm" disabled={dl.busy} onClick={() => void dl.run(() => api.download(`/admin/backups/${b.name}/download`, b.name))}>
+                                  ⬇️ تنزيل
+                                </button>{" "}
+                                <button className="btn btn-sm" style={{ color: "#b42318", borderColor: "#b42318" }} onClick={() => setDelBk(b)}>
+                                  حذف
+                                </button>{" "}
+                                <button className="btn-delete" onClick={() => { setRestoreBk(b); setRestoreConfirmText(""); }}>
+                                  ♻️ استعادة
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
+                );
+              })()}
+            </div>
+          )}
         </>
+      )}
+
+      {delBk && (
+        <Modal title={`حذف نسخة احتياطية — ${delBk.name}`} onClose={() => setDelBk(null)}>
+          <p style={{ margin: "0 0 6px" }}>
+            سيُحذف ملف النسخة <b dir="ltr">{delBk.name}</b> ({fmtSize(delBk.size)}) نهائيًا.
+            البيانات الحالية لا تتأثر — لكنك ستفقد هذه النسخة إلى الأبد.
+          </p>
+          <div className="form-actions" style={{ marginTop: 14 }}>
+            <button
+              className="btn-delete"
+              onClick={async () => {
+                try {
+                  await api.del(`/admin/backups/${delBk.name}`);
+                  setDelBk(null);
+                  setBkError(null);
+                  setBkNote(null);
+                  setBkTick((tick) => tick + 1);
+                } catch (err) {
+                  setDelBk(null);
+                  setBkError((err as Error).message);
+                }
+              }}
+            >
+              نعم، حذف النسخة
+            </button>
+            <button type="button" className="btn" onClick={() => setDelBk(null)}>إلغاء</button>
+          </div>
+        </Modal>
+      )}
+
+      {restoreBk && (
+        <Modal title={`♻️ استعادة من ${restoreBk.name}`} onClose={() => { setRestoreBk(null); setRestoreConfirmText(""); }}>
+          <div dir="rtl" style={{ marginBottom: 12, padding: "10px 12px", borderRadius: 8, fontSize: 13, background: "#fee4e2", color: "#b42318" }}>
+            ⚠️ <b>عملية خطيرة ولا يمكن التراجع عنها:</b> ستُمسح كل البيانات الحالية في كل الشركات
+            (أوامر، قيود، عملاء، مستخدمون…) وتُستبدل بمحتوى النسخة
+            "<b dir="ltr">{restoreBk.name}</b>" من <b dir="ltr">{(restoreBk.generated_at || "").slice(0, 19).replace("T", " ")}</b>.
+            ستحتاج إلى تسجيل دخول من جديد بعد اكتمالها.
+          </div>
+          <Field label="اكتب «استعادة» بالضبط للتأكيد">
+            <input
+              value={restoreConfirmText}
+              onChange={(e) => setRestoreConfirmText(e.target.value)}
+              placeholder="استعادة"
+              dir="ltr"
+            />
+          </Field>
+          <div className="form-actions" style={{ marginTop: 14 }}>
+            <button
+              className="btn-delete"
+              disabled={restoreBusy || restoreConfirmText.trim() !== "استعادة"}
+              onClick={async () => {
+                setRestoreBusy(true);
+                try {
+                  const r: any = await api.post(`/admin/backups/${restoreBk.name}/restore`, { confirm: restoreConfirmText.trim() });
+                  setRestoreBk(null);
+                  setRestoreConfirmText("");
+                  setBkNote(`تمت الاستعادة — ${r?.rows} صف في ${r?.tables} جدول. سجّل الدخول من جديد.`);
+                } catch (err) {
+                  setRestoreBk(null);
+                  setRestoreConfirmText("");
+                  setBkError((err as Error).message);
+                } finally {
+                  setRestoreBusy(false);
+                }
+              }}
+            >
+              {restoreBusy ? "جارٍ الاستعادة…" : "استعادة البيانات"}
+            </button>
+            <button type="button" className="btn" onClick={() => { setRestoreBk(null); setRestoreConfirmText(""); }}>إلغاء</button>
+          </div>
+        </Modal>
       )}
 
       {editingEmployee && (
