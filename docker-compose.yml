@@ -30,12 +30,22 @@ services:
       - -c
       - |
         echo "[db-backup] daily pg_dump → /backups (retention 14 days)"
+        # حماية من الملفات الفارغة: pg_dump → ملف مؤقت → فحص نجاح وحجم → ثم ضغط
+        # عند الفشل: إعادة المحاولة بعد دقيقة (لا ينتظر 24 ساعة كاملة)
         while true; do
-          pg_dump -h db -U erp -d erp_db | gzip > "/backups/auto-erp_db-$$(date +%Y%m%d-%H%M%S).sql.gz" \
-            && echo "[$$(date)] backup OK" \
-            || echo "[$$(date)] backup FAILED"
-          find /backups -name 'auto-erp_db-*.sql.gz' -mtime +14 -delete 2>/dev/null
-          sleep 86400
+          ts=$$(date +%Y%m%d-%H%M%S)
+          tmp="/backups/.tmp-$ts.sql"
+          out="/backups/auto-erp_db-$$ts.sql.gz"
+          if pg_dump -h db -U erp -d erp_db > "$$tmp" && [ -s "$$tmp" ]; then
+            gzip -c "$$tmp" > "$$out" && rm -f "$$tmp"
+            echo "[$$(date)] backup OK: $$out"
+            find /backups -name 'auto-erp_db-*.sql.gz' -mtime +14 -delete 2>/dev/null
+            sleep 86400
+          else
+            rm -f "$$tmp"
+            echo "[$$(date)] backup FAILED — retry in 60s"
+            sleep 60
+          fi
         done
 
   backend:
