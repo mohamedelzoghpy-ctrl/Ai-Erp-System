@@ -363,6 +363,7 @@ class SalesOrderCreate(BaseModel):
     warehouse_id: int
     notes: Optional[str] = None
     rep_id: Optional[int] = None  # مندوب المبيعات المسجل على الفاتورة
+    lead_id: Optional[int] = None  # القائد الذي ولّد هذا العرض/الأوردر (CRM)
     safe_id: Optional[int] = None  # اسم الخزينة المقترحة لتحصيل الفاتورة
     tax_rate: Decimal = Field(default=Decimal("0"), ge=0, le=100)  # ضريبة القيمة المضافة %
     currency_id: Optional[int] = None  # عملة الفاتورة (اختياري — الافتراضي جنيه)
@@ -381,6 +382,7 @@ class SalesOrderOut(ORMModel):
     discount_amount: Optional[Decimal] = None
     notes: Optional[str]
     rep_id: Optional[int] = None
+    lead_id: Optional[int] = None
     rep_name: Optional[str] = None
     safe_id: Optional[int] = None
     safe_name: Optional[str] = None
@@ -1371,6 +1373,59 @@ class BatchTraceOut(BaseModel):
 
 
 # ---------- عهدة التصنيع لدى الغير ----------
+# ---------- CRM م2: عرض سعر من قائد + كشف تكرار + تحليلات ----------
+class LeadQuotationItemIn(BaseModel):
+    product_id: int
+    quantity: float = Field(gt=0)
+    unit_price: Decimal = Field(ge=0)
+
+
+class LeadQuotationIn(BaseModel):
+    warehouse_id: int
+    items: List[LeadQuotationItemIn] = Field(min_length=1)
+    notes: Optional[str] = Field(default=None, max_length=300)
+
+
+class DuplicateMatchOut(BaseModel):
+    kind: str                      # lead | customer
+    id: int
+    name: str
+    phone: Optional[str] = None
+    code: str
+
+
+class DuplicateCheckOut(BaseModel):
+    phone: str
+    duplicates: List[DuplicateMatchOut] = []
+
+
+class FunnelStageRow(BaseModel):
+    stage: str
+    count: int
+    expected_value: Decimal
+
+
+class CrmFunnelOut(BaseModel):
+    stages: List[FunnelStageRow] = []
+    open_pipeline_value: Decimal
+    won_count: int
+    won_value: Decimal
+    lost_count: int
+    win_rate_pct: Optional[float] = None          # الفائز / (الفائز + المفقود)
+    avg_won_value: Optional[Decimal] = None
+    avg_days_to_win: Optional[float] = None
+
+
+class CrmSourceRow(BaseModel):
+    source: str
+    count: int
+    won_count: int
+    lost_count: int
+    open_count: int
+    won_value: Decimal
+    win_rate_pct: Optional[float] = None
+
+
 # ---------- توقفات الخطوط + OEE مبسط ----------
 class DowntimeIn(BaseModel):
     started_at: datetime

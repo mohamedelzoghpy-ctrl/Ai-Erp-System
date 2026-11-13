@@ -417,6 +417,8 @@ class SalesOrder(TenantOwned, Base):
     foreign_total = Column(Numeric(14, 2), nullable=True)
     created_by = Column(Integer, ForeignKey("users.id"), nullable=True)  # NULL for orders made before this was recorded
     rep_id = Column(Integer, ForeignKey("sales_reps.id", ondelete="SET NULL"), nullable=True, index=True)
+    # القائد الذي ولّد هذا الأوردر/عرض السعر (CRM م2)
+    lead_id = Column(Integer, ForeignKey("crm_leads.id", ondelete="SET NULL"), nullable=True, index=True)
     # معرف يولده تطبيق المندوب لكل أوردر أوفلاين — يضمن عدم التكرار عند إعادة المزامنة
     client_ref = Column(String(64), nullable=True, index=True)
     # خصم على مستوى الأوردر (يُخصم من الإجمالي قبل الضريبة) — توثيقه عمودًا لشفافية ETA والتقارير

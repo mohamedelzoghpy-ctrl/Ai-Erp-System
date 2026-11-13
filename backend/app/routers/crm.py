@@ -1,4 +1,5 @@
 """CRM خفيف — العملاء المحتملون ومراحل البيع والأنشطة والتحويل لعميل فعلي."""
+from decimal import Decimal
 from typing import List, Optional
 
 from datetime import timedelta as _td
@@ -73,18 +74,54 @@ def list_leads(
     return q.offset(skip).limit(min(limit, 200)).all()
 
 
+@router.get("/leads/check-duplicate", response_model=schemas.DuplicateCheckOut)
+def check_duplicate(
+    phone: str = Query(min_length=3, max_length=50),
+    db: Session = Depends(get_db),
+):
+    """فحص حي لتكرار رقم هاتف قائد مقابل القادة والعملاء الحاليين."""
+    return schemas.DuplicateCheckOut(phone=phone.strip(), duplicates=_phone_duplicates(db, db.info["company_id"], phone))
+
+
 @router.get("/leads/{obj_id}", response_model=schemas.CrmLeadOut)
 def get_lead(obj_id: int, db: Session = Depends(get_db)):
     return _get_lead(db, obj_id)
 
 
+def _phone_duplicates(db: Session, company_id: int, phone: str, exclude_lead_id: Optional[int] = None) -> list:
+    """مطابقات رقم الهاتف عبر القادة الحاليين والعملاء الفعليين."""
+    needle = phone.strip()
+    if not needle:
+        return []
+    matches: list = []
+    q = db.query(models.CrmLead).filter(
+        models.CrmLead.company_id == company_id,
+        models.CrmLead.phone == needle,
+        models.CrmLead.status.notin_(("lost",)),
+    )
+    if exclude_lead_id:
+        q = q.filter(models.CrmLead.id != exclude_lead_id)
+    for l in q.all():
+        matches.append({"kind": "lead", "id": l.id, "name": l.name, "phone": l.phone, "code": l.code})
+    for c in db.query(models.Customer).filter(
+        models.Customer.company_id == company_id, models.Customer.phone == needle
+    ).all():
+        matches.append({"kind": "customer", "id": c.id, "name": c.name, "phone": c.phone, "code": c.code})
+    return matches
+
+
 @router.post("/leads", response_model=schemas.CrmLeadOut, status_code=status.HTTP_201_CREATED)
 def create_lead(
     payload: schemas.CrmLeadCreate,
+    force: bool = Query(False, description="تجاوز تحذير التكرار"),
     db: Session = Depends(get_db),
     user: models.User = Depends(require_permission_or_role("crm.lead.create", "admin", "manager")),
 ):
     company_id = db.info["company_id"]
+    if payload.phone and payload.phone.strip():
+        matches = _phone_duplicates(db, company_id, payload.phone)
+        if matches and not force:
+            raise HTTPException(status.HTTP_409_CONFLICT, {"message": "يوجد قائد/عميل بنفس رقم الهاتف", "duplicates": matches})
     data = payload.model_dump()
     if payload.assigned_rep_id is not None:
         rep = db.get(models.SalesRep, payload.assigned_rep_id)
@@ -182,6 +219,109 @@ def convert_lead(
     db.refresh(lead)
     audit(db, user, "convert", "crm_lead", lead, f"→ customer {customer.code}")
     return lead
+
+
+@router.post("/leads/{obj_id}/quotation")
+def create_lead_quotation(
+    obj_id: int,
+    payload: schemas.LeadQuotationIn,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(require_permission_or_role("crm.lead.convert", "admin", "manager")),
+):
+    """عرض سعر مباشر من القائد: يحوّله لعميل فعلي إن لم يتحول، ثم ينشئ عرض سعر مربوطًا به (قائد ← عرض ← أمر ← عميل)."""
+    lead = _get_lead(db, obj_id)
+    company_id = db.info["company_id"]
+    warehouse = db.get(models.Warehouse, payload.warehouse_id)
+    if warehouse is None or warehouse.company_id != company_id:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "المخزن غير موجود")
+    for it in payload.items:
+        prod = db.get(models.Product, it.product_id)
+        if prod is None or prod.company_id != company_id:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"الصنف {it.product_id} غير موجود")
+
+    # تحويل ضمني عند الحاجة
+    if lead.converted_customer_id is None:
+        lead = convert_lead(obj_id=obj_id, db=db, user=user)
+        db.refresh(lead)
+    customer_id = lead.converted_customer_id
+    assert customer_id is not None
+
+    from ..routers.orders import create_sales_order
+    from starlette.requests import Request as _Req
+    fake_request = _Req({"type": "http", "method": "POST", "headers": [], "query_string": b"", "state": {}})
+    so_payload = schemas.SalesOrderCreate(
+        customer_id=customer_id,
+        warehouse_id=payload.warehouse_id,
+        notes=(payload.notes or f"عرض سعر من القائد {lead.code}").strip(),
+        document_type="quotation",
+        lead_id=lead.id,
+        items=[schemas.SalesItemIn(product_id=it.product_id, quantity=it.quantity, unit_price=it.unit_price) for it in payload.items],
+    )
+    order = create_sales_order(request=fake_request, payload=so_payload, db=db, user=user)
+    total = sum(float(it.quantity) * float(it.unit_price) for it in payload.items)
+    db.add(models.CrmActivity(
+        company_id=company_id, lead_id=lead.id, kind="system",
+        body=f"عُرض سعر رقم SO-{order.id} بقيمة {total:.2f}", created_by=user.id,
+    ))
+    db.commit()
+    return {"lead_id": lead.id, "lead_status": lead.status, "converted_customer_id": lead.converted_customer_id,
+            "quotation": {"id": order.id, "code": f"SO-{order.id}", "status": order.status}}
+
+
+@router.get("/reports/funnel", response_model=schemas.CrmFunnelOut)
+def crm_funnel(db: Session = Depends(get_db)):
+    """قمع التحويل: كل مرحلة بالعدد والقيمة + معدل الفوز ومتوسط الصفقة وعمرها."""
+    company_id = db.info["company_id"]
+    leads = db.query(models.CrmLead).filter(models.CrmLead.company_id == company_id).all()
+    stages = []
+    open_value = Decimal("0")
+    for st in _LEAD_STATUSES:
+        rows = [l for l in leads if l.status == st]
+        val = sum((Decimal(str(l.expected_value or 0)) for l in rows), Decimal("0"))
+        if st in ("new", "contacted", "qualified"):
+            open_value += val
+        stages.append(schemas.FunnelStageRow(stage=st, count=len(rows), expected_value=val))
+    won = [l for l in leads if l.status == "won"]
+    lost = [l for l in leads if l.status == "lost"]
+    won_value = sum((Decimal(str(l.expected_value or 0)) for l in won), Decimal("0"))
+    decided = len(won) + len(lost)
+    win_rate = round(100.0 * len(won) / decided, 1) if decided else None
+    avg_won = (won_value / len(won)).quantize(Decimal("0.01")) if won else None
+    days = [max(0, (l.updated_at - l.created_at).days) for l in won if l.updated_at and l.created_at]
+    avg_days = round(sum(days) / len(days), 1) if days else None
+    return schemas.CrmFunnelOut(
+        stages=stages, open_pipeline_value=open_value,
+        won_count=len(won), won_value=won_value,
+        lost_count=len(lost), win_rate_pct=win_rate,
+        avg_won_value=avg_won, avg_days_to_win=avg_days,
+    )
+
+
+@router.get("/reports/sources", response_model=List[schemas.CrmSourceRow])
+def crm_sources(db: Session = Depends(get_db)):
+    """أداء مصادر البيع: أي مصدر يجيب عملاء فعليين؟"""
+    company_id = db.info["company_id"]
+    leads = db.query(models.CrmLead).filter(models.CrmLead.company_id == company_id).all()
+    by_source: dict = {}
+    for l in leads:
+        b = by_source.setdefault(l.source or "other", {"count": 0, "won": 0, "lost": 0, "open": 0, "won_value": Decimal("0")})
+        b["count"] += 1
+        if l.status == "won":
+            b["won"] += 1
+            b["won_value"] += Decimal(str(l.expected_value or 0))
+        elif l.status == "lost":
+            b["lost"] += 1
+        else:
+            b["open"] += 1
+    out = []
+    for src_name, b in sorted(by_source.items(), key=lambda kv: -kv[1]["won_value"]):
+        decided = b["won"] + b["lost"]
+        out.append(schemas.CrmSourceRow(
+            source=src_name, count=b["count"], won_count=b["won"], lost_count=b["lost"],
+            open_count=b["open"], won_value=b["won_value"],
+            win_rate_pct=round(100.0 * b["won"] / decided, 1) if decided else None,
+        ))
+    return out
 
 
 @router.get("/leads/{obj_id}/activities", response_model=List[schemas.CrmActivityOut])

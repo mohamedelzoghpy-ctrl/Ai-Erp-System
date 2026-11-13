@@ -455,6 +455,7 @@ def create_sales_order(payload: schemas.SalesOrderCreate, request: Request, db: 
         status="quotation" if doc_type == "quotation" else "draft",
         customer_id=payload.customer_id, warehouse_id=payload.warehouse_id, notes=payload.notes, created_by=user.id,  # type: ignore
         rep_id=payload.rep_id if payload.rep_id and db.get(models.SalesRep, payload.rep_id) else None,
+        lead_id=getattr(payload, "lead_id", None),
     )
     if payload.safe_id:
         safe = db.get(models.Safe, payload.safe_id)
