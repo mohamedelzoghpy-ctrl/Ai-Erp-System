@@ -1227,8 +1227,18 @@ export interface CatalogModule { module: string; label: string; resources: Catal
 
 export interface QcMeasurementsOut {
   batch_id: number;
+  attempt?: number;
+  attempts_count?: number;
   overall_pass?: boolean | null;
-  results: { parameter_id: number; parameter_name: string; unit?: string | null; value_num?: number | null; value_text?: string | null; pass_fail?: boolean | null }[];
+  results: { parameter_id: number; parameter_name: string; unit?: string | null; value_num?: number | null; value_text?: string | null; pass_fail?: boolean | null; attempt?: number }[];
+}
+
+export interface ForwardTraceOut {
+  lot_id: number;
+  lot_code: string;
+  product_id: number;
+  product_name?: string | null;
+  orders: { order_id: number; order_code: string; order_status: string; product_name?: string | null; consumed_qty: string | number; batches: { batch_no: string; qty: string | number; qc_status: string; finished_lot_qty: string | number }[] }[];
 }
 
 export interface MaterialsAvailabilityItem {

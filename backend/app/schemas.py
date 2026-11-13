@@ -1018,6 +1018,7 @@ class ProductionBatchOut(ORMModel):
     qty: float
     cost: Decimal
     qc_status: Literal["pending", "passed", "rejected"]
+    qc_attempt: int = 1
     produced_at: datetime
     notes: Optional[str] = None
 
@@ -1286,6 +1287,31 @@ class BatchTraceOut(BaseModel):
     product_name: Optional[str] = None
     consumptions: List[ProductionConsumptionOut] = []   # الخامات التي صُنعت منها الدفعة
     children: List[BatchTraceChild] = []                # دفعات الأوامر الفرعية المرتبطة
+
+
+# ---------- تتبع أمامي: لوط خام ← الدفعات النهائية (سحب استدعاء) ----------
+class ForwardTraceBatch(BaseModel):
+    batch_no: str
+    qty: Decimal
+    qc_status: str
+    finished_lot_qty: Decimal   # الكمية المتبقية من لوط الدفعة النهائية في المخزن
+
+
+class ForwardTraceOrder(BaseModel):
+    order_id: int
+    order_code: str
+    order_status: str
+    product_name: Optional[str] = None
+    consumed_qty: Decimal        # ما استهلكه هذا الأمر من اللوط الخام
+    batches: List[ForwardTraceBatch] = []
+
+
+class ForwardTraceOut(BaseModel):
+    lot_id: int
+    lot_code: str
+    product_id: int
+    product_name: Optional[str] = None
+    orders: List[ForwardTraceOrder] = []
 
 
 class StatementLine(BaseModel):

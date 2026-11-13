@@ -921,6 +921,8 @@ class ProductionBatch(TenantOwned, Base):
     qty = Column(Numeric(12, 3), nullable=False)
     cost = Column(Numeric(14, 2), nullable=False, default=0, server_default="0")  # التكلفة المخصصة للدفعة
     qc_status = Column(String(20), nullable=False, default="pending", server_default="pending", index=True)  # pending | passed | rejected
+    # محاولة الفحص الحالية (إعادة الفحص تزيدها) — قياسات كل محاولة تُحفظ في batch_qc_results
+    qc_attempt = Column(Integer, nullable=False, default=1, server_default="1")
     produced_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     notes = Column(String(200), nullable=True)
 
@@ -1036,10 +1038,12 @@ class BatchQcResult(TenantOwned, Base):
     """نتائج قياس معايير الجودة لدفعة إنتاج — قيم مسجلة + حكم مطابقة لكل معيار."""
 
     __tablename__ = "batch_qc_results"
-    __table_args__ = (UniqueConstraint("batch_id", "parameter_id", name="uq_batch_qc_result"),)
+    __table_args__ = (UniqueConstraint("batch_id", "attempt", "parameter_id", name="uq_batch_qc_result_attempt"),)
 
     id = Column(Integer, primary_key=True, index=True)
     batch_id = Column(Integer, ForeignKey("production_batches.id", ondelete="CASCADE"), nullable=False, index=True)
+    # محاولة الفحص (1 = الأولى) — إعادة الفحص تنشئ محاولة جديدة بقياسات نظيفة
+    attempt = Column(Integer, nullable=False, default=1, server_default="1")
     parameter_id = Column(Integer, ForeignKey("qc_parameters.id", ondelete="SET NULL"), nullable=True, index=True)
     template_id = Column(Integer, ForeignKey("qc_templates.id", ondelete="SET NULL"), nullable=True, index=True)
     parameter_name = Column(String(150), nullable=False)  # snapshot — يبقى بعد تعديل/حذف النموذج

@@ -9,6 +9,8 @@ from decimal import Decimal
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+import os
+
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -1356,6 +1358,28 @@ def qc_production_batch(
     if batch.qc_status != "pending":
         raise HTTPException(status.HTTP_409_CONFLICT, "تم الفحص من قبل — الدفعة ليس pending")
     notes = (payload.notes or "").strip()
+    # بوابة القياسات (اختيارية، معطلة افتراضياً كـ QC_GATE): الاعتماد يُمنع إن وُجد قياس فاشل
+    if payload.result == "passed" and os.getenv("QC_MEASURE_GATE", "").strip().lower() in ("1", "true", "yes", "on"):
+        max_attempt = (
+            db.query(func.max(models.BatchQcResult.attempt))
+            .filter(models.BatchQcResult.batch_id == batch_id)
+            .scalar()
+        ) or 1
+        failed = (
+            db.query(models.BatchQcResult)
+            .filter(
+                models.BatchQcResult.batch_id == batch_id,
+                models.BatchQcResult.attempt == max_attempt,
+                models.BatchQcResult.pass_fail.is_(False),
+            )
+            .all()
+        )
+        if failed:
+            names = "، ".join(sorted({f.parameter_name for f in failed}))
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"بوابة القياسات: اعتماد الدفعة ممنوع — قياسات غير مطابقة: {names}",
+            )
     if payload.result == "rejected" and not notes:
         raise HTTPException(422, "سبب الرفض مطلوب عند رفض الدفعة")
 
@@ -1662,6 +1686,61 @@ def trace_batch(batch_no: str, db: Session = Depends(get_db), _: models.User = D
             product_name=c.product.name if c.product else None,
             batches=[b.batch_no for b in c.batches],
         ) for c in children],
+    )
+
+
+@production_orders.get("/lots/{lot_id}/trace-forward", response_model=schemas.ForwardTraceOut)
+def trace_forward_lot(lot_id: int, db: Session = Depends(get_db), _: models.User = Depends(get_current_user)):
+    """تتبع أمامي (سحب استدعاء): لوط خام ← كل أوامر التصنيع التي استهلكته ← دفعاته النهائية ورصيدها الحالي."""
+    company_id = db.info["company_id"]
+    lot = db.get(models.StockLot, lot_id)
+    if lot is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"اللوط {lot_id} غير موجود")
+    product = db.get(models.Product, lot.product_id)
+    consumptions = (
+        db.query(models.ConsumptionLot)
+        .join(models.ProductionOrder, models.ConsumptionLot.order_id == models.ProductionOrder.id)
+        .filter(models.ConsumptionLot.lot_id == lot_id, models.ProductionOrder.company_id == company_id)
+        .order_by(models.ConsumptionLot.order_id)
+        .all()
+    )
+    out_orders: List[schemas.ForwardTraceOrder] = []
+    for c in consumptions:
+        po = c.order
+        batches = (
+            db.query(models.ProductionBatch)
+            .filter(models.ProductionBatch.order_id == po.id)
+            .order_by(models.ProductionBatch.id)
+            .all()
+        )
+        out_batches: List[schemas.ForwardTraceBatch] = []
+        for b in batches:
+            finished_lot = (
+                db.query(models.StockLot)
+                .filter(
+                    models.StockLot.company_id == company_id,
+                    models.StockLot.product_id == po.product_id,
+                    models.StockLot.lot_code == b.batch_no,
+                )
+                .with_entities(func.coalesce(func.sum(models.StockLot.qty_remaining), 0))
+                .scalar()
+            )
+            out_batches.append(schemas.ForwardTraceBatch(
+                batch_no=b.batch_no, qty=dec(b.qty), qc_status=b.qc_status,
+                finished_lot_qty=Decimal(str(finished_lot or 0)),
+            ))
+        out_orders.append(schemas.ForwardTraceOrder(
+            order_id=po.id, order_code=po.code, order_status=po.status,
+            product_name=po.product.name if po.product else None,
+            consumed_qty=dec(c.qty),
+            batches=out_batches,
+        ))
+    return schemas.ForwardTraceOut(
+        lot_id=lot.id,
+        lot_code=lot.lot_code,
+        product_id=lot.product_id,
+        product_name=product.name if product else None,
+        orders=out_orders,
     )
 
 

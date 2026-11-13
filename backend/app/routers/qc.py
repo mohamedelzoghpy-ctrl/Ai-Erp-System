@@ -76,10 +76,13 @@ class QcResultRow(BaseModel):
     value_num: Optional[float] = None
     value_text: Optional[str] = None
     pass_fail: Optional[bool] = None
+    attempt: int = 1
 
 
 class QcMeasurementsOut(BaseModel):
     batch_id: int
+    attempt: int = 1                 # محاولة الفحص الحالية المعروضة
+    attempts_count: int = 1          # إجمالي محاولات الفحص المسجلة
     overall_pass: Optional[bool] = None
     results: List[QcResultRow] = []
 
@@ -225,19 +228,35 @@ def _batch_or_404(db: Session, batch_id: int) -> models.ProductionBatch:
     return batch
 
 
+def _latest_attempt(db: Session, batch_id: int) -> int:
+    # عداد المحاولة محفوظ على الدفعة نفسها — إعادة الفحص تزيده حتى مع قياسات فارغة
+    batch = db.get(models.ProductionBatch, batch_id)
+    return int(getattr(batch, "qc_attempt", 1) or 1) if batch else 1
+
+
 @router.get("/batches/{batch_id}/results", response_model=QcMeasurementsOut)
-def get_batch_results(batch_id: int, db: Session = Depends(get_db), _: models.User = Depends(get_current_user)):
+def get_batch_results(batch_id: int, all_attempts: bool = False, db: Session = Depends(get_db), _: models.User = Depends(get_current_user)):
+    """قياسات الدفعة — آخر محاولة افتراضياً، وكل المحاولات مع ?all_attempts=true (لإعادة الفحص)."""
     _batch_or_404(db, batch_id)
-    rows = db.query(models.BatchQcResult).filter(models.BatchQcResult.batch_id == batch_id).order_by(models.BatchQcResult.id).all()
+    attempts_count = _latest_attempt(db, batch_id)
+    attempt = attempts_count if not all_attempts else 0
+    q = db.query(models.BatchQcResult).filter(models.BatchQcResult.batch_id == batch_id)
+    if not all_attempts:
+        q = q.filter(models.BatchQcResult.attempt == attempts_count)
+    rows = q.order_by(models.BatchQcResult.attempt, models.BatchQcResult.id).all()
+    current = [r for r in rows if r.attempt == attempts_count]
     overall = None
-    if rows and all(r.pass_fail is not None for r in rows):
-        overall = all(bool(r.pass_fail) for r in rows)
+    if current and all(r.pass_fail is not None for r in current):
+        overall = all(bool(r.pass_fail) for r in current)
     return QcMeasurementsOut(
         batch_id=batch_id,
+        attempt=attempts_count,
+        attempts_count=attempts_count,
         overall_pass=overall,
         results=[QcResultRow(
             parameter_id=r.parameter_id, parameter_name=r.parameter_name, unit=r.unit,
             value_num=r.value_num, value_text=r.value_text, pass_fail=r.pass_fail,
+            attempt=r.attempt,
         ) for r in rows],
     )
 
@@ -261,13 +280,17 @@ def record_batch_measurements(batch_id: int, payload: QcMeasurementsIn, db: Sess
             pass_fail = within_min and within_max
         if pass_fail is None and param.param_type == "bool" and item.value_text is not None:
             pass_fail = item.value_text.strip().lower() in ("مطابق", "yes", "true", "1", "ok", "pass")
+        attempt = _latest_attempt(db, batch_id)
         existing = db.query(models.BatchQcResult).filter(
-            models.BatchQcResult.batch_id == batch_id, models.BatchQcResult.parameter_id == param.id
+            models.BatchQcResult.batch_id == batch_id,
+            models.BatchQcResult.attempt == attempt,
+            models.BatchQcResult.parameter_id == param.id,
         ).first()
         if existing is None:
             existing = models.BatchQcResult(
                 company_id=company_id,  # type: ignore
                 batch_id=batch_id,  # type: ignore
+                attempt=attempt,  # type: ignore
                 parameter_id=param.id,  # type: ignore
                 template_id=param.template_id,  # type: ignore
                 parameter_name=param.name,  # type: ignore
@@ -287,7 +310,8 @@ def record_batch_measurements(batch_id: int, payload: QcMeasurementsIn, db: Sess
         overall = all(bool(r.pass_fail) for r in out_rows)
     audit(db, user, "update", "batch_qc_measurements", batch, f"قياسات جودة الدفعة {batch.batch_no} — الحكم: {'مطابق' if overall else ('غير مطابق' if overall is False else 'جزئي')}")
     db.commit()
-    return QcMeasurementsOut(batch_id=batch_id, overall_pass=overall, results=out_rows)
+    attempt = _latest_attempt(db, batch_id)
+    return QcMeasurementsOut(batch_id=batch_id, attempt=attempt, attempts_count=attempt, overall_pass=overall, results=out_rows)
 
 
 @router.post("/batches/{batch_id}/release", response_model=dict)
@@ -323,3 +347,17 @@ def release_batch_qc(
         "qc_status": batch.qc_status,
         "notes": batch.notes,
     }
+
+@router.post("/batches/{batch_id}/retest", response_model=QcMeasurementsOut)
+def retest_batch_qc(batch_id: int, notes: Optional[str] = None, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    """إعادة فحص الدفعة: تفتح محاولة قياس جديدة (رقم أعلى) والقياسات السابقة تُحفظ كسجل.
+    الدفعة تبقى pending حتى الحكم النهائي (passed/rejected)."""
+    batch = _batch_or_404(db, batch_id)
+    if batch.qc_status != "pending":
+        raise HTTPException(status.HTTP_409_CONFLICT, f"الدفعة مفحوصة نهائياً وحالتها: {batch.qc_status} — إعادة الفحص قبل الحكم النهائي فقط")
+    new_attempt = int(batch.qc_attempt or 1) + 1
+    batch.qc_attempt = new_attempt
+    audit(db, user, "update", "batch_qc_retest", batch, f"إعادة فحص الدفعة {batch.batch_no} — محاولة {new_attempt}" + (f" — {notes}" if notes else ""))
+    db.commit()
+    db.refresh(batch)
+    return QcMeasurementsOut(batch_id=batch_id, attempt=new_attempt, attempts_count=new_attempt, overall_pass=None, results=[])

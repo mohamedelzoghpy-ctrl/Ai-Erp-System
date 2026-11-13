@@ -5,7 +5,7 @@ import { money, num } from "../format";
 import { useAction, useFetch } from "../hooks";
 import { useI18n } from "../i18n";
 import { PRODUCTION_STATUS_LABEL } from "../types";
-import type { Bom, MaterialsAvailability, ProductionLine, ProductionOrder, ProductionOrderStatus, QcMeasurementsOut, QcTemplate, Warehouse } from "../types";
+import type {Bom, MaterialsAvailability, ProductionLine, ProductionOrder, ProductionOrderStatus, QcMeasurementsOut, QcTemplate, Warehouse, ForwardTraceOut } from "../types";
 import { ActiveBadge, Alert, Empty, Field, Loading, Modal, PageHeader } from "../ui";
 import type { FormEvent } from "react";
 
@@ -131,11 +131,14 @@ function ProductionOrderForm({ products, warehouses, suppliers, lines, onClose, 
 /** جدول اللوطات المستهلكة لأمر تصنيع — التتبع العكسي من الدفعة إلى الاستلام. */
 function LotTrace({ orderId }: { orderId: number }) {
   const { t } = useI18n();
-  const lots = useFetch(() => api.get<{ component_name: string; lot_code: string; qty: number; source: string; reference: string | null; expiry_date: string | null }[]>(`/production-orders/${orderId}/lots`), `po-lots-${orderId}`);
+  const [fwd, setFwd] = useState<{ lotId: number; lotCode: string } | null>(null);
+  const lots = useFetch(() => api.get<{ component_name: string; lot_code: string; lot_id: number; qty: number; source: string; reference: string | null; expiry_date: string | null }[]>(`/production-orders/${orderId}/lots`), `po-lots-${orderId}`);
   if (lots.loading && !lots.data) return <Loading />;
   const rows = lots.data ?? [];
   if (rows.length === 0) return <small className="hint">{t("لا تخصيص لوطات — الصرف من مخزون غير مرتبط بلوطات")}</small>;
   return (
+    <>
+    {fwd && <ForwardTraceModal lotId={fwd.lotId} lotCode={fwd.lotCode} onClose={() => setFwd(null)} />}
     <div className="table-wrap" style={{ marginBottom: 4 }}>
       <table>
         <thead>
@@ -150,11 +153,60 @@ function LotTrace({ orderId }: { orderId: number }) {
               <td>{r.source === "purchase" ? t("استلام شراء") : r.source === "opening" ? t("افتتاحي") : t("يدوي")}</td>
               <td>{r.reference ?? "—"}</td>
               <td>{r.expiry_date ?? "—"}</td>
+              <td className="actions">
+                <button className="btn btn-sm" onClick={() => setFwd({ lotId: r.lot_id, lotCode: r.lot_code })}>
+                  🔎 {t("تتبع أمامي")}
+                </button>
+              </td>
             </tr>
           ))}
         </tbody>
       </table>
     </div>
+    </>
+  );
+}
+
+/** تتبع أمامي (سحب استدعاء): لوط خام ← الأوامر التي استهلكته ← دفعاته النهائية ورصيدها. */
+function ForwardTraceModal({ lotId, lotCode, onClose }: { lotId: number; lotCode: string; onClose: () => void }) {
+  const { t } = useI18n();
+  const tr = useFetch(() => api.get<ForwardTraceOut>(`/production-orders/lots/${lotId}/trace-forward`), `fwd-${lotId}`);
+  return (
+    <Modal title={`🔎 ${t("التتبع الأمامي — لوط ")}${lotCode}`} onClose={onClose} wide>
+      <Alert>{tr.error}</Alert>
+      {tr.loading && !tr.data ? <Loading /> : (
+        <>
+          <p className="muted" style={{ fontSize: 13, margin: "0 0 10px" }}>
+            {t("اللوط الخام")} <b dir="ltr">{tr.data?.lot_code}</b>
+            {tr.data?.product_name ? ` — ${tr.data.product_name}` : ""}
+            {t(" — استُهلك في ")}{(tr.data?.orders ?? []).length}{t(" أمر تصنيع:")}
+          </p>
+          {(tr.data?.orders ?? []).length === 0 ? (
+            <Empty>{t("لا توجد أوامر تصنيع استهلكت هذا اللوط.")}</Empty>
+          ) : (tr.data?.orders ?? []).map((o) => (
+            <div key={o.order_id} className="card card-pad" style={{ marginBottom: 10 }}>
+              <div style={{ fontWeight: 800, marginBottom: 6 }}>
+                {o.order_code} — {o.product_name} · {t("استهلك")} {num(o.consumed_qty)}
+                <span className="badge badge-draft" style={{ marginInlineStart: 8 }}>{o.order_status}</span>
+              </div>
+              <table>
+                <thead><tr><th>{t("الدفعة النهائية")}</th><th className="num">{t("كمية الدفعة")}</th><th>{t("الفحص")}</th><th className="num">{t("المتبقي بالمخازن")}</th></tr></thead>
+                <tbody>
+                  {o.batches.map((b, i) => (
+                    <tr key={i}>
+                      <td dir="ltr"><b>{b.batch_no}</b></td>
+                      <td className="num">{num(b.qty)}</td>
+                      <td>{b.qc_status === "passed" ? t("معتمدة") : b.qc_status === "rejected" ? t("مرفوضة") : t("قيد الفحص")}</td>
+                      <td className="num" style={{ fontWeight: 700 }}>{num(b.finished_lot_qty)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ))}
+        </>
+      )}
+    </Modal>
   );
 }
 
@@ -164,9 +216,20 @@ function BatchQcMeasure({ productId, batchId, batchNo, onClose }: { productId: n
   const req = useFetch(() => api.get<{ template_ids: number[] }>(`/qc/products/${productId}`), `qc-req-${productId}`);
   const templates = useFetch(() => api.get<QcTemplate[]>("/qc/templates"), "qc-templates");
   const saved = useFetch(() => api.get<QcMeasurementsOut>(`/qc/batches/${batchId}/results`), `qc-res-${batchId}`);
+  const history = useFetch(() => api.get<QcMeasurementsOut>(`/qc/batches/${batchId}/results?all_attempts=true`), `qc-hist-${batchId}`);
   const { busy, error, run } = useAction();
   const [values, setValues] = useState<Record<number, { value_num: string; value_text: string }>>({});
   const [savedVerdict, setSavedVerdict] = useState<QcMeasurementsOut | null>(null);
+
+  const startRetest = () => {
+    void run(async () => {
+      await api.post(`/qc/batches/${batchId}/retest`);
+      setValues({});
+      setSavedVerdict(null);
+      saved.reload();
+      history.reload();
+    });
+  };
 
   const requiredIds = req.data?.template_ids ?? [];
   const params = (templates.data ?? [])
@@ -192,6 +255,15 @@ function BatchQcMeasure({ productId, batchId, batchNo, onClose }: { productId: n
 
   return (
     <Modal title={`🧪 ${t("قياسات الجودة")} ${batchNo}`} onClose={onClose} wide>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8, flexWrap: "wrap" }}>
+        <span className="badge" style={{ background: "#e3f2fd", color: "#0d47a1", borderRadius: 999, padding: "2px 10px", fontSize: 12 }}>
+          {t("المحاولة")} {saved.data?.attempt ?? 1}{(saved.data?.attempts_count ?? 1) > 1 ? ` / ${saved.data?.attempts_count}` : ""}
+        </span>
+        {(saved.data?.attempts_count ?? 1) > 1 && <small className="muted">{t("القياسات السابقة محفوظة — استعرضها بالسجل أدناه")}</small>}
+        <button className="btn btn-sm" style={{ marginLeft: "auto" }} disabled={busy} onClick={startRetest}>
+          {busy ? t("…") : t("🔄 إعادة فحص — محاولة جديدة")}
+        </button>
+      </div>
       {error && <Alert kind="error">{error}</Alert>}
       {savedVerdict && (
         <Alert kind={savedVerdict.overall_pass === false ? "error" : "info"}>
