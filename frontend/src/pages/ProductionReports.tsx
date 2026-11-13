@@ -2,7 +2,7 @@ import { useState } from "react";
 import { api } from "../api";
 import { money, num } from "../format";
 import { useAction, useFetch, type Fetched } from "../hooks";
-import type { ManufacturingReportOut, WipOrder, WorkCenterPerfOut, SubReportRow } from "../types";
+import type { ManufacturingReportOut, WipOrder, WorkCenterPerfOut, SubReportRow, OeeRow } from "../types";
 import { Alert, Empty, Loading, PageHeader } from "../ui";
 import { useI18n } from "../i18n";
 
@@ -189,6 +189,72 @@ function MrpPanel({ warehouses }: { warehouses: Fetched<{ id: number; name: stri
   );
 }
 
+function OeeCard() {
+  const { t } = useI18n();
+  const rows = useFetch(() => api.get<OeeRow[]>("/production-lines/oee?hours_per_day=16"), "oee-lines");
+  const lines = useFetch(() => api.get<{ id: number; name: string }[]>("/production-lines"), "oee-lines-list");
+  const { run, busy, error } = useAction();
+  const [note, setNote] = useState<string | null>(null);
+  const [lineId, setLineId] = useState<string>("");
+  const [reason, setReason] = useState("");
+  const [minutes, setMinutes] = useState("");
+
+  const addDowntime = () => {
+    if (!lineId || !reason.trim() || !minutes) return;
+    void run(async () => {
+      await api.post(`/production-lines/${lineId}/downtimes`, {
+        started_at: new Date().toISOString(),
+        minutes: Number(minutes),
+        reason: reason.trim(),
+      });
+      setNote(t("سُجل التوقف"));
+      setReason("");
+      setMinutes("");
+      rows.reload();
+    });
+  };
+
+  return (
+    <div className="card card-pad" style={{ marginBottom: 16 }}>
+      <h3 style={{ margin: "0 0 8px", fontSize: 15 }}>⏱ {t("طاقة الخطوط — التوافر والتوقفات (OEE مبسط)")}</h3>
+      <Alert>{rows.error || error}</Alert>
+      {note && <div className="hint" style={{ marginBottom: 8 }}>{note}</div>}
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 10 }}>
+        <select value={lineId} onChange={(e) => setLineId(e.target.value)} style={{ minWidth: 150 }}>
+          <option value="">{t("اختر خطًا…")}</option>
+          {(lines.data ?? []).map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+        </select>
+        <input placeholder={t("سبب التوقف (عطل/صيانة/نقص خامات…)")} value={reason} onChange={(e) => setReason(e.target.value)} style={{ minWidth: 200 }} />
+        <input dir="ltr" placeholder={t("دقائق")} value={minutes} onChange={(e) => setMinutes(e.target.value.replace(/[^0-9]/g, ""))} style={{ width: 90 }} />
+        <button className="btn btn-sm" disabled={busy || !lineId || !reason.trim() || !minutes} onClick={addDowntime}>{busy ? t("…") : t("تسجيل توقف")}</button>
+      </div>
+      {rows.loading && !rows.data ? <Loading /> : (rows.data ?? []).length > 0 ? (
+        <div className="table-wrap">
+          <table>
+            <thead><tr><th>{t("الخط")}</th><th className="num">{t("الزمن المخطط (د)")}</th><th className="num">{t("التوقفات (د)")}</th><th className="num">{t("التوافر")}</th><th>{t("بالسبب")}</th><th className="num">{t("مستمر الآن")}</th></tr></thead>
+            <tbody>
+              {(rows.data ?? []).map((r) => (
+                <tr key={r.line_id}>
+                  <td>{r.line_name ?? `#${r.line_id}`}</td>
+                  <td className="num">{num(r.planned_minutes)}</td>
+                  <td className="num">{num(r.downtime_minutes)}</td>
+                  <td className="num" style={{ fontWeight: 800, color: (r.availability_pct ?? 100) >= 95 ? "#15803d" : (r.availability_pct ?? 100) >= 85 ? "#9a6700" : "#b42318" }}>
+                    {r.availability_pct != null ? `${r.availability_pct}%` : "—"}
+                  </td>
+                  <td style={{ fontSize: 12 }}>
+                    {(r.downtime_by_reason ?? []).map((d) => `${d.reason}: ${num(d.minutes)}`).join(" · ") || "—"}
+                  </td>
+                  <td className="num">{r.open_downtimes > 0 ? <span className="badge badge-cancelled">{r.open_downtimes}</span> : "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : <Empty>{t("لا خطوط إنتاج — أنشئ خطًا أولًا")}</Empty>}
+    </div>
+  );
+}
+
 function SubcontractCustodyCard() {
   const { t } = useI18n();
   const rows = useFetch(() => api.get<SubReportRow[]>("/production-orders/reports/subcontract-custody"), "sub-report");
@@ -333,6 +399,7 @@ export default function ProductionReports() {
 
       <MrpPanel warehouses={warehouses} />
       <SubcontractCustodyCard />
+      <OeeCard />
 
       {!valid || report.loading ? (
         <Loading />

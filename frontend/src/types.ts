@@ -1243,6 +1243,16 @@ export interface ForwardTraceOut {
   orders: { order_id: number; order_code: string; order_status: string; product_name?: string | null; consumed_qty: string | number; batches: { batch_no: string; qty: string | number; qc_status: string; finished_lot_qty: string | number }[] }[];
 }
 
+export interface OeeRow {
+  line_id: number;
+  line_name?: string | null;
+  planned_minutes: number;
+  downtime_minutes: number;
+  availability_pct?: number | null;
+  downtime_by_reason: { reason: string; minutes: number }[];
+  open_downtimes: number;
+}
+
 export interface SubReportRow {
   subcontractor_id?: number | null;
   subcontractor_name?: string | null;

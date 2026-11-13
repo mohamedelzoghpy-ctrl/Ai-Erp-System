@@ -1371,6 +1371,36 @@ class BatchTraceOut(BaseModel):
 
 
 # ---------- عهدة التصنيع لدى الغير ----------
+# ---------- توقفات الخطوط + OEE مبسط ----------
+class DowntimeIn(BaseModel):
+    started_at: datetime
+    ended_at: Optional[datetime] = None   # غائبة = توقف مستمر
+    minutes: Optional[int] = Field(default=None, ge=1)  # بديل عن ended_at
+    reason: str = Field(min_length=1, max_length=100)
+    notes: Optional[str] = Field(default=None, max_length=200)
+
+
+class DowntimeOut(BaseModel):
+    id: int
+    line_id: int
+    line_name: Optional[str] = None
+    started_at: datetime
+    ended_at: Optional[datetime] = None
+    minutes: Optional[int] = None
+    reason: str
+    notes: Optional[str] = None
+
+
+class LineOeeRow(BaseModel):
+    line_id: int
+    line_name: Optional[str] = None
+    planned_minutes: int
+    downtime_minutes: int
+    availability_pct: Optional[float] = None
+    downtime_by_reason: List[dict] = []
+    open_downtimes: int = 0
+
+
 class SubcontractLineIn(BaseModel):
     product_id: int
     qty: float = Field(gt=0)

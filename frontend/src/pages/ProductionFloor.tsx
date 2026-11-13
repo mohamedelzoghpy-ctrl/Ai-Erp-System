@@ -12,7 +12,28 @@ export default function ProductionFloor() {
   const [produceFor, setProduceFor] = useState<ProductionOrder | null>(null);
   const [produceQty, setProduceQty] = useState("");
   const [operatorName, setOperatorName] = useState(window.localStorage.getItem("mozad-floor-operator") ?? "");
+  const [scanCode, setScanCode] = useState("");
+  const [scanMsg, setScanMsg] = useState<string | null>(null);
   const act = useAction();
+
+  // مسح باركود الدفعة: يفتح أمر الإنتاج المرتبط فوراً (شاشة لمسية للطابق)
+  const doScan = async () => {
+    const code = scanCode.trim();
+    if (!code) return;
+    setScanMsg(null);
+    try {
+      const tr = await api.get<any>(`/production-orders/batches/trace?batch_no=${encodeURIComponent(code)}`);
+      const order = (orders.data ?? []).find((o) => o.id === tr.order_id);
+      if (order) {
+        setProduceFor(order);
+        setScanCode("");
+      } else {
+        setScanMsg(`الدفعة ${code} لأمر ${tr.order_code} — غير قيد التنفيذ الآن`);
+      }
+    } catch (err) {
+      setScanMsg((err as Error).message);
+    }
+  };
 
   // تحديث دوري حتى يرى العامل الأوامر الجديدة بدون إعادة تحميل الصفحة
   useEffect(() => {
@@ -36,6 +57,23 @@ export default function ProductionFloor() {
   return (
     <>
       <Alert>{orders.error || act.error}</Alert>
+      <div className="card card-pad" style={{ marginBottom: 14 }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <span style={{ fontWeight: 800 }}>📷 {scanMsg ? "" : "امسح باركود الدفعة:"}</span>
+          <input
+            dir="ltr"
+            value={scanCode}
+            onChange={(e) => setScanCode(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void doScan(); } }}
+            placeholder="امسح أو اكتب رقم الدفعة ثم Enter"
+            style={{ flex: 1, minWidth: 240, fontSize: 16, padding: "10px 12px" }}
+          />
+          <button className="btn btn-primary" onClick={() => void doScan()} disabled={!scanCode.trim()} style={{ padding: "10px 18px", fontSize: 15 }}>
+            بحث
+          </button>
+        </div>
+        {scanMsg && <Alert>{scanMsg}</Alert>}
+      </div>
       <div className="card table-wrap">
         {orders.loading && !orders.data ? (
           <Loading />

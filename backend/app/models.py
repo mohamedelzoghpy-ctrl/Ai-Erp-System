@@ -2728,6 +2728,24 @@ class SubcontractCustody(TenantOwned, Base):
     subcontractor = relationship("Supplier")
 
 
+class ProductionDowntime(TenantOwned, Base):
+    """توقف خط إنتاج: السبب والمدة — يدخل في مؤشر التوافر (OEE مبسط)."""
+
+    __tablename__ = "production_downtimes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    line_id = Column(Integer, ForeignKey("production_lines.id", ondelete="CASCADE"), nullable=False, index=True)
+    started_at = Column(DateTime(timezone=True), nullable=False)
+    ended_at = Column(DateTime(timezone=True), nullable=True)   # NULL = التوقف مستمر
+    minutes = Column(Integer, nullable=True)                     # يُحسب تلقائياً عند الإغلاق أو يُدخل يدوياً
+    reason = Column(String(100), nullable=False)                 # عطل / صيانة / نقص خامات / غيره
+    notes = Column(String(200), nullable=True)
+    created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    line = relationship("ProductionLine")
+
+
 class CrmLead(TenantOwned, Base):
     """عميل محتمل (Lead) — خط البيع قبل التحويل لعميل فعلي في العملاء.
 

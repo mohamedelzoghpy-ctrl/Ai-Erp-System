@@ -2600,3 +2600,99 @@ def delete_production_line(line_id: int, db: Session = Depends(get_db), user: mo
     db.delete(line)
     db.commit()
     return None
+
+# ---------------- توقفات الخطوط + OEE مبسط (المرحلة 5) ----------------
+@lines.post("/{line_id}/downtimes", response_model=schemas.DowntimeOut, status_code=201)
+def create_downtime(
+    line_id: int,
+    payload: schemas.DowntimeIn,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(require_manager),
+):
+    """تسجيل توقف خط: السبب + البداية + النهاية (أو الدقائق). النهاية غائبة = توقف مستمر."""
+    company_id = db.info["company_id"]
+    line = db.get(models.ProductionLine, line_id)
+    if line is None or line.company_id != company_id:
+        raise HTTPException(404, "خط الإنتاج غير موجود")
+    if payload.ended_at is not None and payload.ended_at <= payload.started_at:
+        raise HTTPException(422, "نهاية التوقف قبل بدايته")
+    if payload.ended_at is None and payload.minutes is None:
+        raise HTTPException(422, "أدخل نهاية التوقف أو المدة بالدقائق")
+    minutes = payload.minutes
+    if payload.ended_at is not None:
+        minutes = int((payload.ended_at - payload.started_at).total_seconds() // 60)
+    row = models.ProductionDowntime(
+        company_id=company_id, line_id=line_id,
+        started_at=payload.started_at, ended_at=payload.ended_at,
+        minutes=minutes, reason=payload.reason.strip(),
+        notes=payload.notes, created_by=user.id,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    audit(db, user, "create", "production_downtime", row, f"توقف {line.name}: {row.reason} — {minutes} دقيقة")
+    return schemas.DowntimeOut(
+        id=row.id, line_id=row.line_id, line_name=line.name,
+        started_at=row.started_at, ended_at=row.ended_at, minutes=row.minutes,
+        reason=row.reason, notes=row.notes,
+    )
+
+
+@lines.get("/{line_id}/downtimes", response_model=List[schemas.DowntimeOut])
+def list_downtimes(line_id: int, db: Session = Depends(get_db), _: models.User = Depends(get_current_user)):
+    line = db.get(models.ProductionLine, line_id)
+    if line is None or line.company_id != db.info["company_id"]:
+        raise HTTPException(404, "خط الإنتاج غير موجود")
+    rows = db.query(models.ProductionDowntime).filter(models.ProductionDowntime.line_id == line_id).order_by(models.ProductionDowntime.started_at.desc()).all()
+    return [schemas.DowntimeOut(
+        id=r.id, line_id=r.line_id, line_name=line.name,
+        started_at=r.started_at, ended_at=r.ended_at, minutes=r.minutes,
+        reason=r.reason, notes=r.notes,
+    ) for r in rows]
+
+
+@lines.delete("/{line_id}/downtimes/{downtime_id}", status_code=204)
+def delete_downtime(line_id: int, downtime_id: int, db: Session = Depends(get_db), user: models.User = Depends(require_manager)):
+    row = db.get(models.ProductionDowntime, downtime_id)
+    if row is None or row.company_id != db.info["company_id"] or row.line_id != line_id:
+        raise HTTPException(404, "التوقف غير موجود")
+    db.delete(row)
+    db.commit()
+    audit(db, user, "delete", "production_downtime", downtime_id, f"حذف توقف #{downtime_id}")
+
+
+@lines.get("/oee", response_model=List[schemas.LineOeeRow])
+def lines_oee(
+    date_from: Optional[date] = Query(None, description="من (بداية نافذة التوقفات)"),
+    date_to: Optional[date] = None,
+    hours_per_day: float = Query(16, gt=0, le=24, description="ساعات التشغيل المخططة يومياً"),
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+):
+    """OEE مبسط لكل خط: التوافر = (الزمن المخطط − التوقفات) / الزمن المخطط،
+    والأداء من متابعة مراكز التشغيل القائمة — التقرير يجمع التوقفات بالأسباب."""
+    company_id = db.info["company_id"]
+    start = datetime.combine(date_from or (date.today() - timedelta(days=30)), datetime.min.time(), tzinfo=timezone.utc)
+    end = datetime.combine(date_to or date.today(), datetime.max.time(), tzinfo=timezone.utc)
+    out = []
+    for line in db.query(models.ProductionLine).filter(models.ProductionLine.company_id == company_id).all():
+        dts = db.query(models.ProductionDowntime).filter(
+            models.ProductionDowntime.line_id == line.id,
+            models.ProductionDowntime.started_at >= start,
+            models.ProductionDowntime.started_at <= end,
+        ).all()
+        downtime_minutes = sum((int(r.minutes or 0) for r in dts), 0)
+        by_reason: dict = {}
+        for r in dts:
+            by_reason[r.reason] = by_reason.get(r.reason, 0) + int(r.minutes or 0)
+        days = max(1, (end - start).days + 1)
+        planned_minutes = int(days * hours_per_day * 60)
+        availability = round(100.0 * (planned_minutes - downtime_minutes) / planned_minutes, 1) if planned_minutes else None
+        out.append(schemas.LineOeeRow(
+            line_id=line.id, line_name=line.name,
+            planned_minutes=planned_minutes, downtime_minutes=downtime_minutes,
+            availability_pct=availability,
+            downtime_by_reason=[{"reason": k, "minutes": v} for k, v in sorted(by_reason.items(), key=lambda x: -x[1])],
+            open_downtimes=sum((1 for r in dts if r.ended_at is None), 0),
+        ))
+    return out
