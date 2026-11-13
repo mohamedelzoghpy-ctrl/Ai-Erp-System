@@ -7,6 +7,14 @@ import type { Branch, Company, Department, Role, User } from "../types";
 import { money } from "../format";
 import { ActiveBadge, Alert, Empty, Field, Loading, Modal, PageHeader } from "../ui";
 
+/** تنسيق تاريخ+وقت عربي مقروء: «١٣ نوفمبر ٢٠٢٦، ١٢:٠٠:٤٦ ص». */
+function fmtDateTimeAr(iso?: string | null): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  return d.toLocaleString("ar-EG", { year: "numeric", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
 /** تنسيق حجم ملف: KB أو MB بأقرب خانة. */
 function fmtSize(bytes: number): string {
   if (!bytes || bytes <= 0) return "0 ك.ب";
@@ -1000,7 +1008,7 @@ export default function CompanyAdmin({ platform = false, onSaved }: { platform?:
                                   <span className="badge badge-confirmed" style={{ marginInlineStart: 8, fontSize: 11 }}>الأحدث</span>
                                 )}
                               </td>
-                              <td dir="ltr">{(b.generated_at || "").slice(0, 19).replace("T", " ")}</td>
+                              <td>{fmtDateTimeAr(b.generated_at)}</td>
                               <td className="num">{fmtSize(b.size)}</td>
                               <td className="actions">
                                 <button className="btn btn-sm" disabled={dl.busy} onClick={() => void dl.run(() => api.download(`/admin/backups/${b.name}/download`, b.name))}>
@@ -1060,7 +1068,7 @@ export default function CompanyAdmin({ platform = false, onSaved }: { platform?:
           <div dir="rtl" style={{ marginBottom: 12, padding: "10px 12px", borderRadius: 8, fontSize: 13, background: "#fee4e2", color: "#b42318" }}>
             ⚠️ <b>عملية خطيرة ولا يمكن التراجع عنها:</b> ستُمسح كل البيانات الحالية في كل الشركات
             (أوامر، قيود، عملاء، مستخدمون…) وتُستبدل بمحتوى النسخة
-            "<b dir="ltr">{restoreBk.name}</b>" من <b dir="ltr">{(restoreBk.generated_at || "").slice(0, 19).replace("T", " ")}</b>.
+            "<b dir="ltr">{restoreBk.name}</b>" من <b>{fmtDateTimeAr(restoreBk.generated_at)}</b>.
             ستحتاج إلى تسجيل دخول من جديد بعد اكتمالها.
           </div>
           <Field label="اكتب «استعادة» بالضبط للتأكيد">
