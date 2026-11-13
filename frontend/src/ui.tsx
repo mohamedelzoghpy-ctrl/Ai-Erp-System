@@ -145,11 +145,11 @@ export function nameOf<T extends { id: number; name: string }>(list: T[] | null 
 }
 
 /** Previous/next controls under a paginated table; hidden when everything fits on one page. */
-export function Pager({ list }: { list: { page: number; pages: number; total: number; setPage: (p: number) => void } }) {
+export function Pager({ list, style }: { list: { page: number; pages: number; total: number; setPage: (p: number) => void }; style?: React.CSSProperties }) {
   const { lang } = useI18n();
   if (list.pages <= 1) return null;
   return (
-    <div className="pager" style={{ display: "flex", gap: 10, alignItems: "center", justifyContent: "center", padding: 12 }}>
+    <div className="pager" style={{ display: "flex", gap: 10, alignItems: "center", justifyContent: "center", padding: 12, ...style }}>
       <button className="btn btn-sm" disabled={list.page <= 1} onClick={() => list.setPage(list.page - 1)}>
         {lang === "ar" ? "السابق" : "Previous"}
       </button>

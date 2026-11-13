@@ -4,6 +4,7 @@ import { useFetch, usePagedList } from "../hooks";
 import { useI18n } from "../i18n";
 import { dateTime, money } from "../format";
 import { Alert, Empty, Field, Loading, Modal, PageHeader, Pager } from "../ui";
+import { useAuth } from "../auth";
 
 /** مراحل العميل المحتمل بألوانها. */
 const STAGES: { key: string; color: string; bg: string }[] = [
@@ -27,10 +28,15 @@ type Lead = {
   status: string;
   expected_value: string;
   assigned_rep_id: number | null;
+  next_follow_up_at: string | null;
+  lost_reason: string | null;
   notes: string | null;
   converted_customer_id: number | null;
   created_at: string;
 };
+
+/** تحويل ISO إلى صيغة datetime-local للإدخال. */
+const dtLocal = (iso?: string | null) => iso ? new Date(iso).toLocaleString("sv-SE").replace(" ", "T").slice(0, 16) : "";
 
 type Activity = { id: number; kind: string; body: string; created_at: string };
 
@@ -62,10 +68,15 @@ const SOURCE_LABELS: Record<string, string> = {
 /** العملاء المحتملون (CRM): مراحل البيع + أنشطة المتابعة + التحويل لعميل فعلي. */
 export default function Crm() {
   const { t } = useI18n();
+  const { can } = useAuth();
+  const canUpdate = can("crm.lead.update");
   const reps = useFetch(() => api.get<{ id: number; name: string; code: string }[]>("/reps"), "crm-reps");
   const [stage, setStage] = useState<string>("");
   const [search, setSearch] = useState("");
-  const leads = usePagedList<Lead>("/crm/leads", { status: stage || undefined, search: search || undefined });
+  const [view, setView] = useState<"table" | "kanban">("kanban");
+  const [followUp, setFollowUp] = useState<"" | "today" | "overdue">("");
+  const leads = usePagedList<Lead>("/crm/leads", { status: stage || undefined, search: search || undefined, follow_up: followUp || undefined });
+  const board = useFetch(() => api.get<Lead[]>("/crm/leads?limit=200"), "crm-board");
 
   const [openAdd, setOpenAdd] = useState(false);
   const [editing, setEditing] = useState<Lead | null>(null);
@@ -76,7 +87,7 @@ export default function Crm() {
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
 
-  const emptyForm = { name: "", company_name: "", phone: "", email: "", address: "", source: "walk_in", status: "new", expected_value: "", assigned_rep_id: "", notes: "" };
+  const emptyForm = { name: "", company_name: "", phone: "", email: "", address: "", source: "walk_in", status: "new", expected_value: "", assigned_rep_id: "", next_follow_up_at: "", lost_reason: "", notes: "" };
   const [f, setF] = useState(emptyForm);
 
   const repName = (id: number | null) => {
@@ -99,9 +110,11 @@ export default function Crm() {
         source: f.source,
         expected_value: f.expected_value.trim() === "" ? "0" : f.expected_value,
         assigned_rep_id: f.assigned_rep_id === "" ? null : Number(f.assigned_rep_id),
+        next_follow_up_at: f.next_follow_up_at ? new Date(f.next_follow_up_at).toISOString() : null,
         notes: f.notes.trim() || null,
       });
       setOpenAdd(false);
+      board.reload();
       setF(emptyForm);
       setNote(`${t("تم إضافة العميل المحتمل «")}${created.name}${t("» بكود ")}${created.code}${t(".")}`);
       leads.reload();
@@ -117,7 +130,8 @@ export default function Crm() {
     setF({
       name: l.name, company_name: l.company_name ?? "", phone: l.phone ?? "", email: l.email ?? "",
       address: l.address ?? "", source: l.source, status: l.status, expected_value: String(l.expected_value ?? "0"),
-      assigned_rep_id: l.assigned_rep_id ? String(l.assigned_rep_id) : "", notes: l.notes ?? "",
+      assigned_rep_id: l.assigned_rep_id ? String(l.assigned_rep_id) : "",
+      next_follow_up_at: dtLocal(l.next_follow_up_at), lost_reason: l.lost_reason ?? "", notes: l.notes ?? "",
     });
     setError(null);
   };
@@ -138,9 +152,12 @@ export default function Crm() {
         status: f.status,
         expected_value: f.expected_value.trim() === "" ? "0" : f.expected_value,
         assigned_rep_id: f.assigned_rep_id === "" ? null : Number(f.assigned_rep_id),
+        next_follow_up_at: f.next_follow_up_at ? new Date(f.next_follow_up_at).toISOString() : null,
+        lost_reason: f.lost_reason.trim() || null,
         notes: f.notes.trim() || null,
       });
       setEditing(null);
+      board.reload();
       setNote(`${t("تم تحديث «")}${editing.name}${t("».")}`);
       leads.reload();
     } catch (err) {
@@ -192,6 +209,15 @@ export default function Crm() {
 
       <div className="toolbar" style={{ marginBottom: 14, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
         <input placeholder={t("ابحث بالاسم أو الشركة أو الهاتف…")} value={search} onChange={(e) => setSearch(e.target.value)} style={{ maxWidth: 320 }} />
+        <span style={{ display: "inline-flex", gap: 4 }}>
+          <button className={`btn btn-sm${view === "kanban" ? " btn-primary" : ""}`} onClick={() => setView("kanban")}>📋 {t("خط البيع")}</button>
+          <button className={`btn btn-sm${view === "table" ? " btn-primary" : ""}`} onClick={() => setView("table")}>📄 {t("جدول")}</button>
+        </span>
+        <select value={followUp} onChange={(e) => setFollowUp(e.target.value as "" | "today" | "overdue")}>
+          <option value="">{t("كل المواعيد")}</option>
+          <option value="today">{t("متابعات اليوم")}</option>
+          <option value="overdue">{t("متابعات متأخرة")}</option>
+        </select>
         <button className="btn btn-sm" style={{ background: stage === "" ? "var(--primary)" : undefined, color: stage === "" ? "#fff" : undefined }} onClick={() => setStage("")}>
           {t("الكل")}
         </button>
@@ -210,6 +236,37 @@ export default function Crm() {
         </div>
       )}
 
+      {view === "kanban" ? (
+        <LeadKanban
+          leads={board.data ?? []}
+          loading={board.loading && !board.data}
+          canUpdate={canUpdate}
+          onMove={(leadId, newStatus) => {
+            const lead = (board.data ?? []).find((x) => x.id === leadId);
+            if (!lead || lead.status === newStatus) return;
+            const apply = (extra?: Record<string, unknown>) => {
+              void (async () => {
+                try {
+                  await api.patch(`/crm/leads/${leadId}`, { status: newStatus, ...extra });
+                  board.reload();
+                  leads.reload();
+                } catch (err) {
+                  setError((err as Error).message);
+                }
+              })();
+            };
+            if (newStatus === "lost") {
+              const reason = window.prompt(t("سبب الفقد (مطلوب):"), "");
+              if (!reason || !reason.trim()) return;
+              apply({ lost_reason: reason.trim() });
+            } else {
+              apply();
+            }
+          }}
+          onOpenActs={(l) => setActLead(l)}
+          onEdit={(l) => openEdit(l)}
+        />
+      ) : (
       <div className="card table-wrap">
         {leads.loading && !leads.data ? (
           <Loading />
@@ -267,7 +324,8 @@ export default function Crm() {
           <Empty>{search || stage ? t("لا توجد نتائج مطابقة.") : t("لا يوجد عملاء محتملون — اضغط «إضافة عميل محتمل» للبدء.")}</Empty>
         )}
       </div>
-      <Pager list={leads} />
+      )}
+      <Pager list={leads} style={view === "kanban" ? { display: "none" } : undefined} />
 
       {(openAdd || editing) && (
         <Modal title={editing ? `${t("تعديل — ")}${editing.name}` : t("إضافة عميل محتمل")} onClose={() => { setOpenAdd(false); setEditing(null); }} wide>
@@ -294,16 +352,26 @@ export default function Crm() {
                 </select>
               </Field>
               {editing ? (
-                <Field label={t("المرحلة")}>
-                  <select value={f.status} onChange={(e) => setF({ ...f, status: e.target.value })}>
-                    {STAGES.map((s) => (
-                      <option key={s.key} value={s.key}>{(STAGE_LABELS as any)[s.key]}</option>
-                    ))}
-                  </select>
-                </Field>
+                <>
+                  <Field label={t("المرحلة")}>
+                    <select value={f.status} onChange={(e) => setF({ ...f, status: e.target.value })}>
+                      {STAGES.map((s) => (
+                        <option key={s.key} value={s.key}>{(STAGE_LABELS as any)[s.key]}</option>
+                      ))}
+                    </select>
+                  </Field>
+                  {f.status === "lost" && (
+                    <Field label={t("سبب الفقد")} hint={t("مطلوب عند النقل إلى مفقود")}>
+                      <input value={f.lost_reason} onChange={(e) => setF({ ...f, lost_reason: e.target.value })} maxLength={200} placeholder={t("سعر منافس / بلا استجابة…")} />
+                    </Field>
+                  )}
+                </>
               ) : null}
               <Field label={t("القيمة المتوقعة")}>
                 <input dir="ltr" inputMode="decimal" value={f.expected_value} onChange={(e) => setF({ ...f, expected_value: e.target.value.replace(/[^0-9.]/g, "") })} placeholder="0" />
+              </Field>
+              <Field label={t("موعد المتابعة القادم")} hint={t("يقود تنبيهات «متابعات اليوم» وإشعارات المندوب")}>
+                <input type="datetime-local" dir="ltr" value={f.next_follow_up_at} onChange={(e) => setF({ ...f, next_follow_up_at: e.target.value })} />
               </Field>
               <Field label={t("المندوب المسؤول")}>
                 <select value={f.assigned_rep_id} onChange={(e) => setF({ ...f, assigned_rep_id: e.target.value })}>
@@ -364,6 +432,76 @@ export default function Crm() {
         </Modal>
       )}
     </>
+  );
+}
+
+/** خط البيع المرئي: أعمدة المراحل بسحب وإفلات البطاقات (نمط ScheduleBoard). */
+function LeadKanban({ leads, loading, canUpdate, onMove, onOpenActs, onEdit }: {
+  leads: Lead[];
+  loading: boolean;
+  canUpdate: boolean;
+  onMove: (leadId: number, newStatus: string) => void;
+  onOpenActs: (l: Lead) => void;
+  onEdit: (l: Lead) => void;
+}) {
+  const { t } = useI18n();
+  const [dragId, setDragId] = useState<number | null>(null);
+  const [dragOver, setDragOver] = useState<string | null>(null);
+  if (loading) return <div className="card"><Loading /></div>;
+  const now = Date.now();
+  const isOverdue = (l: Lead) => l.next_follow_up_at && new Date(l.next_follow_up_at).getTime() < now && !["won", "lost"].includes(l.status);
+  const isToday = (l: Lead) => l.next_follow_up_at && !isOverdue(l) && new Date(l.next_follow_up_at).toDateString() === new Date().toDateString();
+  return (
+    <div className="crm-kanban">
+      {STAGES.map((s) => {
+        const col = leads.filter((l) => l.status === s.key);
+        const total = col.reduce((sum, l) => sum + Number(l.expected_value || 0), 0);
+        return (
+          <div
+            key={s.key}
+            className={`crm-col${dragOver === s.key ? " drag-over" : ""}`}
+            onDragOver={(e) => { if (canUpdate) { e.preventDefault(); setDragOver(s.key); } }}
+            onDragLeave={() => setDragOver((cur) => (cur === s.key ? null : cur))}
+            onDrop={(e) => { e.preventDefault(); setDragOver(null); const id = dragId; setDragId(null); if (id != null) onMove(id, s.key); }}
+          >
+            <div className="crm-col-head" style={{ background: s.bg, color: s.color }}>
+              <b>{t((STAGE_LABELS as any)[s.key])}</b>
+              <span>{col.length} · {money(total)}</span>
+            </div>
+            <div className="crm-col-body">
+              {col.length === 0 ? <div className="muted" style={{ fontSize: 12, textAlign: "center", padding: 10 }}>—</div> : col.map((l) => (
+                <div
+                  key={l.id}
+                  className={`crm-card${dragId === l.id ? " dragging" : ""}${isOverdue(l) ? " crm-overdue" : ""}`}
+                  draggable={canUpdate && l.status !== "won"}
+                  onDragStart={() => setDragId(l.id)}
+                  onDragEnd={() => { setDragId(null); setDragOver(null); }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 6 }}>
+                    <b>{l.name}</b>
+                    <small className="muted" dir="ltr">{l.code}</small>
+                  </div>
+                  {l.company_name && <div style={{ fontSize: 12 }} className="muted">{l.company_name}</div>}
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginTop: 4 }}>
+                    <span>{money(l.expected_value)}</span>
+                    {l.phone && <a dir="ltr" href={`tel:${l.phone}`}>{l.phone}</a>}
+                  </div>
+                  {l.next_follow_up_at && (
+                    <div style={{ fontSize: 11.5, marginTop: 4, color: isOverdue(l) ? "#b42318" : isToday(l) ? "#9a6700" : "#57606a" }}>
+                      ⏰ {isOverdue(l) ? t("متأخرة: ") : ""}{dtLocal(l.next_follow_up_at)}
+                    </div>
+                  )}
+                  <div style={{ display: "flex", gap: 4, marginTop: 6 }}>
+                    <button className="btn btn-sm" onClick={() => onOpenActs(l)}>📞</button>
+                    <button className="btn btn-sm" onClick={() => onEdit(l)}>✏️</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 

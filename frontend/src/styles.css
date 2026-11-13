@@ -926,3 +926,15 @@ td.actions { display: flex; gap: 6px; }
 .pos-numpad-clear { color: #b91c1c; }
 .pos-numpad-exact { color: #15803d; }
 .pos-numpad-cash { background: #f0f6ff; color: #1f6feb; }
+
+/* ===== CRM Kanban (خط البيع المرئي) ===== */
+.crm-kanban { display: flex; gap: 10px; align-items: flex-start; overflow-x: auto; padding-bottom: 8px; }
+.crm-col { flex: 1; min-width: 210px; max-width: 280px; background: var(--bg, #f6f8fa); border-radius: 10px; border: 1px solid var(--line, #e5e9f0); }
+.crm-col.drag-over { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(31, 111, 235, 0.25); }
+.crm-col-head { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; border-radius: 9px 9px 0 0; font-size: 13px; }
+.crm-col-head span { font-size: 11.5px; opacity: 0.85; }
+.crm-col-body { padding: 8px; display: flex; flex-direction: column; gap: 8px; min-height: 80px; }
+.crm-card { background: #fff; border: 1px solid var(--line, #e5e9f0); border-radius: 8px; padding: 8px 10px; cursor: grab; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+.crm-card:hover { border-color: var(--primary); }
+.crm-card.dragging { opacity: 0.45; cursor: grabbing; }
+.crm-card.crm-overdue { border-inline-start: 3px solid #b42318; }

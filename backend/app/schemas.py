@@ -1853,7 +1853,7 @@ class CostCenterOut(CostCenterBase, ORMModel):
 # ---------- CRM (العملاء المحتملون) ----------
 LeadSource = Literal["walk_in", "phone", "social", "referral", "exhibition", "other"]
 LeadStatus = Literal["new", "contacted", "qualified", "won", "lost"]
-ActivityKind = Literal["note", "call", "meeting"]
+ActivityKind = Literal["note", "call", "meeting", "system"]
 
 
 class CrmLeadBase(BaseModel):
@@ -1866,6 +1866,7 @@ class CrmLeadBase(BaseModel):
     status: LeadStatus = "new"
     expected_value: Decimal = Field(default=Decimal("0"), ge=0)
     assigned_rep_id: Optional[int] = None
+    next_follow_up_at: Optional[datetime] = None   # موعد المتابعة القادم
     notes: Optional[str] = None
 
 
@@ -1883,12 +1884,15 @@ class CrmLeadUpdate(BaseModel):
     status: Optional[LeadStatus] = None
     expected_value: Optional[Decimal] = Field(default=None, ge=0)
     assigned_rep_id: Optional[int] = None
+    next_follow_up_at: Optional[datetime] = None
+    lost_reason: Optional[str] = Field(default=None, max_length=200)
     notes: Optional[str] = None
 
 
 class CrmLeadOut(CrmLeadBase, ORMModel):
     id: int
     code: str
+    lost_reason: Optional[str] = None
     converted_customer_id: Optional[int] = None
     created_at: datetime
     updated_at: datetime

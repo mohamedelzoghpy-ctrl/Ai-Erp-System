@@ -2773,6 +2773,10 @@ class CrmLead(TenantOwned, Base):
     expected_value = Column(Numeric(14, 2), nullable=False, default=0, server_default="0")
     assigned_rep_id = Column(Integer, ForeignKey("sales_reps.id", ondelete="SET NULL"), nullable=True, index=True)
     notes = Column(Text, nullable=True)
+    # موعد المتابعة القادم — يقود تنبيهات اليوم/المتأخرة وإشعارات المندوبين
+    next_follow_up_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    # سبب الفقد (إلزامي عند النقل إلى lost)
+    lost_reason = Column(String(200), nullable=True)
     converted_customer_id = Column(Integer, ForeignKey("customers.id", ondelete="SET NULL"), nullable=True, index=True)
     created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
