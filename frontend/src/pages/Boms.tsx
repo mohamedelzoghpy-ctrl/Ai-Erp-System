@@ -242,6 +242,10 @@ export default function Boms() {
   const [simQty, setSimQty] = useState<string>("10");
   const [simResult, setSimResult] = useState<any | null>(null);
   const [simLoading, setSimLoading] = useState(false);
+  // التكلفة المجمّعة: نافذة حقيقية بدل alert نصي (تدقيق جودة الواجهة 2026-11-14)
+  const [rollupBom, setRollupBom] = useState<Bom | null>(null);
+  const [rollup, setRollup] = useState<any | null>(null);
+  const [rollupLoading, setRollupLoading] = useState(false);
   const [toggling, setToggling] = useState<number | null>(null);
   const [search, setSearch] = useState("");
   const { busy, error, run } = useAction();
@@ -345,10 +349,14 @@ export default function Boms() {
                   <td><ActiveBadge active={bom.is_active} /></td>
                   <td className="actions">
                     <button className="btn btn-sm" title="التكلفة المعيارية المجمّعة عبر كل المستويات" onClick={async () => {
+                      setRollupBom(bom);
+                      setRollup(null);
+                      setRollupLoading(true);
                       try {
                         const r = await api.get<any>(`/boms/${bom.id}/cost-rollup`);
-                        window.alert(`التكلفة المجمّعة للوحدة: ${Number(r.unit_cost).toFixed(4)}\n` + r.lines.map((l: any) => `${l.component_name}: ${Number(l.unit_cost).toFixed(4)} × ${Number(l.qty_per_output)} (${l.source === "own_bom" ? "من قائمته" : "تكلفة شراء"})`).join("\n"));
-                      } catch (err) { alert((err as Error).message); }
+                        setRollup(r);
+                      } catch (err) { alert((err as Error).message); setRollupBom(null); }
+                      finally { setRollupLoading(false); }
                     }}>
                       💰 تكلفة مجمعة
                     </button>{" "}
@@ -474,6 +482,104 @@ export default function Boms() {
               </table>
             </div>
           )}
+        </Modal>
+      )}
+
+      {rollupBom && (
+        <Modal wide title={`💰 التكلفة المعيارية المجمّعة — ${rollup?.product_name ?? rollupBom.product_id} (${rollupBom.version})`} onClose={() => setRollupBom(null)}>
+          {rollupLoading ? (
+            <Loading />
+          ) : rollup ? (
+            <>
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
+                <div style={{ flex: "1 1 220px", border: "1px solid var(--border)", borderRadius: 10, padding: "10px 14px", background: "linear-gradient(135deg, rgba(37,99,235,.08), rgba(22,163,74,.08))" }}>
+                  <div style={{ fontSize: 12, color: "var(--muted, #64748b)" }}>التكلفة المجمّعة للوحدة الناتجة</div>
+                  <div className="num" style={{ fontWeight: 800, fontSize: 20 }}>{Number(rollup.unit_cost).toFixed(4)}</div>
+                </div>
+                <div style={{ flex: "1 1 160px", border: "1px solid var(--border)", borderRadius: 10, padding: "10px 14px" }}>
+                  <div style={{ fontSize: 12, color: "var(--muted, #64748b)" }}>كمية الناتج للقائمة</div>
+                  <div className="num" style={{ fontWeight: 700, fontSize: 17 }}>{num(rollup.output_qty)}</div>
+                </div>
+                <div style={{ flex: "1 1 160px", border: "1px solid var(--border)", borderRadius: 10, padding: "10px 14px" }}>
+                  <div style={{ fontSize: 12, color: "var(--muted, #64748b)" }}>عدد المكونات</div>
+                  <div className="num" style={{ fontWeight: 700, fontSize: 17 }}>{num(rollup.lines.length)}</div>
+                </div>
+                <div style={{ flex: "1 1 200px", border: "1px solid var(--border)", borderRadius: 10, padding: "10px 14px" }}>
+                  <div style={{ fontSize: 12, color: "var(--muted, #64748b)" }}>مجموع تكلفة المكونات (للدُفعة كاملة)</div>
+                  <div className="num" style={{ fontWeight: 700, fontSize: 17 }}>{money(rollup.lines.reduce((s: number, l: any) => s + Number(l.line_cost), 0))}</div>
+                </div>
+              </div>
+              <div className="table-wrap" style={{ maxHeight: "45vh", overflow: "auto", marginBottom: 12 }}>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>المكوّن</th>
+                      <th className="num">لكل وحدة ناتج</th>
+                      <th className="num">هالك %</th>
+                      <th>المصدر</th>
+                      <th className="num">تكلفة الوحدة</th>
+                      <th className="num">الإجمالي (بالـهالك)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rollup.lines.map((l: any) => (
+                      <tr key={l.component_id}>
+                        <td>{l.component_name ?? `#${l.component_id}`}</td>
+                        <td className="num">{num(l.qty_per_output)}</td>
+                        <td className="num">{num(l.scrap_pct)}</td>
+                        <td>
+                          {l.source === "own_bom"
+                            ? <span className="badge badge-ok" title="للمكوّن قائمة مواد سارية — استُخدمت تكلفته المجمّعة">من قائمته 🌳</span>
+                            : <span className="badge" title="لا قائمة سارية — استُخدمت تكلفة الشراء المسجلة">تكلفة شراء</span>}
+                        </td>
+                        <td className="num">{Number(l.unit_cost).toFixed(4)}</td>
+                        <td className="num" style={{ fontWeight: 700 }}>{Number(l.line_cost).toFixed(4)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="muted" style={{ fontSize: 12, marginTop: 0 }}>
+                التكلفة المجمّعة = مجموع تكلفة المكونات (شاملة الهالك) ÷ كمية الناتج — وللمكوّن الذي له قائمة مواد سارية تُستخدم تكلفته المجمّعة تلقائيًا عبر كل المستويات.
+              </p>
+              <div className="actions">
+                <button className="btn" onClick={() => {
+                  const w = window.open("", "_blank");
+                  if (!w) return;
+                  const rows = rollup.lines.map((l: any) => `<tr>
+                    <td>${l.component_name ?? `#${l.component_id}`}</td>
+                    <td class="num">${num(l.qty_per_output)}</td>
+                    <td class="num">${num(l.scrap_pct)}</td>
+                    <td>${l.source === "own_bom" ? "من قائمته" : "تكلفة شراء"}</td>
+                    <td class="num">${Number(l.unit_cost).toFixed(4)}</td>
+                    <td class="num">${Number(l.line_cost).toFixed(4)}</td>
+                  </tr>`).join("");
+                  w.document.write(`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>التكلفة المجمّعة</title>
+                    <style>
+                      body { font-family: Tahoma, Arial, sans-serif; padding: 16px; }
+                      h1 { font-size: 18px; text-align: center; }
+                      .meta { text-align: center; color: #555; font-size: 13px; }
+                      table { width: 100%; border-collapse: collapse; }
+                      th, td { border: 1px solid #999; padding: 6px 8px; text-align: center; }
+                      th { background: #eee; }
+                      tfoot td { font-weight: bold; background: #f3f4f6; }
+                      .unit { text-align: center; font-size: 16px; font-weight: 700; margin: 10px 0; }
+                    </style></head><body>
+                    <h1>التكلفة المعيارية المجمّعة — ${rollup.product_name ?? ""} (${rollupBom.version})</h1>
+                    <p class="unit">التكلفة المجمّعة للوحدة الناتجة: ${Number(rollup.unit_cost).toFixed(4)}</p>
+                    <table>
+                      <thead><tr><th>المكوّن</th><th>لكل وحدة ناتج</th><th>هالك %</th><th>المصدر</th><th>تكلفة الوحدة</th><th>الإجمالي</th></tr></thead>
+                      <tbody>${rows}</tbody>
+                    </table>
+                    <script>window.onload = () => { window.print(); };</script>
+                    </body></html>`);
+                  w.document.close();
+                }}>
+                  🖨 طباعة
+                </button>
+              </div>
+            </>
+          ) : null}
         </Modal>
       )}
     </>

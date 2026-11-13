@@ -1490,4 +1490,17 @@ export const EN_FOR_ARABIC_KEYS: Record<string, string> = {
   "خصم السطر بنسبة مئوية — يُرسل السعر الفعلي للفاتورة": "Per-line percentage discount — the effective price is what gets invoiced",
   "بعد الخصم: ": "After discount: ",
   "خصم ": "Discount ",
+  // ---------- قوائم المواد: نافذة التكلفة المجمّعة ----------
+  "التكلفة المجمّعة للوحدة الناتجة": "Rolled-up cost per output unit",
+  "كمية الناتج للقائمة": "Output quantity per BOM",
+  "عدد المكونات": "Component count",
+  "مجموع تكلفة المكونات (للدُفعة كاملة)": "Total component cost (full batch)",
+  "لكل وحدة ناتج": "Per output unit",
+  "هالك %": "Scrap %",
+  "من قائمته 🌳": "From its own BOM 🌳",
+  "للمكوّن قائمة مواد سارية — استُخدمت تكلفته المجمّعة": "The component has an active BOM — its rolled-up cost was used",
+  "لا قائمة سارية — استُخدمت تكلفة الشراء المسجلة": "No active BOM — the recorded purchase cost was used",
+  "تكلفة شراء": "Purchase cost",
+  "الإجمالي (بالـهالك)": "Total (incl. scrap)",
+  "التكلفة المجمّعة = مجموع تكلفة المكونات (شاملة الهالك) ÷ كمية الناتج — وللمكوّن الذي له قائمة مواد سارية تُستخدم تكلفته المجمّعة تلقائيًا عبر كل المستويات.": "Rolled-up cost = total component cost (incl. scrap) ÷ output quantity — for components with an active BOM, their rolled-up cost is used automatically across all levels.",
 };
