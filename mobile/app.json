@@ -19,7 +19,7 @@
       "supportsTablet": true
     },
     "extra": {
-      "apiBaseUrl": "http://10.0.2.2:8000",
+      "apiBaseUrl": "https://small-cucumber-paprika.ngrok-free.dev/api",
       "apiBaseUrlCandidates": {
         "android_emulator": "http://10.0.2.2:8000",
         "same_wifi_real_phone": "http://<IP-جهازك>:8000",

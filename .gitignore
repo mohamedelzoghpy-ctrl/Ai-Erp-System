@@ -15,8 +15,7 @@ backups/
 # frontend build output
 frontend/dist/
 frontend/tsconfig.tsbuildinfo
-node_modules/  # أي حزمة اعتماديات (frontend/mobile)
-frontend/node_modules/
+node_modules/
 
 # coverage / tooling caches
 .pytest_cache/
@@ -25,3 +24,11 @@ htmlcov/
 
 # Expo mobile build cache
 .expo/
+
+# mobile native build artifacts & signing secrets (never commit keystores)
+mobile/android/.gradle/
+mobile/android/build/
+mobile/android/app/build/
+mobile/android/app/debug.keystore
+mobile/android/app/*.keystore
+mobile/keystore.properties
