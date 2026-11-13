@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { api } from "../api";
 import { useAuth } from "../auth";
 import { useI18n } from "../i18n";
-import { dateTime, METHOD_LABEL, methodLabel, money, num } from "../format";
+import { dateTime, discountedUnitPrice, METHOD_LABEL, methodLabel, money, num } from "../format";
 import { useAction, useFetch, usePagedList } from "../hooks";
 import type { Order, Party, PaymentMethod, Product, SalesRep, Warehouse } from "../types";
 import { Alert, Empty, Field, Loading, Lookup, Modal, PageHeader, Pager, PaymentBadge } from "../ui";
@@ -12,6 +12,7 @@ interface CartLine {
   product: Product;
   quantity: number;
   price: string;
+  discountPct: string; // خصم السطر بنسبة مئوية (0-100) — السعر المرسل هو الفعلي
 }
 
 type DocumentType = "invoice" | "quotation";
@@ -176,8 +177,11 @@ export default function Pos() {
   /** What is on the shelf in the selected warehouse (the API only sends it when asked for one warehouse). */
   const avail = (p: Product) => p.warehouse_quantity ?? p.quantity;
 
-  const total = cart.reduce((s, l) => s + l.quantity * (Number(l.price) || 0), 0);
-  const totalCents = cart.reduce((s, l) => s + l.quantity * Math.round((Number(l.price) || 0) * 100), 0);
+  /** سعر الوحدة الفعلي بعد خصم السطر — كل الحسابات والإرسال عليه */
+  const unitEff = (l: CartLine) => discountedUnitPrice(l.price, l.discountPct);
+
+  const total = cart.reduce((s, l) => s + l.quantity * unitEff(l), 0);
+  const totalCents = cart.reduce((s, l) => s + l.quantity * Math.round(unitEff(l) * 100), 0);
   const discountInput = discountValue === "" ? 0 : Number(discountValue);
   const discountCents = discountMode === "percent"
     ? Math.round(totalCents * discountInput / 100)
@@ -199,14 +203,18 @@ export default function Pos() {
   // صلاحية تعديل سعر البيع: الحقل متاح للمدير أو حامل الصلاحية، والتعديل بالزيادة فقط — ليس أقل من سعر البيع المعتمد.
   const canEditPrice = isManager || can("sales.order.price_increase");
   const underPriced = cart.filter((l) => Number(l.price) < Number(l.product.sale_price));
-  const validLines = cart.length > 0 && cart.every((l) => l.quantity > 0 && Number(l.price) >= 0);
+  const validPcts = cart.every((l) => {
+    const p = Number(l.discountPct ?? 0);
+    return Number.isFinite(p) && p >= 0 && p <= 100;
+  });
+  const validLines = cart.length > 0 && validPcts && cart.every((l) => l.quantity > 0 && Number(l.price) >= 0);
   const receivedForQuotation = quotationReceived === "" ? 0 : Number(quotationReceived);
   const validQuotationReceived = Number.isFinite(receivedForQuotation) && receivedForQuotation >= 0 && receivedForQuotation <= grandDue + 1e-9;
   const canPay = !!warehouse && validLines && validDiscount && overStock.length === 0 && underPriced.length === 0 && (documentType === "quotation" ? validQuotationReceived : paid >= 0 && paid <= grandDue + 1e-9);
   canPayRef.current = canPay;
   let undistributedDiscountCents = discountCents;
   const discountedItems = cart.flatMap((line) => {
-    const unitCents = Math.round((Number(line.price) || 0) * 100);
+    const unitCents = Math.round(unitEff(line) * 100); // السعر الفعلي بعد خصم السطر
     const lineDiscountCents = Math.min(undistributedDiscountCents, unitCents * line.quantity);
     undistributedDiscountCents -= lineDiscountCents;
     const fullyDiscountedUnits = unitCents > 0 ? Math.min(line.quantity, Math.floor(lineDiscountCents / unitCents)) : 0;
@@ -224,7 +232,7 @@ export default function Pos() {
     setCart((c) => {
       const i = c.findIndex((l) => l.product.id === p.id);
       if (i >= 0) return c.map((l, j) => (j === i ? { ...l, quantity: l.quantity + 1 } : l));
-      return [...c, { product: p, quantity: 1, price: String(Number(p.sale_price)) }];
+      return [...c, { product: p, quantity: 1, price: String(Number(p.sale_price)), discountPct: "0" }];
     });
     setQ("");
     setHits([]);
@@ -443,12 +451,16 @@ export default function Pos() {
                     <th>{t("المنتج")}</th>
                     <th style={{ width: 90 }}>{t("الكمية")}</th>
                     <th style={{ width: 110 }}>{t("السعر")}</th>
+                    <th style={{ width: 72 }} title={t("خصم السطر بنسبة مئوية — يُرسل السعر الفعلي للفاتورة")}>{t("خصم %")}</th>
                     <th className="num">{t("الإجمالي")}</th>
                     <th />
                   </tr>
                 </thead>
                 <tbody>
-                  {cart.map((l) => (
+                  {cart.map((l) => {
+                    const eff = unitEff(l);
+                    const pct = Number(l.discountPct ?? 0) || 0;
+                    return (
                     <tr key={l.product.id}>
                       <td>
                         {l.product.name}
@@ -485,14 +497,32 @@ export default function Pos() {
                           </span>
                         )}
                       </td>
-                      <td className="num">{money(l.quantity * (Number(l.price) || 0))}</td>
+                      <td>
+                        <input
+                          type="number"
+                          min="0"
+                          max="100"
+                          step="1"
+                          style={{ width: 60 }}
+                          aria-label={`${t("خصم ")}${l.product.name}`}
+                          value={l.discountPct ?? "0"}
+                          onChange={(e) => setCart((c) => c.map((x) => (x === l ? { ...x, discountPct: e.target.value } : x)))}
+                        />
+                        {pct > 0 && (
+                          <span className="muted" style={{ display: "block", fontSize: 11 }}>
+                            {t("بعد الخصم: ")}{money(eff)}
+                          </span>
+                        )}
+                      </td>
+                      <td className="num" style={pct > 0 ? { fontWeight: 700 } : undefined}>{money(l.quantity * eff)}</td>
                       <td>
                         <button type="button" className="icon-btn" aria-label={`delete ${l.product.name}`} onClick={() => setCart((c) => c.filter((x) => x !== l))}>
                           ✕
                         </button>
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

@@ -1485,4 +1485,9 @@ export const EN_FOR_ARABIC_KEYS: Record<string, string> = {
   "نهاية الضمان": "Warranty end",
   "لا أرقام مسجلة بعد": "No serials registered yet",
   "أين تُسجَّل الأرقام الجديدة": "Where new serials are registered",
+  // ---------- نقاط البيع: خصم السطر بنسبة ----------
+  "خصم %": "Disc %",
+  "خصم السطر بنسبة مئوية — يُرسل السعر الفعلي للفاتورة": "Per-line percentage discount — the effective price is what gets invoiced",
+  "بعد الخصم: ": "After discount: ",
+  "خصم ": "Discount ",
 };

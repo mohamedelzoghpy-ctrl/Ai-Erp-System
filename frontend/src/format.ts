@@ -20,6 +20,15 @@ export function num(value: number | string | null | undefined): string {
   return Number(value ?? 0).toLocaleString(locale());
 }
 
+/** سعر الوحدة بعد خصم سطر بنسبة مئوية — منزلتان، والنسبة تُقحم على [0..100] (نقاط البيع). */
+export function discountedUnitPrice(unitPrice: number | string | null | undefined, discountPct: number | string | null | undefined): number {
+  const price = Number(unitPrice ?? 0) || 0;
+  let pct = Number(discountPct ?? 0) || 0;
+  if (!Number.isFinite(pct)) pct = 0;
+  pct = Math.min(100, Math.max(0, pct));
+  return Math.round(price * (1 - pct / 100) * 100) / 100;
+}
+
 export function dateTime(iso: string): string {
   return new Date(iso).toLocaleString(locale(), { dateStyle: "medium", timeStyle: "short" });
 }
