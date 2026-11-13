@@ -29,9 +29,9 @@ services:
       - sh
       - -c
       - |
-        echo "[db-backup] daily pg_dump → /backups (retention 14 days)"
-        # حماية من الملفات الفارغة: pg_dump → ملف مؤقت → فحص نجاح وحجم → ثم ضغط
-        # عند الفشل: إعادة المحاولة بعد دقيقة (لا ينتظر 24 ساعة كاملة)
+        echo "[db-backup] hourly pg_dump → /backups (keep latest 2)"
+        # كل ساعة: pg_dump → ملف مؤقت → فحص نجاح وحجم → ضغط → احتفظ بأحدث نسختين فقط
+        # عند الفشل: إعادة المحاولة بعد دقيقة
         while true; do
           ts=$$(date +%Y%m%d-%H%M%S)
           tmp="/backups/.tmp-$ts.sql"
@@ -39,8 +39,9 @@ services:
           if pg_dump -h db -U erp -d erp_db > "$$tmp" && [ -s "$$tmp" ]; then
             gzip -c "$$tmp" > "$$out" && rm -f "$$tmp"
             echo "[$$(date)] backup OK: $$out"
-            find /backups -name 'auto-erp_db-*.sql.gz' -mtime +14 -delete 2>/dev/null
-            sleep 86400
+            # أقدم من أحدث نسختين يُحذف
+            ls -1t /backups/auto-erp_db-*.sql.gz 2>/dev/null | tail -n +3 | while read f; do rm -f "$$f"; done
+            sleep 3600
           else
             rm -f "$$tmp"
             echo "[$$(date)] backup FAILED — retry in 60s"
