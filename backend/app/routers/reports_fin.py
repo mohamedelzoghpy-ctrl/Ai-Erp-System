@@ -1,8 +1,9 @@
 """Financial reports — fast single-query versions + VAT return + PDF exports."""
+import re
 from typing import List, Optional
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response as FastResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -690,3 +691,401 @@ def balance_sheet_pdf(
         ],
     )]
     return _pdf_response("التقارير المالية", f"حتى {r['as_of']}", tables, "balance-sheet.pdf")
+
+
+# ---------------------------------------------------------------- دفاتر المراجعة (م1 محاسبة)
+
+def _period_movements(db: Session, company_id: int, start: date, end: date) -> dict:
+    """حركة الفترة لكل حساب: (مدين، دائن) — استعلام واحد مجمّع."""
+    rows = (
+        db.query(
+            models.JournalItem.account_id,
+            func.coalesce(func.sum(models.JournalItem.debit), 0).label("d"),
+            func.coalesce(func.sum(models.JournalItem.credit), 0).label("c"),
+        )
+        .join(models.JournalEntry, models.JournalEntry.id == models.JournalItem.entry_id)
+        .filter(
+            models.JournalItem.company_id == company_id,
+            models.JournalEntry.date >= start,
+            models.JournalEntry.date <= end,
+        )
+        .group_by(models.JournalItem.account_id)
+        .all()
+    )
+    return {r.account_id: (Decimal(str(r.d)), Decimal(str(r.c))) for r in rows}
+
+
+def _tb_rows(db: Session, company_id: int, start: date, end: date):
+    """صفوف ميزان المراجعة التفصيلي (افتتاحي/مدين/دائن/ختامي) + التجميع الشجري.
+
+    الأرصدة بالصفوف موقعة بالإشارة المحاسبية (دائن موجب للخصوم/حقوق/إيرادات)،
+    والإجماليات بأعمدة مدين/دائن حقيقية من الأرصدة الخام."""
+    accounts = db.query(models.ChartAccount).filter(models.ChartAccount.company_id == company_id).all()
+    by_id = {a.id: a for a in accounts}
+    opening_raw = _balances_up_to(db, company_id, start - timedelta(days=1))
+    movements = _period_movements(db, company_id, start, end)
+    raw_rows = []
+    rows = []
+    for a in accounts:
+        if a.is_group:
+            continue
+        d, c = movements.get(a.id, (Decimal("0"), Decimal("0")))
+        raw_open = opening_raw.get(a.id, Decimal("0"))
+        raw_close = raw_open + (d - c)
+        raw_rows.append({"account": a, "raw_open": raw_open, "raw_close": raw_close, "d": d, "c": c})
+        opening = _signed(raw_open, a.type)
+        movement = (d - c) if a.type in ("asset", "expense") else (c - d)
+        rows.append({
+            "account_id": a.id, "code": a.code, "name": a.name, "type": a.type,
+            "opening": _q(opening), "debit": _q(d), "credit": _q(c), "closing": _q(opening + movement),
+        })
+    rows.sort(key=lambda r: r["code"])
+    groups: dict = {}
+    for r in rows:
+        parent = by_id[r["account_id"]].parent_id
+        while parent is not None:
+            g = by_id.get(parent)
+            if g is None:
+                break
+            agg = groups.setdefault(g.id, {"code": g.code, "name": g.name, "opening": Decimal("0"), "debit": Decimal("0"), "credit": Decimal("0"), "closing": Decimal("0")})
+            agg["opening"] += r["opening"]
+            agg["debit"] += r["debit"]
+            agg["credit"] += r["credit"]
+            agg["closing"] += r["closing"]
+            parent = g.parent_id
+    group_rows = [
+        {"code": v["code"], "name": v["name"], "opening": _q(v["opening"]), "debit": _q(v["debit"]), "credit": _q(v["credit"]), "closing": _q(v["closing"])}
+        for v in groups.values()
+    ]
+    group_rows.sort(key=lambda r: r["code"])
+    totals = {
+        "opening_debit": _q(sum((r["raw_open"] for r in raw_rows if r["raw_open"] > 0), Decimal("0"))),
+        "opening_credit": _q(sum((-r["raw_open"] for r in raw_rows if r["raw_open"] < 0), Decimal("0"))),
+        "debit": _q(sum((r["d"] for r in raw_rows), Decimal("0"))),
+        "credit": _q(sum((r["c"] for r in raw_rows), Decimal("0"))),
+        "closing_debit": _q(sum((r["raw_close"] for r in raw_rows if r["raw_close"] > 0), Decimal("0"))),
+        "closing_credit": _q(sum((-r["raw_close"] for r in raw_rows if r["raw_close"] < 0), Decimal("0"))),
+    }
+    return rows, group_rows, totals
+
+
+def _tb_detail(date_from: Optional[str], date_to: Optional[str], db: Session, user) -> dict:
+    company_id = user.active_company_id
+    if not company_id:
+        raise HTTPException(status_code=400, detail="No active company selected")
+    start = _parse_date(date_from, date.today().replace(day=1))
+    end = _parse_date(date_to, date.today())
+    rows, groups, totals = _tb_rows(db, company_id, start, end)
+    return {"date_from": str(start), "date_to": str(end), "rows": rows, "groups": groups, "totals": totals}
+
+
+_TB_HEADERS = ["الكود", "الحساب", "افتتاحي", "مدين الفترة", "دائن الفترة", "ختامي"]
+
+
+def _tb_table(rows) -> list:
+    return [[
+        ("text", r["code"]), ("text", r["name"]),
+        ("money", r["opening"]), ("money", r["debit"]), ("money", r["credit"]), ("money", r["closing"]),
+    ] for r in rows]
+
+
+@router.get("/trial-balance/detail")
+def trial_balance_detail(
+    date_from: Optional[str] = Query(None, description="YYYY-MM-DD"),
+    date_to: Optional[str] = Query(None, description="YYYY-MM-DD"),
+    db: Session = Depends(deps.get_db),
+    user=Depends(deps.get_current_user),
+):
+    """ميزان مراجعة تفصيلي: افتتاحي + حركة الفترة (مدين/دائن) + ختامي، مع نسخة شجرية بالمجموعيات."""
+    return _tb_detail(date_from, date_to, db, user)
+
+
+@router.get("/trial-balance/detail/xlsx")
+def trial_balance_detail_xlsx(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    db: Session = Depends(deps.get_db),
+    user=Depends(deps.get_current_user),
+):
+    r = _tb_detail(date_from, date_to, db, user)
+    tables = [
+        ("ميزان المراجعة التفصيلي", _TB_HEADERS, _tb_table(r["rows"])),
+        ("التجميع الشجري", _TB_HEADERS, _tb_table(r["groups"])),
+        ("الإجماليات", ["البند", "مدين", "دائن"], [
+            [("text", "الافتتاحي"), ("money", r["totals"]["opening_debit"]), ("money", r["totals"]["opening_credit"])],
+            [("text", "حركة الفترة"), ("money", r["totals"]["debit"]), ("money", r["totals"]["credit"])],
+            [("text", "الختامي"), ("money", r["totals"]["closing_debit"]), ("money", r["totals"]["closing_credit"])],
+        ]),
+    ]
+    return FastResponse(
+        content=exports.build_tables_xlsx("ميزان المراجعة التفصيلي", f"{r['date_from']} → {r['date_to']}", tables),
+        media_type=exports.XLSX_MIME,
+        headers={"Content-Disposition": 'attachment; filename="trial-balance-detail.xlsx"', "Cache-Control": "no-store"},
+    )
+
+
+@router.get("/trial-balance/detail/pdf")
+def trial_balance_detail_pdf(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    db: Session = Depends(deps.get_db),
+    user=Depends(deps.get_current_user),
+):
+    r = _tb_detail(date_from, date_to, db, user)
+    tables = [
+        ("ميزان المراجعة التفصيلي", _TB_HEADERS, _tb_table(r["rows"])),
+        ("التجميع الشجري", _TB_HEADERS, _tb_table(r["groups"])),
+    ]
+    return _pdf_response("التقارير المالية", f"ميزان المراجعة التفصيلي {r['date_from']} → {r['date_to']}", tables, "trial-balance-detail.pdf")
+
+
+@router.get("/general-ledger/statement")
+def general_ledger_statement(
+    account_id: int,
+    date_from: Optional[str] = Query(None, description="YYYY-MM-DD — الغياب يعني من بداية الدفاتر"),
+    date_to: Optional[str] = Query(None, description="YYYY-MM-DD"),
+    db: Session = Depends(deps.get_db),
+    user=Depends(deps.get_current_user),
+):
+    """كشف أستاذ عام لحساب دفتري: رصيد افتتاحي + الحركة برصيد جاري متسلسل + الختامي."""
+    company_id = user.active_company_id
+    if not company_id:
+        raise HTTPException(status_code=400, detail="No active company selected")
+    acc = db.query(models.ChartAccount).filter(
+        models.ChartAccount.id == account_id, models.ChartAccount.company_id == company_id
+    ).first()
+    if acc is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Account not found")
+    end = _parse_date(date_to, date.today())
+    start = _parse_date(date_from, None) if date_from else None
+    start_eff = start or date(1900, 1, 1)
+    opening = _signed(_balances_up_to(db, company_id, start_eff - timedelta(days=1)).get(acc.id, Decimal("0")), acc.type)
+    debit_natural = acc.type in ("asset", "expense")
+    items = (
+        db.query(models.JournalItem)
+        .join(models.JournalEntry, models.JournalItem.entry_id == models.JournalEntry.id)
+        .filter(
+            models.JournalItem.company_id == company_id,
+            models.JournalItem.account_id == acc.id,
+            models.JournalEntry.date >= start_eff,
+            models.JournalEntry.date <= end,
+        )
+        .order_by(models.JournalEntry.date, models.JournalEntry.id, models.JournalItem.id)
+        .all()
+    )
+    running = opening
+    rows = []
+    total_d = Decimal("0")
+    total_c = Decimal("0")
+    for it in items:
+        d = _q(it.debit)
+        c = _q(it.credit)
+        total_d += d
+        total_c += c
+        running += (d - c) if debit_natural else (c - d)
+        rows.append({
+            "date": it.entry.date.isoformat(),
+            "entry_id": it.entry_id,
+            "description": it.entry.description,
+            "reference": it.entry.reference,
+            "debit": d, "credit": c,
+            "running": _q(running),
+        })
+    return {
+        "account": {"id": acc.id, "code": acc.code, "name": acc.name, "type": acc.type},
+        "date_from": str(start_eff), "date_to": str(end),
+        "opening": _q(opening),
+        "rows": rows,
+        "totals": {"debit": _q(total_d), "credit": _q(total_c), "closing": _q(running)},
+    }
+
+
+@router.get("/general-ledger/statement/xlsx")
+def general_ledger_statement_xlsx(
+    account_id: int,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    db: Session = Depends(deps.get_db),
+    user=Depends(deps.get_current_user),
+):
+    r = general_ledger_statement(account_id, date_from, date_to, db, user)
+    tables = [(
+        f"كشف حساب {r['account']['code']} — {r['account']['name']}",
+        ["التاريخ", "القيد", "البيان", "المرجع", "مدين", "دائن", "الرصيد"],
+        [[
+            ("text", row["date"]), ("text", f"#{row['entry_id']}"), ("text", row["description"]),
+            ("text", row["reference"] or ""), ("money", row["debit"]), ("money", row["credit"]), ("money", row["running"]),
+        ] for row in r["rows"]],
+    ), (
+        "الإجماليات",
+        ["البند", "القيمة"],
+        [
+            [("text", "الافتتاحي"), ("money", r["opening"])],
+            [("text", "إجمالي مدين"), ("money", r["totals"]["debit"])],
+            [("text", "إجمالي دائن"), ("money", r["totals"]["credit"])],
+            [("text", "الختامي"), ("money", r["totals"]["closing"])],
+        ],
+    )]
+    return FastResponse(
+        content=exports.build_tables_xlsx("كشف أستاذ عام", f"{r['date_from']} → {r['date_to']}", tables),
+        media_type=exports.XLSX_MIME,
+        headers={"Content-Disposition": 'attachment; filename="general-ledger-statement.xlsx"', "Cache-Control": "no-store"},
+    )
+
+
+@router.get("/general-ledger/statement/pdf")
+def general_ledger_statement_pdf(
+    account_id: int,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    db: Session = Depends(deps.get_db),
+    user=Depends(deps.get_current_user),
+):
+    r = general_ledger_statement(account_id, date_from, date_to, db, user)
+    tables = [(
+        f"كشف حساب {r['account']['code']} — {r['account']['name']}",
+        ["التاريخ", "القيد", "البيان", "المرجع", "مدين", "دائن", "الرصيد"],
+        [[
+            ("text", row["date"]), ("text", f"#{row['entry_id']}"), ("text", row["description"]),
+            ("text", row["reference"] or ""), ("money", row["debit"]), ("money", row["credit"]), ("money", row["running"]),
+        ] for row in r["rows"]],
+    ), (
+        "الإجماليات",
+        ["البند", "القيمة"],
+        [
+            [("text", "الافتتاحي"), ("money", r["opening"])],
+            [("text", "إجمالي مدين"), ("money", r["totals"]["debit"])],
+            [("text", "إجمالي دائن"), ("money", r["totals"]["credit"])],
+            [("text", "الختامي"), ("money", r["totals"]["closing"])],
+        ],
+    )]
+    return _pdf_response("التقارير المالية", f"كشف أستاذ عام {r['date_from']} → {r['date_to']}", tables, "general-ledger-statement.pdf")
+
+
+@router.get("/vat-return/invoices")
+def vat_return_invoices(
+    date_from: Optional[str] = Query(None, description="YYYY-MM-DD"),
+    date_to: Optional[str] = Query(None, description="YYYY-MM-DD"),
+    db: Session = Depends(deps.get_db),
+    user=Depends(deps.get_current_user),
+):
+    """تفصيل إقرار الضريبة بالفواتير: الناتج (مبيعات 2130) والمدخلات (مشتريات 1145) فاتورة فاتورة."""
+    company_id = user.active_company_id
+    if not company_id:
+        raise HTTPException(status_code=400, detail="No active company selected")
+    start = _parse_date(date_from, date.today().replace(day=1))
+    end = _parse_date(date_to, date.today())
+    summary = get_vat_return(str(start), str(end), db, user)
+
+    def _rows(code: str, side: str) -> list:
+        q = (
+            db.query(models.JournalEntry, models.JournalItem)
+            .join(models.JournalItem, models.JournalItem.entry_id == models.JournalEntry.id)
+            .join(models.ChartAccount, models.ChartAccount.id == models.JournalItem.account_id)
+            .filter(
+                models.JournalItem.company_id == company_id,
+                models.ChartAccount.code == code,
+                models.JournalEntry.date >= start,
+                models.JournalEntry.date <= end,
+            )
+            .all()
+        )
+        agg: dict = {}
+        for e, it in q:
+            amount = Decimal(str(it.credit or 0)) if side == "output" else Decimal(str(it.debit or 0))
+            if amount == 0:
+                continue
+            agg.setdefault(e.id, {"entry": e, "vat": Decimal("0")})["vat"] += amount
+        rows = []
+        for cell in agg.values():
+            e = cell["entry"]
+            vat = _q(cell["vat"])
+            ref = e.reference or ""
+            doc, party, net, total = (ref or f"JE-{e.id}"), None, None, None
+            m = re.match(r"^(SO|PO)-(\d+)$", ref)
+            if m:
+                kind, oid = m.group(1), int(m.group(2))
+                model = models.SalesOrder if kind == "SO" else models.PurchaseOrder
+                order = db.query(model).filter(model.id == oid, model.company_id == company_id).first()
+                if order is not None:
+                    party = order.party_name
+                    total = _q(order.total_amount)
+                    vat = _q(order.tax_amount or 0)  # ضريبة المستند الرسمية أدق من تجميع بنود القيد
+                    net = _q(total - vat)
+            rows.append({
+                "date": e.date.isoformat(), "doc": doc, "party": party,
+                "net": net, "vat": vat, "total": total, "description": e.description,
+            })
+        rows.sort(key=lambda r: (r["date"], r["doc"]))
+        return rows
+
+    return {
+        "date_from": str(start), "date_to": str(end),
+        "summary": {"output_vat": summary["output_vat"], "input_vat": summary["input_vat"], "net_payable": summary["net_payable"]},
+        "output": _rows("2130", "output"),
+        "input": _rows("1145", "input"),
+    }
+
+
+@router.get("/vat-return/invoices/xlsx")
+def vat_return_invoices_xlsx(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    db: Session = Depends(deps.get_db),
+    user=Depends(deps.get_current_user),
+):
+    r = vat_return_invoices(date_from, date_to, db, user)
+    s = r["summary"]
+
+    def _inv_table(rows) -> list:
+        return [[
+            ("text", row["date"]), ("text", row["doc"]), ("text", row["party"] or "—"),
+            ("money", row["net"] if row["net"] is not None else 0),
+            ("money", row["vat"]),
+            ("money", row["total"] if row["total"] is not None else 0),
+        ] for row in rows]
+
+    tables = [
+        ("الملخص", ["البند", "القيمة"], [
+            [("text", "ناتج الضريبة (مبيعات)"), ("money", s["output_vat"])],
+            [("text", "مدخلات الضريبة (مشتريات)"), ("money", s["input_vat"])],
+            [("text", "المستحق للسلطة الضريبية"), ("money", s["net_payable"])],
+        ]),
+        ("الناتج — فواتير المبيعات", ["التاريخ", "المستند", "العميل", "الصافي", "الضريبة", "الإجمالي"], _inv_table(r["output"])),
+        ("المدخلات — فواتير المشتريات", ["التاريخ", "المستند", "المورد", "الصافي", "الضريبة", "الإجمالي"], _inv_table(r["input"])),
+    ]
+    return FastResponse(
+        content=exports.build_tables_xlsx("إقرار ضريبة القيمة المضافة (بالبنود)", f"{r['date_from']} → {r['date_to']}", tables),
+        media_type=exports.XLSX_MIME,
+        headers={"Content-Disposition": 'attachment; filename="vat-return-invoices.xlsx"', "Cache-Control": "no-store"},
+    )
+
+
+@router.get("/vat-return/invoices/pdf")
+def vat_return_invoices_pdf(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    db: Session = Depends(deps.get_db),
+    user=Depends(deps.get_current_user),
+):
+    r = vat_return_invoices(date_from, date_to, db, user)
+    s = r["summary"]
+
+    def _inv_table(rows) -> list:
+        return [[
+            ("text", row["date"]), ("text", row["doc"]), ("text", row["party"] or "—"),
+            ("money", row["net"] if row["net"] is not None else 0),
+            ("money", row["vat"]),
+            ("money", row["total"] if row["total"] is not None else 0),
+        ] for row in rows]
+
+    tables = [
+        ("الملخص", ["البند", "القيمة"], [
+            [("text", "ناتج الضريبة (مبيعات)"), ("money", s["output_vat"])],
+            [("text", "مدخلات الضريبة (مشتريات)"), ("money", s["input_vat"])],
+            [("text", "المستحق للسلطة الضريبية"), ("money", s["net_payable"])],
+        ]),
+        ("الناتج — فواتير المبيعات", ["التاريخ", "المستند", "العميل", "الصافي", "الضريبة", "الإجمالي"], _inv_table(r["output"])),
+        ("المدخلات — فواتير المشتريات", ["التاريخ", "المستند", "المورد", "الصافي", "الضريبة", "الإجمالي"], _inv_table(r["input"])),
+    ]
+    return _pdf_response("التقارير المالية", f"إقرار ضريبة القيمة المضافة (بالبنود) {r['date_from']} → {r['date_to']}", tables, "vat-return-invoices.pdf")

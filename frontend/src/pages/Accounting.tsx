@@ -834,26 +834,82 @@ function JournalsTab() {
 // ============================================================ General Ledger tab
 function LedgerTab() {
   const [accountId, setAccountId] = useState("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
   const coa = useFetch(() => api.get<ChartAccount[]>("/chart-of-accounts"), "coa3");
+  const statement = useFetch(
+    () => (accountId
+      ? api.get<any>(`/reports/financial/general-ledger/statement?account_id=${accountId}${from ? `&date_from=${from}` : ""}${to ? `&date_to=${to}` : ""}`)
+      : Promise.resolve(null)),
+    `gl-st-${accountId}-${from}-${to}`,
+  );
   const url = accountId ? `/general-ledger/account/${accountId}` : "/general-ledger";
-  const gl = useFetch(() => api.get<any[]>(url), `gl-${accountId}`);
+  const gl = useFetch(() => api.get<any[]>(url), `gl-${accountId}-${from}-${to}`);
   const list = gl.data ?? [];
   const accounts = coa.data ?? [];
+  const st = statement.data;
+  const qs = `account_id=${accountId}${from ? `&date_from=${from}` : ""}${to ? `&date_to=${to}` : ""}`;
   return (
     <>
-      <div className="page-actions" style={{ marginBottom: 12 }}>
-        <Field label="الحساب">
+      <div className="page-actions" style={{ marginBottom: 12, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "end" }}>
+        <Field label="الحساب" hint="اختر حسابًا لكشف أستاذ برصيد افتتاحي وحركة برصيد جاري متسلسل.">
           <select value={accountId} onChange={(e) => setAccountId(e.target.value)}>
             <option value="">— جميع الحسابات —</option>
             {accounts.map((a) => <option key={a.id} value={a.id}>{a.code} — {a.name}</option>)}
           </select>
         </Field>
+        <Field label="من تاريخ">
+          <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+        </Field>
+        <Field label="إلى تاريخ">
+          <input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+        </Field>
+        {accountId && (
+          <div style={{ display: "flex", gap: 6, paddingBottom: 4 }}>
+            <button className="btn btn-sm" onClick={() => void api.download(`/reports/financial/general-ledger/statement/xlsx?${qs}`, "general-ledger-statement.xlsx")}>⬇️ Excel</button>
+            <button className="btn btn-sm" title="طباعة PDF" onClick={() => void api.printPdf(`/reports/financial/general-ledger/statement/pdf?${qs}`)}>🖨️ PDF</button>
+          </div>
+        )}
       </div>
-      <Alert>{gl.error}</Alert>
-      {gl.loading && !list.length ? <Loading /> : list.length ? (
+      <Alert>{gl.error || statement.error}</Alert>
+      {accountId && st ? (
+        <>
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
+            {[
+              ["الافتتاحي", st.opening],
+              ["إجمالي مدين", st.totals.debit],
+              ["إجمالي دائن", st.totals.credit],
+              ["الختامي", st.totals.closing],
+            ].map(([label, value]: any) => (
+              <div key={label} style={{ flex: "1 1 150px", border: "1px solid var(--border)", borderRadius: 10, padding: "10px 14px" }}>
+                <div style={{ fontSize: 12, color: "var(--muted, #64748b)" }}>{label}</div>
+                <div className="num" style={{ fontWeight: 800, fontSize: 17 }}>{money(value)}</div>
+              </div>
+            ))}
+          </div>
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>التاريخ</th><th>القيد</th><th>البيان</th><th>المرجع</th><th className="num">مدين</th><th className="num">دائن</th><th className="num">الرصيد</th></tr></thead>
+              <tbody>
+                {st.rows.map((row: any, i: number) => (
+                  <tr key={i}>
+                    <td>{row.date}</td>
+                    <td dir="ltr">#{row.entry_id}</td>
+                    <td>{row.description}</td>
+                    <td dir="ltr">{row.reference ?? "—"}</td>
+                    <td className="num">{money(row.debit)}</td>
+                    <td className="num">{money(row.credit)}</td>
+                    <td className="num" style={{ fontWeight: 700 }}>{money(row.running)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      ) : gl.loading && !list.length ? <Loading /> : list.length ? (
         <div className="table-wrap">
           <table>
-            <thead><tr><th>التاريخ</th><th>الوصف</th><th>الحساب</th><th>مدين</th><th>دائن</th><th>مركز</th></tr></thead>
+            <thead><tr><th>التاريخ</th><th>الوصف</th><th>الحساب</th><th className="num">مدين</th><th className="num">دائن</th><th>مركز</th></tr></thead>
             <tbody>
               {list.map((e: any, i: number) => (
                 <tr key={i}>
@@ -916,9 +972,13 @@ function ReportsTab() {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [preview, setPreview] = useState<{ title: string; html: string } | null>(null);
+  const [tbDetail, setTbDetail] = useState(false);
+  const [vatInvoices, setVatInvoices] = useState(false);
   const qs = (p: string) => (from || to) ? `${p}${p.includes("?") ? "&" : "?"}${from ? `date_from=${from}` : ""}${from && to ? "&" : ""}${to ? `date_to=${to}` : ""}` : p;
 
   const tb = useFetch(() => api.get<any[]>(`/reports/financial/trial-balance${to ? `?as_of=${to}` : ""}`), `tb5-${to}`);
+  const tbd = useFetch(() => (tbDetail ? api.get<any>(qs("/reports/financial/trial-balance/detail")) : Promise.resolve(null)), `tbd-${from}-${to}`);
+  const vatInv = useFetch(() => (vatInvoices ? api.get<any>(qs("/reports/financial/vat-return/invoices")) : Promise.resolve(null)), `vat-inv-${from}-${to}`);
   const pnlDetail = useFetch(() => api.get<any[]>(qs("/reports/financial/profit-loss-detail")), `pd-${from}-${to}`);
   const bs = useFetch(() => api.get<any>(`/reports/financial/balance-sheet${to ? `?as_of=${to}` : ""}`), `bs4-${to}`);
   const vat = useFetch(() => api.get<any>(qs("/reports/financial/vat-return")), `vat-${from}-${to}`);
@@ -956,6 +1016,7 @@ function ReportsTab() {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
           <h3 style={{ margin: 0 }}>🧾 إقرار ضريبة القيمة المضافة{from || to ? ` — ${from || "…"} إلى ${to || "…"}` : ""}</h3>
           <div style={{ display: "flex", gap: 6 }}>
+            <button className={`btn btn-sm ${vatInvoices ? "btn-primary" : ""}`} onClick={() => setVatInvoices((v) => !v)} title="الناتج والمدخلات فاتورة فاتورة">📄 تفصيل الفواتير</button>
             <button className="btn btn-sm btn-primary" onClick={() => void api.download(qs("/reports/financial/vat-return/xlsx"), `vat-return-${from || "start"}_${to || "today"}.xlsx`)}>⬇️ Excel</button>
             <button className="btn btn-sm" onClick={() => { vat.reload(); }}>تحديث</button>
           </div>
@@ -975,6 +1036,43 @@ function ReportsTab() {
             ))}
           </div>
         ) : <Empty>لا توجد بيانات ضريبية للفترة</Empty>}
+        {vatInvoices && (
+          <div style={{ marginTop: 14 }}>
+            <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+              <button className="btn btn-sm btn-primary" onClick={() => void api.download(qs("/reports/financial/vat-return/invoices/xlsx"), `vat-return-invoices_${from || "start"}_${to || "today"}.xlsx`)}>⬇️ Excel بالبنود</button>
+              <button className="btn btn-sm" title="طباعة PDF" onClick={() => void api.printPdf(qs("/reports/financial/vat-return/invoices/pdf"))}>🖨️ PDF</button>
+            </div>
+            <Alert>{vatInv.error}</Alert>
+            {vatInv.loading ? <Loading /> : vatInv.data ? (
+              <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+                {([["الناتج — فواتير المبيعات", vatInv.data.output], ["المدخلات — فواتير المشتريات", vatInv.data.input]] as [string, any[]][]).map(([title, rows]) => (
+                  <div key={title} style={{ flex: "1 1 320px" }}>
+                    <h4 style={{ margin: "0 0 6px", fontSize: 13 }}>{title} ({rows.length})</h4>
+                    {rows.length > 0 ? (
+                      <div className="table-wrap" style={{ maxHeight: 320, overflow: "auto" }}>
+                        <table style={{ width: "100%", fontSize: 13 }}>
+                          <thead><tr><th>التاريخ</th><th>المستند</th><th>الطرف</th><th className="num">الصافي</th><th className="num">الضريبة</th><th className="num">الإجمالي</th></tr></thead>
+                          <tbody>
+                            {rows.map((row: any, i: number) => (
+                              <tr key={i}>
+                                <td>{row.date}</td>
+                                <td dir="ltr">{row.doc}</td>
+                                <td>{row.party ?? "—"}</td>
+                                <td className="num">{row.net != null ? money(row.net) : "—"}</td>
+                                <td className="num" style={{ fontWeight: 700 }}>{money(row.vat)}</td>
+                                <td className="num">{row.total != null ? money(row.total) : "—"}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : <div className="muted" style={{ fontSize: 12 }}>— لا فواتير بالفترة</div>}
+                  </div>
+                ))}
+              </div>
+            ) : <Loading />}
+          </div>
+        )}
       </div>
 
       <div className="card card-pad" style={{ marginBottom: 20 }}>
@@ -1031,17 +1129,85 @@ function ReportsTab() {
 
       <div className="card card-pad" style={{ marginBottom: 20 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-        <h3 style={{ margin: 0 }}>ميزان المراجعة (Trial Balance){to ? ` — حتى ${to}` : ""}</h3>
+        <h3 style={{ margin: 0 }}>ميزان المراجعة (Trial Balance){tbDetail ? ` — ${tbd.data?.date_from ?? (from || "…")} إلى ${tbd.data?.date_to ?? (to || "…")}` : to ? ` — حتى ${to}` : ""}</h3>
         <div style={{ display: "flex", gap: 6 }}>
-          <button className="btn btn-sm" title="طباعة PDF" onClick={() => void api.printPdf(`/reports/financial/trial-balance/pdf${to ? `?as_of=${to}` : ""}`)}>🖨️ PDF</button>
-          <button className="btn btn-sm" onClick={() => {
-            const rows = trial.map((r: any) => `<tr><td>${r.code}</td><td>${r.name}</td><td>${r.type}</td><td class="num">${money(r.balance)}</td></tr>`).join("");
-            setPreview({ title: "ميزان المراجعة", html: `<table><thead><tr><th>الكود</th><th>الاسم</th><th>النوع</th><th class="num">الرصيد</th></tr></thead><tbody>${rows}</tbody><tfoot><tr><td colspan="3"><strong>المجموع</strong></td><td class="num"><strong>${money(totalBalance)}</strong></td></tr></tfoot></table>` });
-          }}>معاينة</button>
+          <button className={`btn btn-sm ${tbDetail ? "btn-primary" : ""}`} onClick={() => setTbDetail((v) => !v)} title="افتتاحي + مدين/دائن الفترة + ختامي مع تجميع شجري">
+            📑 تفصيلي
+          </button>
+          {tbDetail && (
+            <>
+              <button className="btn btn-sm btn-primary" onClick={() => void api.download(qs("/reports/financial/trial-balance/detail/xlsx"), `trial-balance-detail_${from || "start"}_${to || "today"}.xlsx`)}>⬇️ Excel</button>
+              <button className="btn btn-sm" title="طباعة PDF" onClick={() => void api.printPdf(qs("/reports/financial/trial-balance/detail/pdf"))}>🖨️ PDF</button>
+            </>
+          )}
+          {!tbDetail && (
+            <>
+              <button className="btn btn-sm" title="طباعة PDF" onClick={() => void api.printPdf(`/reports/financial/trial-balance/pdf${to ? `?as_of=${to}` : ""}`)}>🖨️ PDF</button>
+              <button className="btn btn-sm" onClick={() => {
+                const rows = trial.map((r: any) => `<tr><td>${r.code}</td><td>${r.name}</td><td>${r.type}</td><td class="num">${money(r.balance)}</td></tr>`).join("");
+                setPreview({ title: "ميزان المراجعة", html: `<table><thead><tr><th>الكود</th><th>الاسم</th><th>النوع</th><th class="num">الرصيد</th></tr></thead><tbody>${rows}</tbody><tfoot><tr><td colspan="3"><strong>المجموع</strong></td><td class="num"><strong>${money(totalBalance)}</strong></td></tr></tfoot></table>` });
+              }}>معاينة</button>
+            </>
+          )}
         </div>
       </div>
-      <Alert>{tb.error}</Alert>
-      {tb.loading ? <Loading /> : trial.length ? (
+      <Alert>{tb.error || tbd.error}</Alert>
+      {tbDetail ? (
+        tbd.loading ? <Loading /> : tbd.data ? (
+          <>
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
+              {[
+                ["افتتاحي (مدين/دائن)", `${money(tbd.data.totals.opening_debit)} / ${money(tbd.data.totals.opening_credit)}`],
+                ["حركة الفترة (مدين/دائن)", `${money(tbd.data.totals.debit)} / ${money(tbd.data.totals.credit)}`],
+                ["ختامي (مدين/دائن)", `${money(tbd.data.totals.closing_debit)} / ${money(tbd.data.totals.closing_credit)}`],
+              ].map(([label, value]: any) => (
+                <div key={label} style={{ flex: "1 1 200px", border: "1px solid var(--border)", borderRadius: 10, padding: "10px 14px" }}>
+                  <div style={{ fontSize: 12, color: "var(--muted, #64748b)" }}>{label}</div>
+                  <div className="num" style={{ fontWeight: 800, fontSize: 15 }}>{value}</div>
+                </div>
+              ))}
+            </div>
+            {tbd.data.groups.length > 0 && (
+              <div className="table-wrap" style={{ marginBottom: 12 }}>
+                <table>
+                  <thead><tr><th colSpan={2} style={{ textAlign: "start" }}>🌲 التجميع الشجري (المجموعيات)</th><th className="num">افتتاحي</th><th className="num">مدين</th><th className="num">دائن</th><th className="num">ختامي</th></tr></thead>
+                  <tbody>
+                    {tbd.data.groups.map((g: any, i: number) => (
+                      <tr key={i} style={{ background: "#f8fafc" }}>
+                        <td dir="ltr">{g.code}</td><td style={{ fontWeight: 700 }}>{g.name}</td>
+                        <td className="num">{money(g.opening)}</td><td className="num">{money(g.debit)}</td>
+                        <td className="num">{money(g.credit)}</td><td className="num" style={{ fontWeight: 700 }}>{money(g.closing)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <div className="table-wrap">
+              <table>
+                <thead><tr><th>الكود</th><th>الحساب</th><th className="num">افتتاحي</th><th className="num">مدين الفترة</th><th className="num">دائن الفترة</th><th className="num">ختامي</th></tr></thead>
+                <tbody>
+                  {tbd.data.rows.map((r: any, i: number) => (
+                    <tr key={i}>
+                      <td dir="ltr">{r.code}</td><td>{r.name}</td>
+                      <td className="num">{money(r.opening)}</td><td className="num">{money(r.debit)}</td>
+                      <td className="num">{money(r.credit)}</td><td className="num" style={{ fontWeight: 700 }}>{money(r.closing)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr><td colSpan={2}><strong>الإجماليات (مدين/دائن حقيقيان)</strong></td>
+                    <td className="num" style={{ fontSize: 11 }}>{money(tbd.data.totals.opening_debit)} / {money(tbd.data.totals.opening_credit)}</td>
+                    <td className="num"><strong>{money(tbd.data.totals.debit)}</strong></td>
+                    <td className="num"><strong>{money(tbd.data.totals.credit)}</strong></td>
+                    <td className="num" style={{ fontSize: 11 }}>{money(tbd.data.totals.closing_debit)} / {money(tbd.data.totals.closing_credit)}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </>
+        ) : <Empty>لا توجد حسابات</Empty>
+      ) : tb.loading ? <Loading /> : trial.length ? (
         <div className="table-wrap" style={{ marginBottom: 20 }}>
           <table>
             <thead><tr><th>الكود</th><th>الاسم</th><th>النوع</th><th className="num">الرصيد</th></tr></thead>
