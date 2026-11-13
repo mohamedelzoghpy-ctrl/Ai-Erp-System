@@ -138,6 +138,10 @@ def create_purchase_order(payload: schemas.PurchaseOrderCreate, db: Session = De
     total = Decimal("0")
     products = {}
     for item in payload.items:
+        if getattr(item, "uom", "piece") == "pack":
+            prod = db.get(models.Product, item.product_id)
+            if prod is not None:
+                item.quantity = float(Decimal(str(item.quantity)) * Decimal(str(prod.pack_qty or 1)))
         product = _require(db, models.Product, item.product_id, "Product")
         products[product.id] = product
         order.items.append(
@@ -411,7 +415,7 @@ def cancel_purchase_order(order_id: int, db: Session = Depends(get_db), user: mo
 
 
 # ======================= Sales =======================
-def apply_sale_stock(db: Session, order) -> None:
+def apply_sale_stock(db: Session, order, allow_expired: bool = False) -> None:
     """Locks the products, verifies stock for the whole order and deducts it (all-or-nothing).
     Does not commit. On a shortage the session is rolled back and a 409 is raised."""
     # Aggregate per product so duplicate lines are validated together.
@@ -436,8 +440,8 @@ def apply_sale_stock(db: Session, order) -> None:
         stock.assert_no_pending_qc_lots(db, company_id, products[pid], order.warehouse_id, qty)
 
     for pid, qty in needed.items():
-        stock.move_stock(db, products[pid], order.warehouse_id, -qty, "sale", f"SO-{order.id}")
-        stock.consume_lots(db, products[pid], order.warehouse_id, qty)  # FEFO: أقرب انتهاءً أولًا
+        stock.move_stock(db, products[pid], order.warehouse_id, -qty, "sale", f"SO-{order.id}", user_id=order.created_by)
+        stock.consume_lots(db, products[pid], order.warehouse_id, qty, block_expired=not allow_expired)  # FEFO + حجب المنتهية
 
 
 @sales.post("", response_model=schemas.SalesOrderOut, status_code=status.HTTP_201_CREATED)
@@ -457,6 +461,12 @@ def create_sales_order(payload: schemas.SalesOrderCreate, request: Request, db: 
         rep_id=payload.rep_id if payload.rep_id and db.get(models.SalesRep, payload.rep_id) else None,
         lead_id=getattr(payload, "lead_id", None),
     )
+    # تحويل وحدة الحزمة: الطلب بالكرتون يُحوَّل للقطع (الكمية المخزنة دائمًا بالقطعة)
+    for it in payload.items:
+        if getattr(it, "uom", "piece") == "pack":
+            prod = db.get(models.Product, it.product_id)
+            if prod is not None:
+                it.quantity = float(Decimal(str(it.quantity)) * Decimal(str(prod.pack_qty or 1)))
     if payload.safe_id:
         safe = db.get(models.Safe, payload.safe_id)
         company_id = db.info["company_id"]
@@ -552,14 +562,19 @@ def get_sales_order(order_id: int, db: Session = Depends(get_db)):
 
 
 @sales.post("/{order_id}/confirm", response_model=schemas.SalesOrderOut)
-def confirm_sales_order(order_id: int, request: Request, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+def confirm_sales_order(order_id: int, request: Request, db: Session = Depends(get_db), user: models.User = Depends(get_current_user), payload: Optional[schemas.ConfirmOptions] = None):
     """Confirm the sale: removes stock (all-or-nothing) and logs movements."""
     order = _locked_order_or_404(db, models.SalesOrder, order_id, "Sales order")
     _require_draft(order, "confirm")
+    allow_expired = bool(payload and payload.allow_expired)
+    if allow_expired:
+        from ..deps import user_role
+        if user_role(user) not in ("admin", "manager") and not user.is_platform_admin:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "البيع من لوطات منتهية يتطلب مديرًا")
     # الحد الائتماني: الدين الجديد كامل الفاتورة (المديونية تُسجّل هنا)
     from ..accounts import check_credit_limit
     check_credit_limit(db, order.customer_id, Decimal(str(order.total_amount)), perms=getattr(request.state, "permissions", None))
-    apply_sale_stock(db, order)
+    apply_sale_stock(db, order, allow_expired=allow_expired)
     order.status = "confirmed"  # type: ignore
 
     # Accounting: Debit Customer (gross), Credit Sales Revenue (net), Credit VAT output (tax)
@@ -690,7 +705,7 @@ def create_delivery(
             db.rollback()
             raise HTTPException(status.HTTP_409_CONFLICT, "Insufficient stock: " + stock.shortage_message(db, product, order.warehouse_id, qty))
         stock.move_stock(db, product, order.warehouse_id, -qty, "delivery", f"DLV-SO-{order.id}")
-        stock.consume_lots(db, product, order.warehouse_id, qty)
+        stock.consume_lots(db, product, order.warehouse_id, qty, block_expired=True)
     delivered_note_lines = []
     for it in order.items:
         if it.product_id in wanted:

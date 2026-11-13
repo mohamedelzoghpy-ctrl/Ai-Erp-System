@@ -56,6 +56,8 @@ def test_apply_sale_stock_aggregates_duplicate_lines_and_locks_in_order(monkeypa
         items=[make_item(7, 2), make_item(2, 1), make_item(7, 3)],
     )
 
+    if not hasattr(order, "created_by") or order.created_by is None:
+        order.created_by = 1
     orders.apply_sale_stock(db, order)
 
     assert locked_ids == [2, 7]
@@ -83,6 +85,8 @@ def test_apply_sale_stock_rolls_back_without_deducting_any_stock_on_shortage(mon
         items=[make_item(7, 5), make_item(2, 1)],
     )
 
+    if not hasattr(order, "created_by") or order.created_by is None:
+        order.created_by = 1
     with pytest.raises(orders.HTTPException) as exc_info:
         orders.apply_sale_stock(db, order)
 

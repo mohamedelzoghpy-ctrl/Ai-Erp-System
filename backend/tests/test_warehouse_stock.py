@@ -63,6 +63,16 @@ def total(c, pid):
     return ok(c.get(f"/products/{pid}"))["quantity"]
 
 
+
+
+def _reason_id(c):
+    r = c.get("/products/adjustment-reasons")
+    rows = r.json() if r.status_code == 200 else []
+    if rows:
+        return rows[0]["id"]
+    return c.post("/products/adjustment-reasons", json={"name": "تسوية اختبار"}).json()["id"]
+
+
 def test_data_io_warehouse_stock_export_and_undo_routes(api):
     from io import BytesIO
     import openpyxl
@@ -236,9 +246,9 @@ def test_purchase_cash_invoice_is_received_and_paid_immediately(api):
     line = ok(api.get(f"/purchase-orders/{po['id']}"))["items"][0]["id"]
     ok(api.post("/purchase-returns", json={"order_id": po["id"], "items": [{"order_item_id": line, "quantity": 3}]}), 201)
     assert by_wh(api, p["id"]) == {w2["id"]: 5}
-    ok(api.post(f"/products/{p['id']}/adjust-stock", json={"change": 2, "warehouse_id": w1["id"]}))
-    ok(api.post(f"/products/{p['id']}/adjust-stock", json={"change": -3}), 409)  # default is the product's warehouse (Main): only 2 there
-    ok(api.post(f"/products/{p['id']}/adjust-stock", json={"change": -2, "warehouse_id": w2["id"]}))
+    ok(api.post(f"/products/{p['id']}/adjust-stock", json={"reason_id": _reason_id(api), "change": 2, "warehouse_id": w1["id"]}))
+    ok(api.post(f"/products/{p['id']}/adjust-stock", json={"reason_id": _reason_id(api), "change": -3}), 409)  # default is the product's warehouse (Main): only 2 there
+    ok(api.post(f"/products/{p['id']}/adjust-stock", json={"reason_id": _reason_id(api), "change": -2, "warehouse_id": w2["id"]}))
     assert by_wh(api, p["id"]) == {w1["id"]: 2, w2["id"]: 3} and total(api, p["id"]) == 5
 
 

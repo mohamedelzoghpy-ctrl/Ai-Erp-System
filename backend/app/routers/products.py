@@ -5,7 +5,7 @@ import re as _re
 
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -407,6 +407,13 @@ def remove_product_image(product_id: int, db: Session = Depends(get_db), user: m
     return product
 
 
+@router.get("/adjustment-reasons", response_model=List[schemas.AdjustmentReasonOut])
+def list_adjustment_reasons(db: Session = Depends(get_db), _: models.User = Depends(get_current_user)):
+    return db.query(models.AdjustmentReason).filter(
+        models.AdjustmentReason.company_id == db.info["company_id"], models.AdjustmentReason.is_active.is_(True)
+    ).order_by(models.AdjustmentReason.name).all()
+
+
 @router.get("/{product_id}", response_model=schemas.ProductOut)
 def get_product(product_id: int, db: Session = Depends(get_db)):
     return _product_or_404(db, product_id)
@@ -516,7 +523,9 @@ def delete_product(
 
 @router.post("/{product_id}/adjust-stock", response_model=schemas.ProductOut)
 def adjust_stock(product_id: int, payload: schemas.StockAdjustment, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
-    """Manual correction (stock-take, damage, etc.). Never lets quantity go negative."""
+    """تسوية مخزنية بسبب من الكتالوج — القيمة فوق الحد تتطلب مديرًا (اعتماد)."""
+    import os as _os
+    from ..deps import user_role
     if payload.change == 0:
         raise HTTPException(422, "change must not be zero")
     product = (
@@ -527,11 +536,158 @@ def adjust_stock(product_id: int, payload: schemas.StockAdjustment, db: Session 
     warehouse_id = payload.warehouse_id if payload.warehouse_id is not None else stock.home_warehouse_id(db, product)
     if warehouse_id is None or db.get(models.Warehouse, warehouse_id) is None:
         raise HTTPException(422, "Choose an existing warehouse for this adjustment")
-    stock.move_stock(db, product, warehouse_id, payload.change, "adjustment", payload.reference)
-    audit(db, user, "adjust_stock", "product", product, f"{stock.q3(payload.change):+} → {product.quantity}" + (f" ({payload.reference})" if payload.reference else ""))  # q3 يوحّد النوع (d يفشل على float)
+    reason = db.get(models.AdjustmentReason, payload.reason_id)
+    if reason is None or reason.company_id != db.info["company_id"] or not reason.is_active:
+        raise HTTPException(422, "اختر سبب تسوية صالحًا من الكتالوج")
+    # الاعتماد: القيمة التقديرية للتسوية فوق الحد تتطلب مديرًا
+    value = abs(float(payload.change)) * float(product.cost_price or 0)
+    threshold = float(_os.getenv("ADJUST_APPROVAL_VALUE", "1000"))
+    if value > threshold and user_role(user) not in ("admin", "manager") and not user.is_platform_admin:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            f"تسوية بقيمة ≈{value:.0f} ج تتجاوز حد الاعتماد ({threshold:.0f} ج) — تتطلب موافقة مدير",
+        )
+    note = (payload.note or "").strip() or reason.name
+    stock.move_stock(db, product, warehouse_id, payload.change, "adjustment", payload.reference, user_id=user.id, reason_note=f"{reason.name}: {note}"[:200])
+    audit(db, user, "adjust_stock", "product", product, f"{stock.q3(payload.change):+} → {product.quantity} ({reason.name}" + (f" — {payload.reference})" if payload.reference else ")"))  # q3 يوحّد النوع
     db.commit()
     db.refresh(product)
     return product
+
+
+@router.get("/by-barcode/{barcode}")
+def resolve_barcode(barcode: str, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    """تحليل باركود: منتج + الكمية بالقطع — يدعم باركود المقياس (prefix 20-29 = وزن بالجرام)
+    وباركود الحزمة (pack_qty). يعيد 404 إن لم يُعرف."""
+    code = barcode.strip()
+    row = (
+        db.query(models.ProductBarcode)
+        .filter(models.ProductBarcode.company_id == db.info["company_id"], models.ProductBarcode.barcode == code)
+        .first()
+    )
+    pack_qty = Decimal("1")
+    product = None
+    scale_qty = None
+    if row is not None:
+        product = db.get(models.Product, row.product_id)
+        pack_qty = row.pack_qty
+        if product is not None and not product.is_active:
+            product = None
+    if product is None:
+        product = db.query(models.Product).filter(
+            models.Product.company_id == db.info["company_id"],
+            models.Product.sku == code,
+            models.Product.is_active.is_(True),
+        ).first()
+    if product is None and len(code) == 13 and code[:2] in ("20", "21", "22", "23", "24", "25", "26", "27", "28", "29"):
+        # باركود مقياس: خانات 3-7 كود الصنف، 8-12 الوزن بالجرام
+        prefix = code[2:7].lstrip("0")
+        product = db.query(models.Product).filter(
+            models.Product.company_id == db.info["company_id"],
+            models.Product.sku.like(prefix + "%"),
+            models.Product.is_active.is_(True),
+        ).first()
+        if product is not None:
+            grams = int(code[7:12])
+            scale_qty = grams / 1000.0
+            pack_qty = Decimal(str(scale_qty))
+    if product is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "باركود غير معروف")
+    return {
+        "product_id": product.id, "sku": product.sku, "name": product.name,
+        "sale_price": str(product.sale_price), "pack_qty": str(pack_qty),
+        "scale_qty": scale_qty,
+    }
+
+
+@router.get("/labels/{product_id}", response_class=Response)
+def product_labels(product_id: int, copies: int = Query(default=24, ge=1, le=200), db: Session = Depends(get_db), _: models.User = Depends(get_current_user)):
+    """شيت ملصقات قابل للطباعة: الاسم + السعر + باركود Code128 (SVG مدمج)."""
+    product = db.get(models.Product, product_id)
+    if product is None or product.company_id != db.info["company_id"]:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "الصنف غير موجود")
+    # Code128 لا يدعم غير ASCII — الأصناف بأسماء/أكواد عربية تُستبدل بكود داخلي فريد
+    code = product.sku if all(32 <= ord(ch) <= 126 for ch in product.sku) else f"MZ-{product.id}"
+    try:
+        import barcode as _barcode_lib
+        from barcode.writer import SVGWriter as _SVGWriter
+        from io import BytesIO as _BIO
+        buf = _BIO()
+        code128 = _barcode_lib.get("code128", code, writer=_SVGWriter())
+        code128.write(buf)
+        svg = buf.getvalue().decode()
+        svg_inner = svg[svg.index(">") + 1:]
+    except Exception as exc:
+        raise HTTPException(422, "تعذر توليد الباركود: " + str(exc))
+    label = ('<div class="lbl"><div class="nm">' + product.name + '</div><div class="pr">'
+             + str(product.sale_price) + ' EGP</div>' + svg_inner + '</div>')
+    cells = label * copies
+    css = (
+        "body { font-family: sans-serif; }"
+        ".sheet { display: flex; flex-wrap: wrap; }"
+        ".lbl { width: 38mm; height: 25mm; border: 1px dashed #bbb; box-sizing: border-box;"
+        " padding: 2mm; text-align: center; overflow: hidden; page-break-inside: avoid; }"
+        ".lbl .nm { font-size: 11px; font-weight: 700; white-space: nowrap; overflow: hidden; }"
+        ".lbl .pr { font-size: 12px; font-weight: 800; }"
+        ".lbl svg { width: 32mm; height: 10mm; }"
+        "@media print { .lbl { border: none; } }"
+    )
+    html = ('<!doctype html><html dir="rtl"><head><meta charset="utf-8"><style>' + css
+            + '</style></head><body onload="window.print()"><div class="sheet">' + cells + '</div></body></html>')
+    return Response(content=html, media_type="text/html; charset=utf-8")
+
+
+@router.get("/{product_id}/barcodes", response_model=List[schemas.ProductBarcodeOut])
+def list_product_barcodes(product_id: int, db: Session = Depends(get_db), _: models.User = Depends(get_current_user)):
+    product = db.get(models.Product, product_id)
+    if product is None or product.company_id != db.info["company_id"]:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "الصنف غير موجود")
+    return db.query(models.ProductBarcode).filter(models.ProductBarcode.product_id == product_id).order_by(models.ProductBarcode.id).all()
+
+
+@router.post("/{product_id}/barcodes", response_model=schemas.ProductBarcodeOut, status_code=status.HTTP_201_CREATED)
+def add_product_barcode(product_id: int, payload: schemas.ProductBarcodeIn, db: Session = Depends(get_db), user: models.User = Depends(require_manager)):
+    product = db.get(models.Product, product_id)
+    if product is None or product.company_id != db.info["company_id"]:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "الصنف غير موجود")
+    code = payload.barcode.strip()
+    if db.query(models.ProductBarcode).filter(
+        models.ProductBarcode.company_id == db.info["company_id"], models.ProductBarcode.barcode == code
+    ).first():
+        raise HTTPException(409, "الباركود مستخدم لصنف آخر")
+    row = models.ProductBarcode(company_id=db.info["company_id"], product_id=product_id, barcode=code, pack_qty=payload.pack_qty)
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    audit(db, user, "create", "product_barcode", row, product.sku + " <- " + code + " x" + str(row.pack_qty))
+    return row
+
+
+@router.delete("/{product_id}/barcodes/{barcode_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_product_barcode(product_id: int, barcode_id: int, db: Session = Depends(get_db), user: models.User = Depends(require_manager)):
+    row = db.get(models.ProductBarcode, barcode_id)
+    if row is None or row.company_id != db.info["company_id"] or row.product_id != product_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "الباركود غير موجود")
+    db.delete(row)
+    db.commit()
+    audit(db, user, "delete", "product_barcode", barcode_id, "barcode " + row.barcode)
+
+
+@router.post("/adjustment-reasons", response_model=schemas.AdjustmentReasonOut, status_code=status.HTTP_201_CREATED)
+def create_adjustment_reason(payload: schemas.AdjustmentReasonIn, db: Session = Depends(get_db), user: models.User = Depends(require_manager)):
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(422, "اسم السبب مطلوب")
+    if db.query(models.AdjustmentReason).filter(
+        models.AdjustmentReason.company_id == db.info["company_id"], models.AdjustmentReason.name == name
+    ).first():
+        raise HTTPException(409, "يوجد سبب بنفس الاسم")
+    row = models.AdjustmentReason(company_id=db.info["company_id"], name=name)
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    audit(db, user, "create", "adjustment_reason", row, row.name)
+    return row
 
 
 @router.post("/{product_id}/min-level", response_model=List[schemas.ProductStockOut])

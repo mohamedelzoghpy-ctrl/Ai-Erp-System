@@ -45,14 +45,25 @@ def ok(r, code=200):
 
 
 # ================================================== 1) حد الطلب الأدنى لكل مخزن
+
+
+def _reason_id(c):
+    """سبب تسوية جاهز للاختبارات — ينشئه إن غاب."""
+    r = c.get("/products/adjustment-reasons")
+    rows = r.json() if r.status_code == 200 else []
+    if rows:
+        return rows[0]["id"]
+    return c.post("/products/adjustment-reasons", json={"name": "تسوية اختبار"}).json()["id"]
+
+
 def test_per_warehouse_min_level_overrides_low_stock(api):
     c = api
     w1, w2 = make_warehouses(c)
     p = ok(c.post("/products", json={
         "sku": "MN1", "name": "منتج الحدود", "sale_price": "100", "cost_price": "50", "quantity": 0,
     }), 201)
-    ok(c.post(f"/products/{p['id']}/adjust-stock", json={"change": 8, "warehouse_id": w1["id"]}))
-    ok(c.post(f"/products/{p['id']}/adjust-stock", json={"change": 8, "warehouse_id": w2["id"]}))
+    ok(c.post(f"/products/{p['id']}/adjust-stock", json={"reason_id": _reason_id(c), "change": 8, "warehouse_id": w1["id"]}))
+    ok(c.post(f"/products/{p['id']}/adjust-stock", json={"reason_id": _reason_id(c), "change": 8, "warehouse_id": w2["id"]}))
     # الحد العام 5 → المخزنان آمنان
     low_global = ok(c.get(f"/reports/low-stock?warehouse_id={w1['id']}"))
     assert [r["id"] for r in low_global if r["id"] == p["id"]] == []
@@ -79,7 +90,7 @@ def test_purchase_suggestions_and_draft_po(api):
         "sku": "SG1", "name": "صنف مقترح", "sale_price": "100", "cost_price": "40",
         "quantity": 0, "reorder_level": 25, "supplier_id": sup["id"],
     }), 201)
-    ok(c.post(f"/products/{p['id']}/adjust-stock", json={"change": 5, "warehouse_id": w1["id"]}))
+    ok(c.post(f"/products/{p['id']}/adjust-stock", json={"reason_id": _reason_id(c), "change": 5, "warehouse_id": w1["id"]}))
     # الاقتراح العام: 25 − 5 = 20
     sug = ok(c.get("/reports/purchase-suggestions"))
     mine = [r for r in sug if r["product_id"] == p["id"]]
@@ -140,7 +151,7 @@ def test_stock_movements_report_filters(api):
     c = api
     w1, w2 = make_warehouses(c)
     p = ok(c.post("/products", json={"sku": "MV1", "name": "متحرك", "sale_price": "10", "cost_price": "5", "quantity": 0}), 201)
-    ok(c.post(f"/products/{p['id']}/adjust-stock", json={"change": 10, "warehouse_id": w1["id"], "reference": "افتتاحي"}))
+    ok(c.post(f"/products/{p['id']}/adjust-stock", json={"reason_id": _reason_id(c), "change": 10, "warehouse_id": w1["id"], "reference": "افتتاحي"}))
     ok(c.post("/stock-transfers", json={
         "from_warehouse_id": w1["id"], "to_warehouse_id": w2["id"],
         "items": [{"product_id": p["id"], "quantity": 4}],

@@ -127,7 +127,7 @@ def checkout(payload: schemas.PosCheckout, request: Request, db: Session = Depen
 
     db.add(order)
     db.flush()
-    apply_sale_stock(db, order)  # rolls back and raises 409 on a shortage: nothing is saved
+    apply_sale_stock(db, order, allow_expired=False)  # POS: حجب اللوطات المنتهية دائمًا
     order.status = "confirmed"  # type: ignore
 
     # ---- Accounting: a POS sale posts the same journals as a confirmed sales order. ----

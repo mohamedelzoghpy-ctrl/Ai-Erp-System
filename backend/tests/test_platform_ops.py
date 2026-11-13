@@ -54,6 +54,16 @@ def _product(c, qty=0, wh=None, cost="40", price="100"):
 
 
 # ================================================== 1) إبطال الجلسات
+
+
+def _reason_id(c):
+    r = c.get("/products/adjustment-reasons")
+    rows = r.json() if r.status_code == 200 else []
+    if rows:
+        return rows[0]["id"]
+    return c.post("/products/adjustment-reasons", json={"name": "تسوية اختبار"}).json()["id"]
+
+
 def test_logout_all_and_password_change_revoke_tokens(api):
     c = api
     old_token = c.headers["Authorization"]
@@ -93,7 +103,7 @@ def test_backup_create_download_restore_roundtrip(api, tmp_path, monkeypatch):
     data = json.loads(gzip.decompress(dl.content))
     assert data["format"] == "mozad-backup-1" and "products" in data["tables"]
     # غيّر بيانات ثم استعدها
-    ok(c.post(f"/products/{p['id']}/adjust-stock", json={"change": 3, "warehouse_id": wh1["id"]}))
+    ok(c.post(f"/products/{p['id']}/adjust-stock", json={"reason_id": _reason_id(c), "change": 3, "warehouse_id": wh1["id"]}))
     assert ok(c.get(f"/products/{p['id']}/stock"))[0]["quantity"] == 10.0
     r = ok(c.post(f"/admin/backups/{name}/restore", json={"confirm": "استعادة"}), 200)
     assert r["restored"] is True and r["rows"] > 0

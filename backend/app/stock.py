@@ -54,7 +54,7 @@ def shortage_message(db: Session, product: models.Product, warehouse_id: int, ne
     return f"product {product.id} ('{product.name}'): need {q3(needed)}, have {available(db, product.id, warehouse_id)} in warehouse '{_warehouse_name(db, warehouse_id)}'"  # type: ignore
 
 
-def move_stock(db: Session, product: models.Product, warehouse_id: int, change: Union[int, float, Decimal], reason: str, reference: Optional[str] = None) -> None:
+def move_stock(db: Session, product: models.Product, warehouse_id: int, change: Union[int, float, Decimal], reason: str, reference: Optional[str] = None, user_id: Optional[int] = None, reason_note: Optional[str] = None) -> None:
     """Applies `change` (+in / -out) to the product's stock in one warehouse. Raises 409 instead of going negative.
 
     Quantities are Decimal (3 places). Floats/ints from callers are normalized — no float drift.
@@ -77,7 +77,7 @@ def move_stock(db: Session, product: models.Product, warehouse_id: int, change: 
             try:
                 with db.begin_nested():
                     db.add(models.ProductStock(product_id=product.id, warehouse_id=warehouse_id, company_id=company_id, quantity=change))  # type: ignore
-                db.add(models.StockMovement(product_id=product.id, warehouse_id=warehouse_id, company_id=company_id, change=change, reason=reason, reference=reference))  # type: ignore
+                db.add(models.StockMovement(product_id=product.id, warehouse_id=warehouse_id, company_id=company_id, change=change, reason=reason, reference=reference, user_id=user_id, reason_note=reason_note))  # type: ignore
                 product.quantity = dec(product.quantity) + change  # type: ignore
                 return
             except IntegrityError:
@@ -87,7 +87,7 @@ def move_stock(db: Session, product: models.Product, warehouse_id: int, change: 
     row.quantity = dec(row.quantity) + change  # type: ignore
     product.quantity = dec(product.quantity) + change  # type: ignore
     company_id = getattr(product, "company_id", None)
-    db.add(models.StockMovement(product_id=product.id, warehouse_id=warehouse_id, company_id=company_id, change=change, reason=reason, reference=reference))  # type: ignore
+    db.add(models.StockMovement(product_id=product.id, warehouse_id=warehouse_id, company_id=company_id, change=change, reason=reason, reference=reference, user_id=user_id, reason_note=reason_note))  # type: ignore
 
 
 def assert_no_pending_qc_lots(db: Session, company_id: int, product: "models.Product", warehouse_id: int, qty: Union[int, float, Decimal]) -> None:
@@ -139,7 +139,7 @@ def assert_no_pending_qc_lots(db: Session, company_id: int, product: "models.Pro
         raise HTTPException(status.HTTP_409_CONFLICT, f"دفاتر بانتظار فحص الجودة لا يمكن بيعها: {codes} — أكمل فحص QC أولًا")
 
 
-def consume_lots(db: Session, product: models.Product, warehouse_id: int, qty: Union[int, float, Decimal]) -> Decimal:
+def consume_lots(db: Session, product: models.Product, warehouse_id: int, qty: Union[int, float, Decimal], block_expired: bool = False) -> Decimal:
     """خصم اللوطات عند الخروج من المخزون بنظام FEFO (الأقرب انتهاءً أولًا ثم الأقدم).
 
     يخصم ما استطاع من اللوطات المتاحة؛ الكمية الزائدة على اللوطات (مخزون افتتاحي
@@ -149,6 +149,8 @@ def consume_lots(db: Session, product: models.Product, warehouse_id: int, qty: U
     if remaining <= 0:
         return ZERO
     deducted = ZERO
+    from .accounting import local_today
+    today = local_today()
     lots = (
         db.query(models.StockLot)
         .filter(
@@ -165,13 +167,22 @@ def consume_lots(db: Session, product: models.Product, warehouse_id: int, qty: U
         .with_for_update()
         .all()
     )
+    expired_available = []
     for lot in lots:
         if remaining <= 0:
             break
+        # حجب اللوطات المنتهية عند البيع: تتخطى لصالح غير المنتهية؛ وإن لم تكفِ المتاحة صرح بها
+        if block_expired and lot.expiry_date is not None and lot.expiry_date < today:
+            expired_available.append(lot)
+            continue
         available = dec(lot.qty_remaining)
         take = min(available, remaining)
         if take > 0:
             lot.qty_remaining = available - take
             remaining -= take
             deducted += take
+    if block_expired and remaining > 0 and expired_available:
+        codes = "، ".join(f"{l.lot_code} ({q3(dec(l.qty_remaining))})" for l in expired_available if dec(l.qty_remaining) > 0)
+        from fastapi import HTTPException as _HE, status as _status
+        raise _HE(_status.HTTP_409_CONFLICT, f"الكمية المطلوبة تحتاج لوطات منتهية الصلاحية ممنوع بيعها: {codes}. استبعد اللوطات المنتهية أو وافق على البيع بمسؤولية المدير.")
     return deducted

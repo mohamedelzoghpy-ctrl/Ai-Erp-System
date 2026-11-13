@@ -288,6 +288,9 @@ class Product(TenantOwned, Base):
     sale_price = Column(Numeric(12, 2), nullable=False, default=0, server_default="0")
     quantity = Column(Numeric(12, 3), nullable=False, default=0, server_default="0")
     reorder_level = Column(Integer, nullable=False, default=0, server_default="0")
+    # وحدة التعبئة: 1 كرتون = pack_qty قطعة (البيع والتخزين بالقطعة دائمًا)
+    pack_qty = Column(Numeric(12, 3), nullable=False, default=1, server_default="1")
+    pack_name = Column(String(30), nullable=True)  # اسم وحدة الحزمة (كرتون/درزن)
     is_active = Column(Boolean, nullable=False, default=True, server_default="true")
     warehouse_id = Column(Integer, ForeignKey("warehouses.id", ondelete="SET NULL"), nullable=True, index=True)
     supplier_id = Column(Integer, ForeignKey("suppliers.id", ondelete="SET NULL"), nullable=True, index=True)
@@ -555,6 +558,8 @@ class StockMovement(TenantOwned, Base):
     change = Column(Numeric(12, 3), nullable=False)  # positive = in, negative = out
     reason = Column(String(30), nullable=False)  # purchase_receipt | sale | adjustment | sales_return | purchase_return
     reference = Column(String(60), nullable=True)  # e.g. "PO-12", "SO-7"
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    reason_note = Column(String(200), nullable=True)  # سبب التسوية / ملاحظة
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     product = relationship("Product")
@@ -974,6 +979,32 @@ class ProductionLine(TenantOwned, Base):
     hourly_cost = Column(Numeric(14, 2), nullable=True)  # تكلفة تشغيل الساعة
     is_active = Column(Boolean, nullable=False, default=True, server_default="true")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class ProductBarcode(TenantOwned, Base):
+    """باركودات الصنف المتعددة: كل باركود يمثل وحدة (قطعة أو حزمة بمعامل تحويل)."""
+
+    __tablename__ = "product_barcodes"
+    __table_args__ = (UniqueConstraint("company_id", "barcode", name="uq_product_barcode"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    product_id = Column(Integer, ForeignKey("products.id", ondelete="CASCADE"), nullable=False, index=True)
+    barcode = Column(String(64), nullable=False, index=True)
+    pack_qty = Column(Numeric(12, 3), nullable=False, default=1, server_default="1")
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    product = relationship("Product")
+
+
+class AdjustmentReason(TenantOwned, Base):
+    """كتالوج أسباب تسوية المخزون (تالف / فرق جرد / هدية...)."""
+
+    __tablename__ = "adjustment_reasons"
+    __table_args__ = (UniqueConstraint("company_id", "name", name="uq_adjustment_reason"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), nullable=False)
+    is_active = Column(Boolean, nullable=False, default=True, server_default="true")
 
 
 class StockLot(TenantOwned, Base):

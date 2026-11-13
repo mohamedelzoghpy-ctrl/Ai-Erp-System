@@ -227,6 +227,8 @@ class ProductBase(BaseModel):
     cost_price: Decimal = Field(default=Decimal("0"), ge=0)
     sale_price: Decimal = Field(default=Decimal("0"), ge=0)
     reorder_level: int = Field(default=0, ge=0)
+    pack_qty: Decimal = Field(default=Decimal("1"), ge=0)
+    pack_name: Optional[str] = Field(default=None, max_length=30)
     is_active: bool = True
     warehouse_id: Optional[int] = None
     supplier_id: Optional[int] = None
@@ -279,6 +281,8 @@ class ProductStockOut(BaseModel):
 
 class StockAdjustment(BaseModel):
     change: float = Field(description="Positive to add stock, negative to remove.")
+    reason_id: int = Field(description="سبب التسوية من الكتالوج")
+    note: Optional[str] = Field(default=None, max_length=200)
     reference: Optional[str] = None
     warehouse_id: Optional[int] = Field(default=None, description="Defaults to the product's own warehouse.")
 
@@ -290,6 +294,8 @@ class StockMovementOut(ORMModel):
     change: float
     reason: str
     reference: Optional[str]
+    user_id: Optional[int] = None
+    reason_note: Optional[str] = None
     created_at: datetime
 
 
@@ -298,6 +304,7 @@ class PurchaseItemIn(BaseModel):
     product_id: int
     quantity: float = Field(gt=0)
     unit_cost: Decimal = Field(ge=0)
+    uom: Optional[Literal["piece", "pack"]] = "piece"  # pack = quantity × pack_qty للصنف
 
 
 class PurchaseItemOut(PurchaseItemIn, ORMModel):
@@ -341,12 +348,40 @@ class PurchaseOrderOut(ORMModel):
 
 
 # ---------- Sales orders ----------
+class AdjustmentReasonIn(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+
+
+class AdjustmentReasonOut(ORMModel):
+    id: int
+    name: str
+    is_active: bool
+
+
+class ProductBarcodeIn(BaseModel):
+    barcode: str = Field(min_length=1, max_length=64)
+    pack_qty: Decimal = Field(default=Decimal("1"), gt=0)
+
+
+class ProductBarcodeOut(ORMModel):
+    id: int
+    product_id: int
+    barcode: str
+    pack_qty: Decimal
+
+
+class ConfirmOptions(BaseModel):
+    """خيارات تأكيد أمر البيع — البيع من لوطات منتهية يتطلب مديرًا."""
+    allow_expired: bool = False
+
+
 class SalesItemIn(BaseModel):
     product_id: int
     quantity: float = Field(gt=0)
     unit_price: Optional[Decimal] = Field(
         default=None, ge=0, description="Defaults to the product's current sale price."
     )
+    uom: Optional[Literal["piece", "pack"]] = "piece"  # pack = quantity × pack_qty
 
 
 class SalesItemOut(ORMModel):
