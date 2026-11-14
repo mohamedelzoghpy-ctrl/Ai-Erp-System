@@ -1,7 +1,7 @@
 /** المزامنة: سحب دلتا (bootstrap?since) + دفع طوابير الأوفلاين (أوردرات + CRM) — idempotent. */
 import { api } from "./api";
 import {
-  setMeta, getMeta, upsertProducts, upsertCustomers, upsertPriceListItems, upsertLeads,
+  setMeta, getMeta, upsertProducts, upsertCustomers, upsertPriceListItems, upsertLeads, upsertStock,
   listPendingOrders, removePendingOrder, bumpPendingOrder, recordSyncedOrder,
   listPendingCrmActivities, removePendingCrmActivity,
   listPendingCrmStages, removePendingCrmStage,
@@ -15,6 +15,7 @@ export async function pullBootstrap(): Promise<{ products: number; customers: nu
   const qs = since ? `?since=${encodeURIComponent(since)}` : "";
   const data = await api.get<any>(`/sync/bootstrap${qs}`);
   upsertProducts(data.products ?? []);
+  upsertStock(data.stock ?? []); // كميات المتاح بمخزن المندوب — كاملة كل مزامنة
   upsertCustomers(data.customers ?? []);
   upsertLeads(data.crm_leads ?? []);
   for (const pl of data.price_lists ?? []) {

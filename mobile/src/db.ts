@@ -28,6 +28,12 @@ export function initDb() {
     );
     CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
   `);
+  // المتاح بالمخزن الافتراضي (2026-11-14): عمود مضاف لاحقًا — SQLite يقبل إضافته مرة واحدة
+  try {
+    db.execSync("ALTER TABLE products ADD COLUMN stock TEXT");
+  } catch {
+    /* العمود موجود بالفعل */
+  }
   initCrmDb();
 }
 
@@ -40,36 +46,58 @@ export function setMeta(key: string, value: string) {
   db.runSync("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [key, value]);
 }
 
+/** كتابة دفعات داخل معاملات منفصلة — كتالوج كبير لا يعلق الإقلاع بمعاملة عملاقة. */
+const UPSERT_BATCH = 500;
+
 export interface ProductRow {
   id: number; sku: string; name: string; unit: string; sale_price: string;
+  stock?: number | null; // المتاح بمخزن المندوب الافتراضي
 }
 
 export function upsertProducts(rows: (ProductRow & { updated_at: string })[]) {
-  db.withTransactionSync(() => {
-    for (const p of rows) {
-      db.runSync(
-        `INSERT INTO products (id, sku, name, unit, sale_price, updated_at) VALUES (?,?,?,?,?,?)
-         ON CONFLICT(id) DO UPDATE SET sku=excluded.sku, name=excluded.name, unit=excluded.unit,
-         sale_price=excluded.sale_price, updated_at=excluded.updated_at`,
-        [p.id, p.sku, p.name, p.unit, p.sale_price, p.updated_at]
-      );
-    }
-  });
+  for (let i = 0; i < rows.length; i += UPSERT_BATCH) {
+    const batch = rows.slice(i, i + UPSERT_BATCH);
+    db.withTransactionSync(() => {
+      for (const p of batch) {
+        db.runSync(
+          `INSERT INTO products (id, sku, name, unit, sale_price, stock, updated_at) VALUES (?,?,?,?,?,?,?)
+           ON CONFLICT(id) DO UPDATE SET sku=excluded.sku, name=excluded.name, unit=excluded.unit,
+           sale_price=excluded.sale_price, stock=excluded.stock, updated_at=excluded.updated_at`,
+          [p.id, p.sku, p.name, p.unit, p.sale_price, p.stock != null ? String(p.stock) : null, p.updated_at]
+        );
+      }
+    });
+  }
+}
+
+export function upsertStock(rows: { product_id: number; quantity: number }[]) {
+  // الكميات تصل كاملة كل مزامنة — تُحدَّث للأصناف الموجودة محليًا فقط
+  for (let i = 0; i < rows.length; i += UPSERT_BATCH) {
+    const batch = rows.slice(i, i + UPSERT_BATCH);
+    db.withTransactionSync(() => {
+      for (const s of batch) {
+        db.runSync("UPDATE products SET stock = ? WHERE id = ?", [String(s.quantity), s.product_id]);
+      }
+    });
+  }
 }
 
 export function upsertCustomers(rows: any[]) {
-  db.withTransactionSync(() => {
-    for (const c of rows) {
-      db.runSync(
-        `INSERT INTO customers (id, name, phone, credit_limit, price_list_id, balance, updated_at)
-         VALUES (?,?,?,?,?,?,?)
-         ON CONFLICT(id) DO UPDATE SET name=excluded.name, phone=excluded.phone,
-         credit_limit=excluded.credit_limit, price_list_id=excluded.price_list_id,
-         balance=excluded.balance, updated_at=excluded.updated_at`,
-        [c.id, c.name, c.phone ?? null, c.credit_limit ?? null, c.price_list_id ?? null, c.balance ?? "0", c.updated_at]
-      );
-    }
-  });
+  for (let i = 0; i < rows.length; i += UPSERT_BATCH) {
+    const batch = rows.slice(i, i + UPSERT_BATCH);
+    db.withTransactionSync(() => {
+      for (const c of batch) {
+        db.runSync(
+          `INSERT INTO customers (id, name, phone, credit_limit, price_list_id, balance, updated_at)
+           VALUES (?,?,?,?,?,?,?)
+           ON CONFLICT(id) DO UPDATE SET name=excluded.name, phone=excluded.phone,
+           credit_limit=excluded.credit_limit, price_list_id=excluded.price_list_id,
+           balance=excluded.balance, updated_at=excluded.updated_at`,
+          [c.id, c.name, c.phone ?? null, c.credit_limit ?? null, c.price_list_id ?? null, c.balance ?? "0", c.updated_at]
+        );
+      }
+    });
+  }
 }
 
 export function upsertPriceListItems(items: any[]) {
@@ -172,19 +200,30 @@ export function listSyncedOrders(): any[] {
 
 // ---------------- CRM الميداني (المرحلة 3) ----------------
 export function initCrmDb() {
-  db.execSync(
+  db.runSync(
     "CREATE TABLE IF NOT EXISTS crm_leads (" +
       "id INTEGER PRIMARY KEY, code TEXT, name TEXT, company_name TEXT, phone TEXT," +
       "address TEXT, source TEXT, status TEXT, expected_value TEXT," +
       "next_follow_up_at TEXT, notes TEXT, updated_at TEXT)"
   );
-  db.execSync(
+  // مراحل CRM: مفتاح تلقائي يسمح بتتابع تحديثات نفس القائد أوفلاين (بالأقدم أولاً) —
+  // ترقية من المخطط القديم ذي المفتاح lead_id (2026-11-14)
+  const stageCols = db.getAllSync("PRAGMA table_info(pending_crm_stages)") as { name: string }[];
+  if (stageCols.length && !stageCols.some((c) => c.name === "id")) {
+    db.runSync("ALTER TABLE pending_crm_stages RENAME TO pending_crm_stages_old");
+    db.runSync(
+      "CREATE TABLE pending_crm_stages (id INTEGER PRIMARY KEY AUTOINCREMENT, lead_id INTEGER, status TEXT, lost_reason TEXT)"
+    );
+    db.runSync("INSERT INTO pending_crm_stages (lead_id, status, lost_reason) SELECT lead_id, status, lost_reason FROM pending_crm_stages_old");
+    db.runSync("DROP TABLE pending_crm_stages_old");
+  } else if (stageCols.length === 0) {
+    db.runSync(
+      "CREATE TABLE IF NOT EXISTS pending_crm_stages (id INTEGER PRIMARY KEY AUTOINCREMENT, lead_id INTEGER, status TEXT, lost_reason TEXT)"
+    );
+  }
+  db.runSync(
     "CREATE TABLE IF NOT EXISTS pending_crm_activities (" +
       "client_ref TEXT PRIMARY KEY, lead_id INTEGER, kind TEXT, body TEXT, created_at TEXT)"
-  );
-  db.execSync(
-    "CREATE TABLE IF NOT EXISTS pending_crm_stages (" +
-      "lead_id INTEGER PRIMARY KEY, status TEXT, lost_reason TEXT)"
   );
 }
 

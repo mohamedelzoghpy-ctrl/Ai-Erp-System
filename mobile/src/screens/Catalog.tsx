@@ -1,4 +1,4 @@
-/** الكتالوج: من قاعدة الموبايل المحلية (أوفلاين كامل) — بحث + إضافة للسلة بسعر قائمة العميل. */
+/** الكتالوج: من قاعدة الموبايل المحلية (أوفلاين كامل) — بحث + إضافة للسلة بسعر قائمة العميل + متاح المخزن. */
 import React, { useState } from "react";
 import { FlatList, StyleSheet, Text, View } from "react-native";
 import { listProducts, priceFor, type ProductRow } from "../db";
@@ -38,16 +38,24 @@ export default function CatalogScreen({ navigation }: any) {
         keyExtractor={(p) => String(p.id)}
         extraData={tick}
         ListEmptyComponent={<Empty text={term ? "لا نتائج مطابقة" : "لا أصناف — نفّذ المزامنة من الرئيسية"} />}
-        renderItem={({ item }) => (
+        renderItem={({ item }) => {
+          const stock = item.stock != null ? Number(item.stock) : null;
+          return (
           <View style={s.card}>
             <View style={{ flex: 1 }}>
               <Text style={s.name}>{item.name}</Text>
               <Text style={s.sku}>{item.sku}</Text>
               <Text style={s.price}>{money(priceFor(item, plId))} / {item.unit}</Text>
+              {stock != null && (
+                <Text style={{ color: stock <= 0 ? "#b91c1c" : "#15803d", fontSize: 11, marginTop: 2, textAlign: "right" }}>
+                  {stock <= 0 ? "غير متاح بالمخزن" : `متاح: ${qty(stock)}`}
+                </Text>
+              )}
             </View>
             <Btn label="＋ أضف" onPress={() => add(item)} />
           </View>
-        )}
+          );
+        }}
       />
     </Screen>
   );

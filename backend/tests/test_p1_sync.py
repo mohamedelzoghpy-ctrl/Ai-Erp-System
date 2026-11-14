@@ -59,10 +59,27 @@ def test_bootstrap_returns_products_customers_and_price_lists():
         # التكلفة الحساسة لا تُسرب في المزامنة
         assert all("cost_price" not in p for p in boot["products"])
 
+        # متاح المخزن الافتراضي يُرسل كاملًا مع كل مزامنة (المندوب أوفلاين يرى الكميات)
+        stock_map = {s["product_id"]: s["quantity"] for s in boot["stock"]}
+        assert stock_map.get(product["id"]) == 10.0
+
         # دلتا: since الآن → لا شيء جديد
         cursor = boot["server_time"]
         boot2 = client.get("/sync/bootstrap", params={"since": cursor}).json()
         assert boot2["products"] == [] and boot2["customers"] == []
+        # لكن الكميات تظل كاملة حتى في الدلتا (المخزون يتغير بأي قناة)
+        assert {s["product_id"]: s["quantity"] for s in boot2["stock"]}.get(product["id"]) == 10.0
+
+        # خصم مخزوني 4 وحدات → يظهر في الكميات القادمة فورًا (بلا اعتبار للدلتا)
+        reasons = client.get("/products/adjustment-reasons").json()
+        reason_id = reasons[0]["id"] if reasons else client.post(
+            "/products/adjustment-reasons", json={"name": "تسوية اختبار المزامنة"}
+        ).json()["id"]
+        client.post(f"/products/{product['id']}/adjust-stock", json={
+            "reason_id": reason_id, "change": -4, "warehouse_id": w1["id"],
+        })
+        boot_adj = client.get("/sync/bootstrap", params={"since": cursor}).json()
+        assert {s["product_id"]: s["quantity"] for s in boot_adj["stock"]}.get(product["id"]) == 6.0
 
         # تعديل سعر المنتج → يظهر في الدلتا القادمة
         sleep(1.1)  # تجاوز دقة الثانية في SQLite

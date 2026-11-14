@@ -11,6 +11,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
@@ -122,18 +123,40 @@ def bootstrap(
         except Exception:
             pass  # الإشعار لا يفشل المزامنة
 
+    # مخزن المندوب الافتراضي: أول مخزن **مُصرَّح به للمندوب نفسه** (قوائم وصول المندوب)،
+    # وللأدمن/من بلا قيود وصول = أول مخزن نشط بالشركة — ثم تُرفق كميات هذا المخزن
+    active_warehouses = (
+        db.query(models.Warehouse)
+        .filter(models.Warehouse.company_id == company_id, models.Warehouse.is_active.is_(True))  # type: ignore[attr-defined]
+        .order_by(models.Warehouse.id)
+        .all()
+    )
+    allowed_ids = {
+        a.warehouse_id
+        for a in db.query(models.UserWarehouseAccess).filter(models.UserWarehouseAccess.user_id == user.id).all()  # type: ignore[attr-defined]
+    }
+    default_warehouse_id = next(
+        (w.id for w in active_warehouses if w.id in allowed_ids),
+        active_warehouses[0].id if active_warehouses else None,
+    )
+    # كميات المتاح بمخزن المندوب — تُرسل كاملة كل مزامنة (المخزون يتغير باستمرار بأي قناة)
+    stock_rows: List[dict] = []
+    if default_warehouse_id is not None:
+        stock_rows = [
+            {"product_id": pid, "quantity": float(q)}
+            for pid, q in db.query(
+                models.ProductStock.product_id,
+                func.coalesce(func.sum(models.ProductStock.quantity), 0),
+            )
+            .filter(models.ProductStock.warehouse_id == default_warehouse_id)
+            .group_by(models.ProductStock.product_id)
+            .all()
+        ]
+
     return {
         "server_time": server_time.isoformat(),
-        "default_warehouse_id": next(
-            (
-                w.id
-                for w in db.query(models.Warehouse)
-                .filter(models.Warehouse.company_id == company_id, models.Warehouse.is_active.is_(True))  # type: ignore[attr-defined]
-                .order_by(models.Warehouse.id)
-                .all()
-            ),
-            None,
-        ),
+        "default_warehouse_id": default_warehouse_id,
+        "stock": stock_rows,
         "products": products,
         "customers": customers,
         "price_lists": price_lists,
