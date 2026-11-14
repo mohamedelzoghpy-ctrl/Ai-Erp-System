@@ -7,6 +7,9 @@ import {
   listPendingCrmStages, removePendingCrmStage,
 } from "./db";
 
+/** حجم دفعة الرفع — حد الـAPI 100 نرسل بنصفه هامشًا، والدفعات تتعاقب حتى نفاد الطابور. */
+const PUSH_CHUNK = 50;
+
 export async function pullBootstrap(): Promise<{ products: number; customers: number; leads: number }> {
   const since = getMeta("last_sync");
   const qs = since ? `?since=${encodeURIComponent(since)}` : "";
@@ -32,27 +35,34 @@ export async function pushPendingOrders(): Promise<PushResult> {
   const pending = listPendingOrders();
   if (!pending.length) return { pushed: 0, failed: 0, errors: [] };
 
-  // الدفع دفعات صغيرة (حد الـAPI 100) — الافتراضي عملياً دفعة واحدة
-  const payload = { orders: pending.map((p) => JSON.parse(p.payload)) };
-  const resp = await api.post<{ results: { client_ref: string; status: string; order_id: number | null; error: string | null }[] }>(
-    "/sync/orders",
-    payload
-  );
-
   let pushed = 0, failed = 0;
   const errors: string[] = [];
-  for (const r of resp.results) {
-    if (r.status === "created" || r.status === "duplicate") {
-      removePendingOrder(r.client_ref);
-      const original = pending.find((p) => p.client_ref === r.client_ref);
-      const parsed = original ? JSON.parse(original.payload) : null;
-      recordSyncedOrder(r.order_id!, r.client_ref, parsed ? String(parsed.total ?? "") : "", r.status === "duplicate" ? "draft" : "draft");
-      pushed++;
-    } else {
-      failed++;
-      const msg = r.error ?? "خطأ غير معروف";
-      errors.push(`${r.client_ref}: ${msg}`);
-      bumpPendingOrder(r.client_ref, msg);
+  // دفعات متتابعة (PUSH_CHUNK) — فشل شبكة يوقف الحلقة والبقية تبقى في الطابور للمزامنة التالية
+  for (let i = 0; i < pending.length; i += PUSH_CHUNK) {
+    const chunk = pending.slice(i, i + PUSH_CHUNK);
+    try {
+      const resp = await api.post<{ results: { client_ref: string; status: string; order_id: number | null; error: string | null }[] }>(
+        "/sync/orders",
+        { orders: chunk.map((p) => JSON.parse(p.payload)) }
+      );
+      for (const r of resp.results) {
+        if (r.status === "created" || r.status === "duplicate") {
+          removePendingOrder(r.client_ref);
+          const original = chunk.find((p) => p.client_ref === r.client_ref);
+          const parsed = original ? JSON.parse(original.payload) : null;
+          recordSyncedOrder(r.order_id!, r.client_ref, parsed ? String(parsed.total ?? "") : "", "draft");
+          pushed++;
+        } else {
+          failed++;
+          const msg = r.error ?? "خطأ غير معروف";
+          errors.push(`${r.client_ref}: ${msg}`);
+          bumpPendingOrder(r.client_ref, msg);
+        }
+      }
+    } catch (e: any) {
+      failed += chunk.length;
+      errors.push(`دفعة ${Math.floor(i / PUSH_CHUNK) + 1} (${chunk.length} أوردر): ${e.message ?? "فشل الشبكة"}`);
+      break; // الشبكة ساقطة — لا معنى لمحاولة الدفعات التالية الآن
     }
   }
   return { pushed, failed, errors };

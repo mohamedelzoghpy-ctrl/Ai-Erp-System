@@ -17,6 +17,7 @@ export default function LoginScreen({ onLoggedIn }: { onLoggedIn: (me: any) => v
     try {
       await api.login(username.trim(), password);
       const me = await api.get<any>("/auth/me");
+      await api.saveFullName(me.full_name ?? me.username ?? null);
       onLoggedIn(me);
     } catch (e: any) {
       setError(e.message ?? "تعذر تسجيل الدخول");

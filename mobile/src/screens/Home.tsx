@@ -4,7 +4,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import { Text, View } from "react-native";
 import { api } from "../api";
 import { fullSync } from "../sync";
-import { listPendingOrders } from "../db";
+import { listPendingOrders, listDeadOrders, retryDeadOrders, MAX_SYNC_ATTEMPTS } from "../db";
 import { Alert, Btn, Card, Empty, Row, Screen, money, qty } from "../ui";
 import { useCart } from "../cart";
 
@@ -12,6 +12,8 @@ export default function HomeScreen({ navigation }: any) {
   const [summary, setSummary] = useState<any>(null);
   const [mgr, setMgr] = useState<any>(null);
   const [pending, setPending] = useState(0);
+  const [dead, setDead] = useState(0);
+  const [deadOrders, setDeadOrders] = useState<any[]>([]);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -19,6 +21,9 @@ export default function HomeScreen({ navigation }: any) {
 
   const refresh = useCallback(async () => {
     setPending(listPendingOrders().length);
+    const deadRows = listDeadOrders();
+    setDeadOrders(deadRows);
+    setDead(deadRows.length);
     try {
       setSummary(await api.get<any>("/reps/me/summary"));
     } catch {
@@ -57,7 +62,7 @@ export default function HomeScreen({ navigation }: any) {
   };
 
   return (
-    <Screen title={`أهلاً ${(globalThis as any).__mozadFullName ?? ""} 👋`} subtitle="عملك اليوم في مكان واحد — يعمل أوفلاين ويتزامن عند توفر الشبكة">
+    <Screen title={`أهلاً ${api.getFullName()} 👋`} subtitle="عملك اليوم في مكان واحد — يعمل أوفلاين ويتزامن عند توفر الشبكة">
       <Alert text={msg} />
       <Alert text={error} kind="error" />
 
@@ -81,6 +86,21 @@ export default function HomeScreen({ navigation }: any) {
         {cart.items.length > 0 && <Row left="في سلة الأوردر الحالي" right={`${qty(cart.items.length)} صنف — ${money(cart.total)}`} />}
         <Btn label="مزامنة الآن" onPress={doSync} busy={busy} />
       </Card>
+
+      {dead > 0 && (
+        <Card>
+          <Text style={{ fontWeight: "800", marginBottom: 6, textAlign: "right", color: "#b91c1c" }}>
+            ⚠️ {qty(dead)} أوردر فشل رفعه نهائيًا (بعد {MAX_SYNC_ATTEMPTS} محاولات)
+          </Text>
+          {(() => { const first = deadOrders[0]; return first ? <Text style={{ color: "#64748b", fontSize: 12, textAlign: "right" }}>آخر خطأ: {first.last_error ?? "—"}</Text> : null; })()}
+          <Btn label="↻ صفّر المحاولات وأعد الرفع" kind="ghost" onPress={async () => {
+            const n = retryDeadOrders();
+            setDead(0);
+            setMsg(`أُعيدت ${n} أوردرًا لدوران المزامنة`);
+            await doSync();
+          }} busy={busy} />
+        </Card>
+      )}
 
       {mgr ? (
         <Card>

@@ -123,8 +123,29 @@ export function queueOrder(clientRef: string, payload: object) {
   );
 }
 
+/** سقف محاولات الرفع — بعده ينتقل الأوردر إلى «متعذر نهائيًا» ويخرج من الدوران (dead-letter). */
+export const MAX_SYNC_ATTEMPTS = 5;
+
+/** الأوردرات القابلة للرفع: ما لم يستنفد سقف المحاولات. */
 export function listPendingOrders(): { client_ref: string; payload: string; attempts: number; last_error: string | null }[] {
-  return db.getAllSync("SELECT client_ref, payload, attempts, last_error FROM pending_orders ORDER BY created_at");
+  return db.getAllSync(
+    "SELECT client_ref, payload, attempts, last_error FROM pending_orders WHERE attempts < ? ORDER BY created_at",
+    [MAX_SYNC_ATTEMPTS]
+  );
+}
+
+/** الأوردرات المتعذرة نهائيًا — تظهر للمناديب بزر إعادة محاولة يدوية. */
+export function listDeadOrders(): { client_ref: string; payload: string; attempts: number; last_error: string | null }[] {
+  return db.getAllSync(
+    "SELECT client_ref, payload, attempts, last_error FROM pending_orders WHERE attempts >= ? ORDER BY created_at",
+    [MAX_SYNC_ATTEMPTS]
+  );
+}
+
+/** صفّر المحاولات وإعادة إدراج المتعذرة في دوران المزامنة (زر يدوي من الرئيسية). */
+export function retryDeadOrders(): number {
+  const r = db.runSync("UPDATE pending_orders SET attempts = 0, last_error = NULL WHERE attempts >= ?", [MAX_SYNC_ATTEMPTS]);
+  return r.changes ?? 0;
 }
 
 export function removePendingOrder(clientRef: string) {
@@ -188,7 +209,6 @@ export function getLead(id: number): any | null {
 
 export function updateLeadLocalStatus(id: number, status: string, lostReason?: string | null) {
   db.runSync("UPDATE crm_leads SET status = ? WHERE id = ?", [status, id]);
-  if (lostReason != null) db.runSync("UPDATE crm_leads SET status = ? WHERE id = ?", [status, id]);
 }
 
 export function queueCrmActivity(clientRef: string, leadId: number, kind: string, body: string) {

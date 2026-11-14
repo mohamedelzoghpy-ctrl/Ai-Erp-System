@@ -4,14 +4,16 @@ import { FlatList, StyleSheet, Text, View } from "react-native";
 import { listCustomers } from "../db";
 import { Alert, Btn, Empty, Field, Screen, money } from "../ui";
 import { setCurrentPriceList } from "./Catalog";
+import { useCart } from "../cart";
 
 export default function CustomersScreen({ navigation }: any) {
   const [term, setTerm] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const customers = listCustomers(term);
+  const cart = useCart();
 
   const pick = (c: any) => {
-    (globalThis as any).__mozadSelectedCustomer = { id: c.id, name: c.name };
+    cart.setCustomer({ id: c.id, name: c.name });
     setCurrentPriceList(c.price_list_id ?? null);
     setMsg(`✅ العميل «${c.name}» جاهز — أضف الأصناف من الكتالوج`);
   };

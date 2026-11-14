@@ -5,6 +5,7 @@ import { API_BASE } from "./config";
 
 let accessToken: string | null = null;
 let refreshToken: string | null = null;
+let fullName: string | null = null;
 
 export async function saveTokens(access: string, refresh: string) {
   accessToken = access;
@@ -13,16 +14,28 @@ export async function saveTokens(access: string, refresh: string) {
   await SecureStore.setItemAsync("mozad_refresh", refresh);
 }
 
+export async function saveFullName(name: string | null) {
+  fullName = name;
+  await SecureStore.setItemAsync("mozad_full_name", name ?? "");
+}
+
+export function getFullName(): string {
+  return fullName ?? "";
+}
+
 export async function loadTokens() {
   accessToken = await SecureStore.getItemAsync("mozad_access");
   refreshToken = await SecureStore.getItemAsync("mozad_refresh");
+  fullName = (await SecureStore.getItemAsync("mozad_full_name")) || null;
 }
 
 export async function clearTokens() {
   accessToken = null;
   refreshToken = null;
+  fullName = null;
   await SecureStore.deleteItemAsync("mozad_access");
   await SecureStore.deleteItemAsync("mozad_refresh");
+  await SecureStore.deleteItemAsync("mozad_full_name");
 }
 
 export function hasTokens() {
@@ -87,6 +100,8 @@ export const api = {
   get: <T>(path: string) => request<T>(path),
   post: <T>(path: string, body?: unknown) =>
     request<T>(path, { method: "POST", body: body === undefined ? "{}" : JSON.stringify(body) }),
+  saveFullName,
+  getFullName,
   /** تنزيل ملف (PDF) بترويسة المصادقة — يعيد مسار الملف المحلي للمشاركة. */
   download: async (path: string): Promise<string> => {
     if (!accessToken) throw new Error("انتهت الجلسة");

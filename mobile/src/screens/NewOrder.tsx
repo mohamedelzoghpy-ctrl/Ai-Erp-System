@@ -16,8 +16,8 @@ export default function NewOrderScreen({ navigation }: any) {
   const [msg, setMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  /** العميل يُختار من شاشة العملاء (يضبط السلة) — هنا نطلب فقط إكمال التفاصيل */
-  const selectedCustomer = (globalThis as any).__mozadSelectedCustomer as { id: number; name: string } | undefined;
+  /** العميل يُختار من شاشة العملاء أو سياق السلة */
+  const selectedCustomer = cart.customer;
 
   const save = () => {
     setError(null);
@@ -41,9 +41,11 @@ export default function NewOrderScreen({ navigation }: any) {
       created_local: new Date().toISOString(),
     };
     queueOrder(clientRef, payload);
+    const savedCount = payload.items.length;
+    const savedTotal = cart.total;
     cart.clear();
-    (globalThis as any).__mozadSelectedCustomer = undefined;
-    setMsg(`✅ حُفظ الأوردر أوفلاين (${payload.items.length} صنف — ${money(cart.total)}) — سيرفع تلقائياً مع المزامنة`);
+    cart.setCustomer(null);
+    setMsg(`✅ حُفظ الأوردر أوفلاين (${savedCount} صنف — ${money(savedTotal)}) — سيرفع تلقائياً مع المزامنة`);
     setTimeout(() => navigation.goBack(), 1200);
   };
 
